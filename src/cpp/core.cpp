@@ -271,12 +271,15 @@ struct CompiledStep {
     throw std::invalid_argument("operation is not a two-qubit gate");
 }
 
-[[nodiscard]] std::vector<CompiledStep> compile_program(const Program& program) {
+[[nodiscard]] std::vector<CompiledStep> compile_operations(
+    std::size_t num_qubits,
+    const std::vector<Operation>& operations
+) {
     const Matrix2 identity = identity_matrix();
-    std::vector<Matrix2> pending(program.num_qubits(), identity);
-    std::vector<bool> has_pending(program.num_qubits(), false);
+    std::vector<Matrix2> pending(num_qubits, identity);
+    std::vector<bool> has_pending(num_qubits, false);
     std::vector<CompiledStep> steps;
-    steps.reserve(program.operations().size());
+    steps.reserve(operations.size());
 
     const auto flush = [&](std::size_t qubit) {
         if (!has_pending[qubit]) {
@@ -287,7 +290,7 @@ struct CompiledStep {
         has_pending[qubit] = false;
     };
 
-    for (const Operation& operation : program.operations()) {
+    for (const Operation& operation : operations) {
         if (is_single_qubit(operation.code)) {
             const std::size_t qubit = operation.qubits.front();
             pending[qubit] = multiply(single_matrix(operation), pending[qubit]);
@@ -302,10 +305,14 @@ struct CompiledStep {
         steps.push_back({compiled_kind(operation.code), identity, first, second});
     }
 
-    for (std::size_t qubit = 0; qubit < program.num_qubits(); ++qubit) {
+    for (std::size_t qubit = 0; qubit < num_qubits; ++qubit) {
         flush(qubit);
     }
     return steps;
+}
+
+[[nodiscard]] std::vector<CompiledStep> compile_program(const Program& program) {
+    return compile_operations(program.num_qubits(), program.operations());
 }
 
 struct PreparedProgram {
@@ -314,10 +321,10 @@ struct PreparedProgram {
 };
 
 struct PreparedExpectation {
-    Program program;
     std::size_t observable_qubit;
     ExecutionPlan execution_plan;
     std::vector<CompiledStep> steps;
+    std::vector<Operation> pauli_operations;
     bool pauli_propagation;
 };
 
@@ -526,10 +533,10 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     std::swap(pauli.z[first], pauli.z[second]);
 }
 
-[[nodiscard]] bool supports_pauli_propagation(const Program& program) {
+[[nodiscard]] bool supports_pauli_propagation(const std::vector<Operation>& operations) {
     return std::all_of(
-        program.operations().begin(),
-        program.operations().end(),
+        operations.begin(),
+        operations.end(),
         [](const Operation& operation) {
             switch (operation.code) {
             case OperationCode::H:
@@ -551,17 +558,17 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
 }
 
 [[nodiscard]] double pauli_z_propagated_value(
-    const Program& program,
+    std::size_t num_qubits,
+    const std::vector<Operation>& operations,
     std::size_t observable_qubit
 ) {
     PauliFrame pauli{
-        std::vector<std::uint8_t>(program.num_qubits(), 0U),
-        std::vector<std::uint8_t>(program.num_qubits(), 0U),
+        std::vector<std::uint8_t>(num_qubits, 0U),
+        std::vector<std::uint8_t>(num_qubits, 0U),
         false,
     };
     pauli.z[observable_qubit] = 1U;
 
-    const auto& operations = program.operations();
     for (std::size_t index = operations.size(); index > 0U; --index) {
         const Operation& operation = operations[index - 1U];
         switch (operation.code) {
@@ -673,7 +680,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         }
     }
 
-    Program reduced(active_count);
+    std::vector<Operation> reduced_operations;
+    reduced_operations.reserve(operations.size());
     for (std::size_t index = 0; index < operations.size(); ++index) {
         if (!retained[index]) {
             continue;
@@ -682,19 +690,21 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         for (std::size_t& qubit : operation.qubits) {
             qubit = mapping[qubit];
         }
-        reduced = reduced.appended(std::move(operation));
+        reduced_operations.push_back(std::move(operation));
     }
 
-    const bool pauli_propagation = supports_pauli_propagation(reduced);
+    const bool pauli_propagation = supports_pauli_propagation(reduced_operations);
     std::vector<CompiledStep> steps;
+    std::vector<Operation> pauli_operations;
     std::string method;
     std::size_t compiled_steps = 0U;
     std::size_t estimated_state_bytes = 0U;
     if (pauli_propagation) {
         method = "pauli-propagation";
-        compiled_steps = reduced.operations().size();
+        compiled_steps = reduced_operations.size();
+        pauli_operations = std::move(reduced_operations);
     } else {
-        steps = compile_program(reduced);
+        steps = compile_operations(active_count, reduced_operations);
         method = active_count < program.num_qubits()
             ? "statevector-lightcone"
             : "statevector";
@@ -715,10 +725,10 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         qualifier
     );
     return {
-        std::move(reduced),
         mapping[observable.qubit],
         std::move(execution_plan),
         std::move(steps),
+        std::move(pauli_operations),
         pauli_propagation,
     };
 }
@@ -1169,10 +1179,14 @@ Expectation expectation(
     );
     double value = 0.0;
     if (prepared.pauli_propagation) {
-        value = pauli_z_propagated_value(prepared.program, prepared.observable_qubit);
+        value = pauli_z_propagated_value(
+            prepared.execution_plan.active_qubits,
+            prepared.pauli_operations,
+            prepared.observable_qubit
+        );
     } else {
         StateVector state = run_statevector(
-            prepared.program.num_qubits(), prepared.steps, prepared.execution_plan
+            prepared.execution_plan.active_qubits, prepared.steps, prepared.execution_plan
         );
         value = pauli_z_value(state.values, prepared.observable_qubit);
     }
@@ -1197,11 +1211,13 @@ Variance variance(
     double expectation_value = 0.0;
     if (prepared.pauli_propagation) {
         expectation_value = pauli_z_propagated_value(
-            prepared.program, prepared.observable_qubit
+            prepared.execution_plan.active_qubits,
+            prepared.pauli_operations,
+            prepared.observable_qubit
         );
     } else {
         StateVector state = run_statevector(
-            prepared.program.num_qubits(), prepared.steps, prepared.execution_plan
+            prepared.execution_plan.active_qubits, prepared.steps, prepared.execution_plan
         );
         expectation_value = pauli_z_value(state.values, prepared.observable_qubit);
     }
