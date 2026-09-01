@@ -202,6 +202,9 @@ def test_native_target_and_planner_are_explicit() -> None:
     parallel_plan = qp.plan(qp.Program(16), qp.ResultMode.STATEVECTOR)
     assert parallel_plan.threads == min(qp.parallel_threads(), 8)
 
+    large_parallel_plan = qp.plan(qp.Program(20), qp.ResultMode.STATEVECTOR)
+    assert large_parallel_plan.threads == min(qp.parallel_threads(), 16)
+
 
 def test_workload_fingerprint_is_structural_and_result_aware() -> None:
     first = qp.Program(4)
