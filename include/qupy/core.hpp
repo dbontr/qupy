@@ -111,6 +111,38 @@ struct ExecutionPlan {
     std::string program_fingerprint;
     std::string target_fingerprint;
     std::string cache_key;
+    std::optional<double> predicted_ns;
+    std::string cost_model_class;
+    std::string cost_model_fingerprint;
+    std::string cost_model_host_fingerprint;
+};
+
+class PlannerCostModel {
+public:
+    [[nodiscard]] std::uint32_t schema_version() const noexcept;
+    [[nodiscard]] std::uint32_t workload_version() const noexcept;
+    [[nodiscard]] const std::string& engine_version() const noexcept;
+    [[nodiscard]] const std::string& host_fingerprint() const noexcept;
+    [[nodiscard]] const std::string& artifact_fingerprint() const noexcept;
+    [[nodiscard]] std::vector<std::string> cost_classes() const;
+    [[nodiscard]] double predict_ns(const ExecutionPlan& plan) const;
+
+private:
+    struct Curve {
+        std::string cost_class;
+        std::vector<double> coefficients;
+        double holdout_median_factor;
+        double holdout_max_factor;
+    };
+
+    PlannerCostModel() = default;
+    friend PlannerCostModel load_planner_cost_model(const std::string& path);
+    std::uint32_t schema_version_ = 0U;
+    std::uint32_t workload_version_ = 0U;
+    std::string engine_version_;
+    std::string host_fingerprint_;
+    std::string artifact_fingerprint_;
+    std::vector<Curve> curves_;
 };
 
 struct StateVector {
@@ -172,20 +204,25 @@ struct Variance {
 };
 
 [[nodiscard]] Target native_target();
+[[nodiscard]] std::string planner_host_fingerprint();
+[[nodiscard]] PlannerCostModel load_planner_cost_model(const std::string& path);
 [[nodiscard]] ExecutionPlan plan(
     const Program& program,
     ResultMode result_mode,
-    const std::string& backend = "auto"
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
 );
 [[nodiscard]] ExecutionPlan expectation_plan(
     const Program& program,
     PauliZ observable,
-    const std::string& backend = "auto"
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
 );
 [[nodiscard]] ExecutionPlan variance_plan(
     const Program& program,
     PauliZ observable,
-    const std::string& backend = "auto"
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
 );
 
 [[nodiscard]] Program h(const Program& program, std::size_t qubit);

@@ -152,3 +152,39 @@ jobs:
           "import json; data=json.load(open('build/benchmark-smoke.json', encoding='utf-8'));
           assert data['schema_version'] == 1;
           assert all(row['valid'] is True for row in data['results'] if not row['skipped'])"
+
+  planner-calibration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - run: uv sync --frozen --python 3.12
+      - name: Collect planner calibration evidence
+        run: >-
+          uv run python -m benchmarks.run
+          --profile calibration
+          --engines qupy
+          --warmups 1
+          --iterations 3
+          --require-engines
+          --output build/planner-calibration.json
+      - name: Validate and promote planner evidence
+        run: >-
+          uv run python -m benchmarks.calibrate
+          build/planner-calibration.json
+          --output build/planner-cost.json
+          --planner-output build/planner.qpcost
+      - name: Verify native planner artifact
+        run: >-
+          uv run python -c
+          "import qupy as qp;
+          model=qp.load_planner_cost_model('build/planner.qpcost');
+          plan=qp.expectation_plan(qp.ry(qp.Program(1),0.37,0),qp.Z(0),cost_model=model);
+          assert model.host_fingerprint==qp.planner_host_fingerprint();
+          assert plan.predicted_ns is not None and plan.predicted_ns>0;
+          assert plan.cost_model_fingerprint==model.artifact_fingerprint"

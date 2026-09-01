@@ -19,6 +19,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", default="-", help="cost-model JSON output path or - for stdout")
     parser.add_argument(
+        "--planner-output",
+        help="validated native planner artifact output path",
+    )
+    parser.add_argument(
         "--max-holdout-factor",
         type=float,
         default=2.0,
@@ -52,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(payload, encoding="utf-8")
+
+    if args.planner_output is not None:
+        planner_output = Path(args.planner_output)
+        planner_output.parent.mkdir(parents=True, exist_ok=True)
+        planner_output.write_text(report.to_planner_text(), encoding="utf-8")
 
     for model in report.models:
         sys.stderr.write(

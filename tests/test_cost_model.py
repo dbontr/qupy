@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+import qupy as qp
 from benchmarks.cost_model import CostObservation, fit_cost_models, load_observations
 
 
@@ -140,3 +141,35 @@ def test_cost_model_loader_rejects_mixed_hosts(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match="different hosts"):
         load_observations((first, second))
+
+
+def test_validated_report_emits_native_planner_artifact() -> None:
+    observations = [
+        *(
+            replace(_statevector_observation(index, qubits), engine_version=qp.core_version())
+            for index, qubits in enumerate(range(10, 22))
+        ),
+        *(
+            replace(_pauli_observation(100 + index, operations), engine_version=qp.core_version())
+            for index, operations in enumerate((32, 64, 128, 256, 512, 1024, 2048, 4096))
+        ),
+    ]
+    report = fit_cost_models(
+        observations,
+        host={"planner_host_fingerprint": qp.planner_host_fingerprint()},
+        max_holdout_factor=1.001,
+        max_holdout_median_factor=1.001,
+    )
+    payload = report.to_planner_text()
+    assert payload.startswith("qupy-planner-cost 1\n")
+    assert f"engine {qp.core_version()}\n" in payload
+    assert f"host {qp.planner_host_fingerprint()}\n" in payload
+    assert payload.count("\nmodel ") == 3
+
+    weak_model = replace(
+        report.models[0],
+        holdout_error=replace(report.models[0].holdout_error, max_factor=2.1),
+    )
+    weak_report = replace(report, models=(weak_model, *report.models[1:]))
+    with pytest.raises(ValueError, match="fixed promotion thresholds"):
+        weak_report.to_planner_text()
