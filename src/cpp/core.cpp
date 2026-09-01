@@ -772,8 +772,20 @@ void evolve_statevector(
     std::size_t num_qubits,
     const std::vector<CompiledStep>& steps
 ) {
-    state.resize(state_dimension(num_qubits));
-    std::fill(state.begin(), state.end(), Complex{0.0, 0.0});
+    const std::size_t dimension = state_dimension(num_qubits);
+    if (state.size() != dimension) {
+        state.assign(dimension, Complex{0.0, 0.0});
+    } else {
+#ifdef QUPY_HAS_OPENMP
+        const int threads = parallel_team_size(state.size());
+#pragma omp parallel for schedule(static) if(threads > 1) num_threads(threads)
+        for (std::ptrdiff_t raw = 0; raw < static_cast<std::ptrdiff_t>(state.size()); ++raw) {
+            state[static_cast<std::size_t>(raw)] = Complex{0.0, 0.0};
+        }
+#else
+        std::fill(state.begin(), state.end(), Complex{0.0, 0.0});
+#endif
+    }
     state.front() = Complex{1.0, 0.0};
 
     for (const CompiledStep& step : steps) {
