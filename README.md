@@ -61,7 +61,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - CX, CZ, and SWAP two-qubit gates
 - versioned immutable native program IR with deterministic canonical text
 - SHA-256 program and target fingerprints for execution identity
-- explicit target capabilities and result-aware execution plans
+- explicit target capabilities and result-aware execution plans with versioned structural workload fingerprints
 - versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation
 - exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones

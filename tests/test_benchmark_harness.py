@@ -40,7 +40,16 @@ def test_qupy_benchmark_records_specialized_pauli_plan() -> None:
     assert result.valid
     assert result.result_value == pytest.approx(0.0, abs=1e-12)
     assert result.method == "pauli-propagation"
+    assert result.metadata["workload_version"] == 1
+    assert len(str(result.metadata["workload_fingerprint"])) == 64
+    assert result.metadata["original_qubits"] == 64
+    assert result.metadata["original_operations"] == 64
     assert result.metadata["active_qubits"] == 64
+    assert result.metadata["active_operations"] == 64
+    assert result.metadata["single_qubit_operations"] == 1
+    assert result.metadata["two_qubit_operations"] == 63
+    assert result.metadata["parameterized_operations"] == 0
+    assert result.metadata["non_clifford_operations"] == 0
     assert result.metadata["estimated_state_bytes"] == 0
     assert len(result.timings_ns) == 1
     assert result.timings_ns[0] > 0
@@ -53,7 +62,14 @@ def test_qupy_benchmark_records_exact_local_lightcone() -> None:
     assert result.valid
     assert result.result_value == pytest.approx(-math.sin(0.37), abs=1e-12)
     assert result.method == "statevector-lightcone"
+    assert result.metadata["original_qubits"] == 64
+    assert result.metadata["original_operations"] == 3
     assert result.metadata["active_qubits"] == 1
+    assert result.metadata["active_operations"] == 2
+    assert result.metadata["single_qubit_operations"] == 2
+    assert result.metadata["two_qubit_operations"] == 0
+    assert result.metadata["parameterized_operations"] == 1
+    assert result.metadata["non_clifford_operations"] == 1
     assert result.metadata["estimated_state_bytes"] == 32
 
 

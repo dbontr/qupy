@@ -55,6 +55,7 @@ constexpr std::size_t kAmplitudesPerThread = 1U << 13U;
 }
 
 constexpr std::uint32_t kIrVersion = 1U;
+constexpr std::uint32_t kWorkloadVersion = 1U;
 constexpr std::string_view kCoreVersion = "0.3.0a0";
 
 struct OperationSpec {
@@ -254,6 +255,97 @@ struct CompiledStep {
 
 [[nodiscard]] bool is_single_qubit(OperationCode code) {
     return operation_spec(code).qubits == 1U;
+}
+
+struct WorkloadFeatures {
+    std::size_t active_operations;
+    std::size_t single_qubit_operations;
+    std::size_t two_qubit_operations;
+    std::size_t parameterized_operations;
+    std::size_t non_clifford_operations;
+    std::string fingerprint;
+};
+
+[[nodiscard]] bool is_non_clifford(OperationCode code) noexcept {
+    return code == OperationCode::RX || code == OperationCode::RY || code == OperationCode::RZ;
+}
+
+[[nodiscard]] WorkloadFeatures workload_features(
+    const Program& source_program,
+    ResultMode result_mode,
+    std::size_t active_qubits,
+    const std::vector<Operation>& active_operations
+) {
+    std::size_t single_qubit_operations = 0U;
+    std::size_t two_qubit_operations = 0U;
+    std::size_t parameterized_operations = 0U;
+    std::size_t non_clifford_operations = 0U;
+    for (const Operation& operation : active_operations) {
+        if (is_single_qubit(operation.code)) {
+            ++single_qubit_operations;
+        } else {
+            ++two_qubit_operations;
+        }
+        if (!operation.parameters.empty()) {
+            ++parameterized_operations;
+        }
+        if (is_non_clifford(operation.code)) {
+            ++non_clifford_operations;
+        }
+    }
+
+    constexpr std::array<OperationCode, 10> operation_codes = {
+        OperationCode::H,
+        OperationCode::X,
+        OperationCode::Y,
+        OperationCode::Z,
+        OperationCode::RX,
+        OperationCode::RY,
+        OperationCode::RZ,
+        OperationCode::CX,
+        OperationCode::CZ,
+        OperationCode::SWAP,
+    };
+    std::array<std::size_t, operation_codes.size()> source_counts{};
+    for (const Operation& operation : source_program.operations()) {
+        const auto raw_code = static_cast<std::size_t>(operation.code);
+        if (raw_code >= source_counts.size()) {
+            throw std::logic_error("operation code is outside workload fingerprint schema");
+        }
+        ++source_counts[raw_code];
+    }
+
+    std::ostringstream canonical;
+    canonical.imbue(std::locale::classic());
+    canonical << "qupy-workload " << kWorkloadVersion << '\n';
+    canonical << "result " << result_mode_name(result_mode) << '\n';
+    canonical << "original-qubits " << source_program.num_qubits() << '\n';
+    canonical << "original-operations " << source_program.operations().size() << '\n';
+    canonical << "active-qubits " << active_qubits << '\n';
+    canonical << "active-operations " << active_operations.size() << '\n';
+    for (const OperationCode code : operation_codes) {
+        canonical << "source-count " << operation_name(code) << ' '
+                  << source_counts[static_cast<std::size_t>(code)] << '\n';
+    }
+    for (const Operation& operation : active_operations) {
+        canonical << "active-op " << operation_name(operation.code) << " q";
+        for (std::size_t index = 0; index < operation.qubits.size(); ++index) {
+            if (index != 0U) {
+                canonical << ',';
+            }
+            canonical << operation.qubits[index];
+        }
+        canonical << " p" << operation.parameters.size() << '\n';
+    }
+
+    return {
+        active_operations.size(),
+        single_qubit_operations,
+        two_qubit_operations,
+        parameterized_operations,
+        non_clifford_operations,
+        fingerprint_text(canonical.str()),
+    };
 }
 
 [[nodiscard]] Matrix2 single_matrix(
@@ -574,12 +666,17 @@ void validate_backend(const std::string& backend) {
     const Target& target,
     ResultMode result_mode,
     std::size_t original_operations,
+    const std::vector<Operation>& workload_operations,
     std::size_t compiled_steps,
     std::size_t active_qubits,
     std::size_t estimated_state_bytes,
     const std::string& method,
-    std::string_view qualifier = {}
+    std::string_view qualifier,
+    bool collect_workload_fingerprint
 ) {
+    const WorkloadFeatures features = collect_workload_fingerprint
+        ? workload_features(source_program, result_mode, active_qubits, workload_operations)
+        : WorkloadFeatures{workload_operations.size(), 0U, 0U, 0U, 0U, {}};
     const std::string program_fingerprint = source_program.fingerprint();
     const std::string target_fingerprint = target.fingerprint();
     std::ostringstream cache_key;
@@ -595,11 +692,19 @@ void validate_backend(const std::string& backend) {
         method,
         true,
         planned_threads(estimated_state_bytes),
+        source_program.num_qubits(),
         original_operations,
-        compiled_steps,
         active_qubits,
+        features.active_operations,
+        features.single_qubit_operations,
+        features.two_qubit_operations,
+        features.parameterized_operations,
+        features.non_clifford_operations,
+        compiled_steps,
         estimated_state_bytes,
         result_mode,
+        kWorkloadVersion,
+        features.fingerprint,
         program_fingerprint,
         target_fingerprint,
         cache_key.str(),
@@ -852,7 +957,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
 [[nodiscard]] PreparedProgram prepare_program(
     const Program& program,
     ResultMode result_mode,
-    const std::string& backend
+    const std::string& backend,
+    bool collect_workload_fingerprint = false
 ) {
     validate_backend(backend);
     const Target target = native_target();
@@ -863,10 +969,13 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         target,
         result_mode,
         program.operations().size(),
+        program.operations(),
         steps.size(),
         program.num_qubits(),
         state_memory_bytes(program.num_qubits()),
-        "statevector"
+        "statevector",
+        {},
+        collect_workload_fingerprint
     );
     return {std::move(execution_plan), std::move(steps)};
 }
@@ -939,7 +1048,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     const Program& program,
     PauliZ observable,
     ResultMode result_mode,
-    const std::string& backend
+    const std::string& backend,
+    bool collect_workload_fingerprint = false
 ) {
     if (observable.qubit >= program.num_qubits()) {
         throw std::invalid_argument("observable qubit is outside this program");
@@ -961,7 +1071,6 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     if (pauli_propagation) {
         method = "pauli-propagation";
         compiled_steps = reduced.operations.size();
-        pauli_operations = std::move(reduced.operations);
     } else {
         steps = compile_operations(reduced.active_qubits, reduced.operations);
         method = reduced.active_qubits < program.num_qubits()
@@ -977,12 +1086,17 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         target,
         result_mode,
         program.operations().size(),
+        reduced.operations,
         compiled_steps,
         reduced.active_qubits,
         estimated_state_bytes,
         method,
-        qualifier
+        qualifier,
+        collect_workload_fingerprint
     );
+    if (pauli_propagation) {
+        pauli_operations = std::move(reduced.operations);
+    }
     return {
         reduced.observable_qubit,
         std::move(execution_plan),
@@ -1412,7 +1526,7 @@ ExecutionPlan plan(
             "observable result mode requires expectation_plan or variance_plan"
         );
     }
-    return prepare_program(program, result_mode, backend).execution_plan;
+    return prepare_program(program, result_mode, backend, true).execution_plan;
 }
 
 ExecutionPlan expectation_plan(
@@ -1421,7 +1535,7 @@ ExecutionPlan expectation_plan(
     const std::string& backend
 ) {
     return prepare_expectation(
-        program, observable, ResultMode::Expectation, backend
+        program, observable, ResultMode::Expectation, backend, true
     ).execution_plan;
 }
 
@@ -1431,7 +1545,7 @@ ExecutionPlan variance_plan(
     const std::string& backend
 ) {
     return prepare_expectation(
-        program, observable, ResultMode::Variance, backend
+        program, observable, ResultMode::Variance, backend, true
     ).execution_plan;
 }
 

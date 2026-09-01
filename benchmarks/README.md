@@ -22,10 +22,12 @@ The JSON report records:
 - warmup count and raw nanosecond timing samples;
 - median, minimum, and maximum timing;
 - host platform and Python version;
-- QuPy planner evidence such as active qubits, compiled steps, estimated state bytes, thread count, core version, and IR version;
+- QuPy planner evidence including the versioned structural workload fingerprint, original/active qubits and operations, gate-class counts, compiled steps, estimated state bytes, thread count, core version, and IR version;
 - explicit skip reasons for unsupported workload/engine pairs.
 
 Skipped work is never replaced by a different simulation method without being reported.
+
+QuPy workload fingerprints are performance-structure identities, not exact program identities. Version 1 includes the result mode, original qubit count and gate histogram, active qubit count, and the result-aware active operation shape. Gate parameter values, target identity, selected execution method, host, and timing are deliberately excluded. Parameter sweeps over the same structure therefore share one workload fingerprint, while each benchmark result still records the selected method and host separately. `program_fingerprint` remains the exact semantic program identity for caching and reproducibility.
 
 ## Profiles
 
