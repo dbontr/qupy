@@ -1,5 +1,7 @@
 #include "qupy/core.hpp"
 
+#include "stabilizer.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -73,6 +75,7 @@ constexpr int kMaximumOpenMpTeam = 16;
 
 constexpr std::uint32_t kIrVersion = 1U;
 constexpr std::uint32_t kWorkloadVersion = 1U;
+constexpr std::size_t kStabilizerSamplingMinQubits = 24U;
 constexpr std::uint32_t kPlannerCostSchemaVersion = 1U;
 constexpr double kPlannerPromotionMaxHoldoutMedianFactor = 1.5;
 constexpr double kPlannerPromotionMaxHoldoutFactor = 2.0;
@@ -845,7 +848,8 @@ void validate_backend(const std::string& backend) {
     }
 
     ExecutionPlan execution_plan{
-        target.name, method, true, planned_threads(estimated_state_bytes),
+        target.name, method, true,
+        method == "stabilizer" ? 1U : planned_threads(estimated_state_bytes),
         source_program.num_qubits(), original_operations, active_qubits,
         features.active_operations, features.single_qubit_operations,
         features.two_qubit_operations, features.parameterized_operations,
@@ -853,7 +857,7 @@ void validate_backend(const std::string& backend) {
         result_mode, kWorkloadVersion, features.fingerprint, program_fingerprint,
         target_fingerprint, cache_key.str(), std::nullopt, {}, {}, {},
     };
-    if (cost_model != nullptr) {
+    if (cost_model != nullptr && method != "stabilizer") {
         execution_plan.predicted_ns = cost_model->predict_ns(execution_plan);
         execution_plan.cost_model_class = plan_cost_class(execution_plan);
         execution_plan.cost_model_fingerprint = cost_model->artifact_fingerprint();
@@ -1115,6 +1119,27 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     validate_backend(backend);
     const Target target = native_target();
     target.validate(program, result_mode);
+    if (
+        result_mode == ResultMode::Sample &&
+        program.num_qubits() >= kStabilizerSamplingMinQubits &&
+        detail::supports_stabilizer(program)
+    ) {
+        ExecutionPlan execution_plan = make_plan(
+            program,
+            target,
+            result_mode,
+            program.operations().size(),
+            program.operations(),
+            program.operations().size(),
+            program.num_qubits(),
+            detail::stabilizer_state_bytes(program.num_qubits()),
+            "stabilizer",
+            {},
+            collect_workload_fingerprint,
+            cost_model
+        );
+        return {std::move(execution_plan), {}};
+    }
     std::vector<CompiledStep> steps = compile_program(program);
     ExecutionPlan execution_plan = make_plan(
         program,
@@ -1938,12 +1963,21 @@ Samples sample(
         throw std::invalid_argument("shots must be at least 1");
     }
     PreparedProgram prepared = prepare_program(program, ResultMode::Sample, backend);
+    std::mt19937_64 generator = sampling_generator(seed);
+    if (prepared.execution_plan.method == "stabilizer") {
+        const detail::StabilizerSupport support = detail::build_stabilizer_support(program);
+        return {
+            detail::draw_stabilizer_samples(support, shots, generator),
+            shots,
+            program.num_qubits(),
+            prepared.execution_plan.backend,
+        };
+    }
+
     const std::vector<Complex>& state = run_statevector_workspace(
         program.num_qubits(), prepared.steps
     );
     const AliasSampler distribution(state_probabilities(state));
-    std::mt19937_64 generator = sampling_generator(seed);
-
     const std::size_t value_count = checked_product(
         shots, program.num_qubits(), "sample result shape exceeds native address space"
     );
@@ -1979,6 +2013,30 @@ SamplesBatch sample_batch(
 
     const ParameterLayout layout = parameter_layout(program, slots);
     validate_parameter_batch_values(layout, parameter_values, batch_size);
+    if (
+        layout.parameter_count == 0U &&
+        program.num_qubits() >= kStabilizerSamplingMinQubits &&
+        detail::supports_stabilizer(program)
+    ) {
+        const std::size_t total_shots = checked_product(
+            batch_size, shots, "sample batch shot count exceeds native address space"
+        );
+        std::mt19937_64 generator = sampling_generator(seed);
+        const detail::StabilizerSupport support = detail::build_stabilizer_support(program);
+        std::vector<std::int8_t> values = detail::draw_stabilizer_samples(
+            support, total_shots, generator
+        );
+        return {
+            std::move(values),
+            batch_size,
+            shots,
+            program.num_qubits(),
+            0U,
+            target.name,
+            program.operations().size(),
+            detail::stabilizer_state_bytes(program.num_qubits()),
+        };
+    }
     const std::vector<BatchCompiledStep> batch_steps = compile_parameterized_operations(
         program.num_qubits(), program.operations(), operation_indices(program), layout
     );

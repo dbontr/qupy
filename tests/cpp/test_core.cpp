@@ -1,7 +1,9 @@
 #include "qupy/core.hpp"
+#include "stabilizer.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -190,6 +192,24 @@ void test_native_planner_cost_artifact() {
         costed.cost_model_fingerprint == model.artifact_fingerprint(),
         "plan cost-model provenance is wrong"
     );
+
+    qupy::Program stabilizer_program(24U);
+    stabilizer_program = qupy::h(stabilizer_program, 0U);
+    for (std::size_t qubit = 1U; qubit < 24U; ++qubit) {
+        stabilizer_program = qupy::cx(stabilizer_program, qubit - 1U, qubit);
+    }
+    const auto stabilizer_plan = qupy::plan(
+        stabilizer_program, qupy::ResultMode::Sample, "auto", &model
+    );
+    require(stabilizer_plan.method == "stabilizer", "cost evidence blocked stabilizer planning");
+    require(
+        !stabilizer_plan.predicted_ns.has_value(),
+        "state-vector cost model predicted an unsupported stabilizer plan"
+    );
+    require(
+        stabilizer_plan.cost_model_fingerprint.empty(),
+        "unsupported stabilizer plan claimed cost-model provenance"
+    );
     require(std::filesystem::remove(artifact), "planner cost fixture was not removed");
 }
 
@@ -322,6 +342,170 @@ void test_parameter_binding_and_batches() {
         rejected = true;
     }
     require(rejected, "non-finite parameter batch value was not rejected");
+}
+
+[[nodiscard]] qupy::Program ghz_program(std::size_t num_qubits) {
+    qupy::Program program(num_qubits);
+    program = qupy::h(program, 0U);
+    for (std::size_t qubit = 1U; qubit < num_qubits; ++qubit) {
+        program = qupy::cx(program, qubit - 1U, qubit);
+    }
+    return program;
+}
+
+void require_stabilizer_support_matches_dense(
+    const qupy::Program& program,
+    const std::string& label
+) {
+    require(program.num_qubits() <= 10U, "support conformance fixture is too large");
+    const qupy::detail::StabilizerSupport support =
+        qupy::detail::build_stabilizer_support(program);
+    require(support.word_count == 1U, "small support fixture unexpectedly spans multiple words");
+    require(support.rank < 63U, "support fixture rank is too large to enumerate");
+
+    const std::size_t dimension = std::size_t{1} << program.num_qubits();
+    const std::size_t support_size = std::size_t{1} << support.rank;
+    std::vector<bool> expected_support(dimension, false);
+    for (std::size_t mask = 0U; mask < support_size; ++mask) {
+        std::uint64_t basis = support.base[0];
+        for (std::size_t row = 0U; row < support.rank; ++row) {
+            if (((mask >> row) & 1U) != 0U) {
+                basis ^= support.generators[row];
+            }
+        }
+        require(basis < dimension, label + " produced an out-of-range support state");
+        require(!expected_support[static_cast<std::size_t>(basis)], label + " support basis is dependent");
+        expected_support[static_cast<std::size_t>(basis)] = true;
+    }
+
+    const qupy::StateVector dense = qupy::statevector(program);
+    const double expected_probability = 1.0 / static_cast<double>(support_size);
+    for (std::size_t basis = 0U; basis < dimension; ++basis) {
+        const double probability = std::norm(dense.values[basis]);
+        if (expected_support[basis]) {
+            require(
+                std::abs(probability - expected_probability) <= kTolerance,
+                label + " support probability disagrees with dense statevector"
+            );
+        } else {
+            require(
+                probability <= kTolerance,
+                label + " omitted a nonzero dense-state basis value"
+            );
+        }
+    }
+}
+
+void test_stabilizer_support_matches_dense_statevector() {
+    qupy::Program shifted(4);
+    shifted = qupy::x(shifted, 0U);
+    shifted = qupy::y(shifted, 1U);
+    shifted = qupy::z(shifted, 1U);
+    shifted = qupy::h(shifted, 2U);
+    shifted = qupy::cx(shifted, 2U, 3U);
+    shifted = qupy::cz(shifted, 0U, 3U);
+    shifted = qupy::swap(shifted, 1U, 2U);
+    require_stabilizer_support_matches_dense(shifted, "shifted Clifford fixture");
+
+    qupy::Program mixed(5);
+    mixed = qupy::h(mixed, 0U);
+    mixed = qupy::h(mixed, 2U);
+    mixed = qupy::x(mixed, 4U);
+    mixed = qupy::cx(mixed, 0U, 1U);
+    mixed = qupy::cz(mixed, 2U, 3U);
+    mixed = qupy::swap(mixed, 1U, 4U);
+    mixed = qupy::y(mixed, 3U);
+    mixed = qupy::h(mixed, 4U);
+    mixed = qupy::cx(mixed, 4U, 0U);
+    mixed = qupy::z(mixed, 2U);
+    require_stabilizer_support_matches_dense(mixed, "mixed Clifford fixture");
+
+    const qupy::Program ghz = ghz_program(6U);
+    require_stabilizer_support_matches_dense(ghz, "GHZ Clifford fixture");
+
+    for (std::size_t fixture = 0U; fixture < 64U; ++fixture) {
+        qupy::Program generated(2U);
+        for (std::size_t step = 0U; step < 24U; ++step) {
+            const std::size_t gate = (fixture * 5U + step * 7U + step * step) % 12U;
+            generated = append_clifford_gate(std::move(generated), gate);
+        }
+        require_stabilizer_support_matches_dense(
+            generated, "generated Clifford fixture " + std::to_string(fixture)
+        );
+    }
+
+    qupy::Program non_clifford(2);
+    non_clifford = qupy::ry(non_clifford, 0.37, 0U);
+    require(
+        !qupy::detail::supports_stabilizer(non_clifford),
+        "non-Clifford rotation was accepted by stabilizer support"
+    );
+    bool rejected = false;
+    try {
+        static_cast<void>(qupy::detail::build_stabilizer_support(non_clifford));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "non-Clifford stabilizer construction was not rejected");
+}
+
+void test_stabilizer_sampling_planner_and_execution() {
+    const qupy::Program below_threshold = ghz_program(23U);
+    const auto below_plan = qupy::plan(below_threshold, qupy::ResultMode::Sample);
+    require(below_plan.method == "statevector", "small Clifford sampling changed methods");
+
+    const qupy::Program large = ghz_program(24U);
+    const auto large_plan = qupy::plan(large, qupy::ResultMode::Sample);
+    require(large_plan.method == "stabilizer", "large Clifford sampling missed stabilizer execution");
+    require(large_plan.threads == 1U, "stabilizer execution must currently be serial");
+    require(large_plan.estimated_state_bytes == 408U, "24-qubit stabilizer memory estimate is wrong");
+    require(
+        large_plan.estimated_state_bytes < (std::size_t{1} << 24U) * sizeof(qupy::Complex),
+        "stabilizer plan did not reduce exponential state memory"
+    );
+
+    qupy::Program non_clifford(24U);
+    non_clifford = qupy::ry(non_clifford, 0.37, 0U);
+    require(
+        qupy::plan(non_clifford, qupy::ResultMode::Sample).method == "statevector",
+        "non-Clifford sampling incorrectly selected stabilizer execution"
+    );
+
+    const qupy::Samples first = qupy::sample(large, 32U, 7U);
+    const qupy::Samples second = qupy::sample(large, 32U, 7U);
+    require(first.values == second.values, "stabilizer seeded sampling is not deterministic");
+    const auto counts = first.counts();
+    require(counts.size() == 2U, "GHZ stabilizer sampling returned impossible basis states");
+    const std::string zeros(24U, '0');
+    const std::string ones(24U, '1');
+    require(counts.contains(zeros), "GHZ stabilizer sampling did not return all-zero state");
+    require(counts.contains(ones), "GHZ stabilizer sampling did not return all-one state");
+    const std::string expected_bits = "11100101100110110110011011010111";
+    for (std::size_t shot = 0U; shot < expected_bits.size(); ++shot) {
+        const std::int8_t expected = static_cast<std::int8_t>(expected_bits[shot] - '0');
+        for (std::size_t qubit = 0U; qubit < 24U; ++qubit) {
+            require(
+                first.values[shot * 24U + qubit] == expected,
+                "stabilizer seeded sampling sequence changed"
+            );
+        }
+    }
+
+    const qupy::SamplesBatch batch = qupy::sample_batch(
+        large, {}, {}, 2U, 16U, 7U
+    );
+    require(batch.batch_size == 2U, "stabilizer sample batch row count is wrong");
+    require(batch.estimated_state_bytes == 408U, "stabilizer sample batch memory is wrong");
+    require(
+        batch.values == first.values,
+        "stabilizer batch did not preserve the scalar row-major random stream"
+    );
+    for (std::size_t row = 0U; row < batch.batch_size; ++row) {
+        const auto row_counts = batch.counts(row);
+        require(row_counts.size() == 2U, "stabilizer sample batch returned impossible states");
+        require(row_counts.contains(zeros), "stabilizer sample batch omitted all-zero state");
+        require(row_counts.contains(ones), "stabilizer sample batch omitted all-one state");
+    }
 }
 
 void test_internal_state_workspace_resets_between_calls() {
@@ -571,6 +755,8 @@ int main() {
         test_results_and_planner();
         test_native_planner_cost_artifact();
         test_parameter_binding_and_batches();
+        test_stabilizer_support_matches_dense_statevector();
+        test_stabilizer_sampling_planner_and_execution();
         test_internal_state_workspace_resets_between_calls();
         test_semantic_identity();
         test_compiler_fusion();

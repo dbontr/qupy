@@ -46,6 +46,7 @@ C++20 QuPy core
     |-- target capability validation
     |-- result-aware execution planner and cache identity
     |-- exact Pauli propagation for eligible observables
+    |-- bit-packed stabilizer sampling for large Clifford programs
     |-- gate kernels and state-vector runtime
     |-- sampling and expectation evaluation
     `-- typed result storage
@@ -64,6 +65,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - explicit target capabilities and result-aware execution plans with versioned structural workload fingerprints
 - versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation
+- exact bit-packed stabilizer sampling for large Clifford programs with polynomial state memory
 - exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones
 - probabilities, Pauli-Z expectations, and Pauli-Z variances
 - platform-independent deterministic seeded sampling
@@ -120,6 +122,23 @@ print(plan.cache_key)
 ```
 
 Automatic execution preserves declared semantics. Execution strategies can change without moving backend policy into Python.
+
+### Stabilizer sampling
+
+For sampling-only Clifford programs at 24 qubits or larger, the native planner selects `stabilizer`. The engine conjugates a bit-packed stabilizer tableau through H, X, Y, Z, CX, CZ, and SWAP gates, reduces its computational-basis support to an affine GF(2) subspace, and samples that support without allocating a dense state vector. RX, RY, and RZ currently remain on the state-vector path even when a particular angle could represent a Clifford operation.
+
+```python
+program = qp.Program(24)
+program = qp.h(program, 0)
+for qubit in range(1, 24):
+    program = qp.cx(program, qubit - 1, qubit)
+
+plan = qp.plan(program, qp.ResultMode.SAMPLE)
+print(plan.method)                 # stabilizer
+print(plan.estimated_state_bytes)  # 408
+```
+
+The 24-qubit threshold keeps the established small-circuit seeded state-vector sampling contract unchanged. Stabilizer sampling has its own pinned cross-platform seed vector. Zero-parameter `sample_batch` calls reuse one stabilizer support across rows. Current planner cost artifacts predate the stabilizer class, so a valid state-vector/Pauli cost model may accompany a stabilizer plan but does not claim a stabilizer prediction.
 
 ### Validated planner cost evidence
 
@@ -198,7 +217,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation is the first specialized exact method selected by the native planner. Workload fingerprint version 1, held-out calibration, and validated native planner cost artifacts provide host-scoped predicted-runtime evidence with explicit provenance. Automatic method selection remains unchanged until competing methods or backends demonstrate better held-out decisions under the same contracts. Broader stabilizer, CUDA/cuQuantum, tensor-network, noise, and physical-QPU engines remain additional planner targets behind the shared conformance boundary.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. Workload fingerprint version 1, held-out calibration, and validated native planner cost artifacts provide host-scoped predicted-runtime evidence with explicit provenance for calibrated classes. CUDA/cuQuantum, tensor-network, noise, richer-observable, and physical-QPU engines remain additional planner targets behind the shared conformance boundary.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 
