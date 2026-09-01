@@ -767,12 +767,13 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     };
 }
 
-[[nodiscard]] StateVector run_statevector(
+void evolve_statevector(
+    std::vector<Complex>& state,
     std::size_t num_qubits,
-    const std::vector<CompiledStep>& steps,
-    const ExecutionPlan& execution_plan
+    const std::vector<CompiledStep>& steps
 ) {
-    std::vector<Complex> state(state_dimension(num_qubits), Complex{0.0, 0.0});
+    state.resize(state_dimension(num_qubits));
+    std::fill(state.begin(), state.end(), Complex{0.0, 0.0});
     state.front() = Complex{1.0, 0.0};
 
     for (const CompiledStep& step : steps) {
@@ -791,8 +792,26 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
             break;
         }
     }
+}
 
+[[nodiscard]] StateVector run_statevector(
+    std::size_t num_qubits,
+    const std::vector<CompiledStep>& steps,
+    const ExecutionPlan& execution_plan
+) {
+    std::vector<Complex> state;
+    evolve_statevector(state, num_qubits, steps);
     return {std::move(state), execution_plan.backend};
+}
+
+[[nodiscard]] const std::vector<Complex>& run_statevector_workspace(
+    std::size_t num_qubits,
+    const std::vector<CompiledStep>& steps
+) {
+    // Internal execution has no user callbacks. A per-thread buffer avoids shared mutable state.
+    thread_local std::vector<Complex> state;
+    evolve_statevector(state, num_qubits, steps);
+    return state;
 }
 
 [[nodiscard]] std::vector<double> state_probabilities(const std::vector<Complex>& state) {
@@ -1159,10 +1178,10 @@ StateVector statevector(const Program& program, const std::string& backend) {
 
 Probabilities probabilities(const Program& program, const std::string& backend) {
     PreparedProgram prepared = prepare_program(program, ResultMode::Probabilities, backend);
-    StateVector state = run_statevector(
-        program.num_qubits(), prepared.steps, prepared.execution_plan
+    const std::vector<Complex>& state = run_statevector_workspace(
+        program.num_qubits(), prepared.steps
     );
-    return {state_probabilities(state.values), prepared.execution_plan.backend};
+    return {state_probabilities(state), prepared.execution_plan.backend};
 }
 
 Samples sample(
@@ -1175,8 +1194,10 @@ Samples sample(
         throw std::invalid_argument("shots must be at least 1");
     }
     PreparedProgram prepared = prepare_program(program, ResultMode::Sample, backend);
-    StateVector state = run_statevector(program.num_qubits(), prepared.steps, prepared.execution_plan);
-    const std::vector<double> probabilities = state_probabilities(state.values);
+    const std::vector<Complex>& state = run_statevector_workspace(
+        program.num_qubits(), prepared.steps
+    );
+    const std::vector<double> probabilities = state_probabilities(state);
 
     std::mt19937_64 generator;
     if (seed.has_value()) {
@@ -1221,10 +1242,10 @@ Expectation expectation(
             prepared.observable_qubit
         );
     } else {
-        StateVector state = run_statevector(
-            prepared.execution_plan.active_qubits, prepared.steps, prepared.execution_plan
+        const std::vector<Complex>& state = run_statevector_workspace(
+            prepared.execution_plan.active_qubits, prepared.steps
         );
-        value = pauli_z_value(state.values, prepared.observable_qubit);
+        value = pauli_z_value(state, prepared.observable_qubit);
     }
 
     return {
@@ -1252,10 +1273,10 @@ Variance variance(
             prepared.observable_qubit
         );
     } else {
-        StateVector state = run_statevector(
-            prepared.execution_plan.active_qubits, prepared.steps, prepared.execution_plan
+        const std::vector<Complex>& state = run_statevector_workspace(
+            prepared.execution_plan.active_qubits, prepared.steps
         );
-        expectation_value = pauli_z_value(state.values, prepared.observable_qubit);
+        expectation_value = pauli_z_value(state, prepared.observable_qubit);
     }
     const double variance_value = std::max(0.0, 1.0 - expectation_value * expectation_value);
     return {

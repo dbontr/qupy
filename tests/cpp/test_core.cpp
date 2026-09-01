@@ -136,6 +136,27 @@ void test_results_and_planner() {
     require(parallel_plan.threads == expected_threads, "16-qubit plan thread count is wrong");
 }
 
+void test_internal_state_workspace_resets_between_calls() {
+    const double pi = std::acos(-1.0);
+    qupy::Program large(3);
+    large = qupy::ry(large, pi, 0);
+    large = qupy::cx(large, 0, 1);
+    large = qupy::cx(large, 1, 2);
+
+    const auto first = qupy::expectation(large, qupy::pauli_z(2));
+    require(std::abs(first.value + 1.0) <= kTolerance, "large workspace expectation is wrong");
+    const auto large_probabilities = qupy::probabilities(large);
+    require_close(large_probabilities.values.back(), 1.0, "large workspace state is wrong");
+
+    qupy::Program small(1);
+    small = qupy::ry(small, 0.0, 0);
+    const auto middle = qupy::expectation(small, qupy::pauli_z(0));
+    require(std::abs(middle.value - 1.0) <= kTolerance, "workspace did not reset when shrinking");
+
+    const auto repeated = qupy::expectation(large, qupy::pauli_z(2));
+    require(std::abs(repeated.value + 1.0) <= kTolerance, "workspace did not reset when growing");
+}
+
 void test_semantic_identity() {
     qupy::Program first(2);
     first = qupy::h(first, 0);
@@ -346,6 +367,7 @@ int main() {
         test_rotation_and_pauli_gates();
         test_two_qubit_gates();
         test_results_and_planner();
+        test_internal_state_workspace_resets_between_calls();
         test_semantic_identity();
         test_compiler_fusion();
         test_clifford_expectation_uses_pauli_propagation();
