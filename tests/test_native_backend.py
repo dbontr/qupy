@@ -49,6 +49,7 @@ def test_bell_z_expectation_is_zero() -> None:
     result = qp.expect(bell_program(), qp.Z(0))
     assert result.value == pytest.approx(0.0, abs=1e-12)
     assert result.backend == "native-cpu"
+    assert result.estimated_state_bytes == 0
 
 
 def test_native_probabilities_and_variance() -> None:
@@ -61,6 +62,7 @@ def test_native_probabilities_and_variance() -> None:
     result = qp.variance(program, qp.Z(0))
     assert result.value == pytest.approx(1.0, abs=1e-12)
     assert result.active_qubits == 2
+    assert result.estimated_state_bytes == 0
 
     expectation_plan = qp.expectation_plan(program, qp.Z(0))
     variance_plan = qp.variance_plan(program, qp.Z(0))
@@ -174,36 +176,53 @@ def test_native_compiler_fuses_single_qubit_runs() -> None:
     assert execution_plan.active_qubits == 2
 
 
-def test_expectation_planner_reduces_to_exact_reverse_lightcone() -> None:
+def test_expectation_planner_uses_zero_state_pauli_propagation() -> None:
     program = qp.Program(100)
     program = qp.h(program, 0)
     program = qp.x(program, 98)
     program = qp.ry(program, 0.7, 99)
 
     execution_plan = qp.expectation_plan(program, qp.Z(0))
-    assert execution_plan.method == "statevector-lightcone"
+    assert execution_plan.method == "pauli-propagation"
     assert execution_plan.exact
     assert execution_plan.active_qubits == 1
     assert execution_plan.compiled_steps == 1
-    assert execution_plan.estimated_state_bytes == 32
+    assert execution_plan.estimated_state_bytes == 0
     result = qp.expect(program, qp.Z(0))
     assert result.value == pytest.approx(0.0, abs=1e-12)
     assert result.active_qubits == 1
     assert result.compiled_steps == 1
+    assert result.estimated_state_bytes == 0
+
+
+def test_expectation_planner_falls_back_for_relevant_non_clifford() -> None:
+    program = qp.Program(64)
+    program = qp.h(program, 0)
+    program = qp.ry(program, 0.7, 0)
+    program = qp.x(program, 63)
+
+    execution_plan = qp.expectation_plan(program, qp.Z(0))
+    assert execution_plan.method == "statevector-lightcone"
+    assert execution_plan.exact
+    assert execution_plan.active_qubits == 1
+    assert execution_plan.estimated_state_bytes == 32
+    result = qp.expect(program, qp.Z(0))
+    assert result.value == pytest.approx(-math.sin(0.7), abs=1e-12)
     assert result.estimated_state_bytes == 32
 
 
-def test_expectation_lightcone_expands_across_entanglement() -> None:
+def test_pauli_propagation_tracks_entanglement_and_ignores_unrelated_rotations() -> None:
     program = qp.Program(64)
     program = qp.h(program, 0)
     program = qp.cx(program, 0, 37)
-    program = qp.x(program, 63)
+    program = qp.ry(program, 0.7, 63)
 
     execution_plan = qp.expectation_plan(program, qp.Z(37))
-    assert execution_plan.method == "statevector-lightcone"
+    assert execution_plan.method == "pauli-propagation"
     assert execution_plan.active_qubits == 2
-    assert execution_plan.estimated_state_bytes == 64
+    assert execution_plan.estimated_state_bytes == 0
 
     result = qp.expect(program, qp.Z(37))
     assert result.value == pytest.approx(0.0, abs=1e-12)
     assert result.active_qubits == 2
+    assert result.estimated_state_bytes == 0
