@@ -21,8 +21,38 @@ namespace qupy {
 namespace {
 
 #ifdef QUPY_HAS_OPENMP
-constexpr std::size_t kParallelThreshold = 1U << 16U;
+constexpr std::size_t kParallelMinimumState = 1U << 16U;
+constexpr std::size_t kAmplitudesPerThread = 1U << 13U;
+
+[[nodiscard]] int parallel_team_size(std::size_t state_size) noexcept {
+    if (state_size < kParallelMinimumState) {
+        return 1;
+    }
+    const int max_threads = omp_get_max_threads();
+    omp_set_num_threads(max_threads);
+    if (max_threads <= 1) {
+        return 1;
+    }
+    const std::size_t useful_threads = std::max<std::size_t>(
+        1U, state_size / kAmplitudesPerThread
+    );
+    return static_cast<int>(std::min<std::size_t>(
+        static_cast<std::size_t>(max_threads), useful_threads
+    ));
+}
 #endif
+
+[[nodiscard]] std::size_t planned_threads(std::size_t state_bytes) noexcept {
+#ifdef QUPY_HAS_OPENMP
+    if (state_bytes == 0U) {
+        return 1U;
+    }
+    return static_cast<std::size_t>(parallel_team_size(state_bytes / sizeof(Complex)));
+#else
+    static_cast<void>(state_bytes);
+    return 1U;
+#endif
+}
 
 constexpr std::uint32_t kIrVersion = 1U;
 constexpr std::string_view kCoreVersion = "0.3.0a0";
@@ -359,7 +389,7 @@ void validate_backend(const std::string& backend) {
         target.name,
         method,
         true,
-        parallel_threads(),
+        planned_threads(estimated_state_bytes),
         original_operations,
         compiled_steps,
         active_qubits,
@@ -401,7 +431,8 @@ void apply_single(
     const auto stride = static_cast<std::ptrdiff_t>(block);
 
 #ifdef QUPY_HAS_OPENMP
-#pragma omp parallel for schedule(static) if(state.size() >= kParallelThreshold)
+    const int threads = parallel_team_size(state.size());
+#pragma omp parallel for schedule(static) if(threads > 1) num_threads(threads)
 #endif
     for (std::ptrdiff_t base = 0; base < dimension; base += stride) {
         const auto first = static_cast<std::size_t>(base);
@@ -426,7 +457,8 @@ void apply_cx(
     const auto pairs = static_cast<std::ptrdiff_t>(state.size() >> 2U);
 
 #ifdef QUPY_HAS_OPENMP
-#pragma omp parallel for schedule(static) if(state.size() >= kParallelThreshold)
+    const int threads = parallel_team_size(state.size());
+#pragma omp parallel for schedule(static) if(threads > 1) num_threads(threads)
 #endif
     for (std::ptrdiff_t raw = 0; raw < pairs; ++raw) {
         const std::size_t base = expand_two_zero_bits(
@@ -447,7 +479,8 @@ void apply_cz(
     const auto pairs = static_cast<std::ptrdiff_t>(state.size() >> 2U);
 
 #ifdef QUPY_HAS_OPENMP
-#pragma omp parallel for schedule(static) if(state.size() >= kParallelThreshold)
+    const int threads = parallel_team_size(state.size());
+#pragma omp parallel for schedule(static) if(threads > 1) num_threads(threads)
 #endif
     for (std::ptrdiff_t raw = 0; raw < pairs; ++raw) {
         const std::size_t base = expand_two_zero_bits(
@@ -468,7 +501,8 @@ void apply_swap(
     const auto pairs = static_cast<std::ptrdiff_t>(state.size() >> 2U);
 
 #ifdef QUPY_HAS_OPENMP
-#pragma omp parallel for schedule(static) if(state.size() >= kParallelThreshold)
+    const int threads = parallel_team_size(state.size());
+#pragma omp parallel for schedule(static) if(threads > 1) num_threads(threads)
 #endif
     for (std::ptrdiff_t raw = 0; raw < pairs; ++raw) {
         const std::size_t base = expand_two_zero_bits(
@@ -764,7 +798,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
 [[nodiscard]] std::vector<double> state_probabilities(const std::vector<Complex>& state) {
     std::vector<double> probabilities(state.size());
 #ifdef QUPY_HAS_OPENMP
-#pragma omp parallel for schedule(static) if(state.size() >= kParallelThreshold)
+    const int threads = parallel_team_size(state.size());
+#pragma omp parallel for schedule(static) if(threads > 1) num_threads(threads)
 #endif
     for (std::ptrdiff_t raw = 0; raw < static_cast<std::ptrdiff_t>(state.size()); ++raw) {
         const auto index = static_cast<std::size_t>(raw);
@@ -780,7 +815,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     const std::size_t mask = std::size_t{1} << qubit;
     double value = 0.0;
 #ifdef QUPY_HAS_OPENMP
-#pragma omp parallel for reduction(+ : value) schedule(static) if(state.size() >= kParallelThreshold)
+    const int threads = parallel_team_size(state.size());
+#pragma omp parallel for reduction(+ : value) schedule(static) if(threads > 1) num_threads(threads)
 #endif
     for (std::ptrdiff_t raw = 0; raw < static_cast<std::ptrdiff_t>(state.size()); ++raw) {
         const auto index = static_cast<std::size_t>(raw);
