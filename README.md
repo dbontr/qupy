@@ -4,7 +4,7 @@ QuPy is a NumPy-style quantum numerical-computing layer for simulators, hybrid q
 
 The project aims for one compact Python programming model while preserving the differences that matter on quantum hardware. Classical parameters use the existing array ecosystem. Qubits, measurements, target constraints, and quantum result requests use explicit quantum semantics.
 
-> **Status:** early alpha. The first reference backend is implemented; the public API and compiler IR will evolve.
+> **Status:** early alpha. The reference backend works now. The public API and compiler IR can still change.
 
 ## Quick start
 
@@ -24,10 +24,10 @@ print(energy.value)
 print(state.values)
 ```
 
-The same program object is designed to become portable across compatible CPU, GPU, specialized-simulator, and QPU targets. Unsupported semantics must fail during validation rather than degrade silently.
+QuPy aims to run the same program on compatible CPU, GPU, specialized-simulator, and QPU targets. Unsupported semantics must fail during validation rather than degrade silently.
 ## Architecture direction
 
-QuPy is structured as a compiler/runtime rather than a simulator wrapper:
+QuPy uses a compiler/runtime structure rather than a simulator wrapper:
 
 1. A compact Python API builds or captures a quantum program.
 2. A typed QuPy IR becomes the stable transformation boundary.
@@ -36,7 +36,7 @@ QuPy is structured as a compiler/runtime rather than a simulator wrapper:
 5. A planner selects an exact execution strategy by default from the requested result and available targets.
 6. A backend executes the lowered program and returns a typed result.
 
-`backend="auto"` is intended to choose among dense state-vector, stabilizer, tensor-network, Pauli-propagation, distributed, or physical-QPU execution. Approximate execution will require an explicit accuracy policy.
+`backend="auto"` will choose among dense state-vector, stabilizer, tensor-network, Pauli-propagation, distributed, or physical-QPU execution. Approximate execution requires an explicit accuracy policy.
 
 ## Current reference slice
 
@@ -54,7 +54,7 @@ Implemented now:
 The NumPy backend is the correctness oracle for future backend conformance tests.
 ## Development
 
-QuPy currently requires Python 3.12 or newer. The distribution name is provisionally `qupy-compute`; the import package is `qupy`.
+QuPy currently requires Python 3.12 or newer. The provisional distribution name is `qupy-compute`. The import package is `qupy`.
 
 ```text
 uv sync
