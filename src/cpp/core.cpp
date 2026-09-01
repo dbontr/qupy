@@ -25,7 +25,7 @@ constexpr std::size_t kParallelThreshold = 1U << 16U;
 #endif
 
 constexpr std::uint32_t kIrVersion = 1U;
-constexpr std::string_view kCoreVersion = "0.4.0a0";
+constexpr std::string_view kCoreVersion = "0.3.0a0";
 
 struct OperationSpec {
     std::size_t qubits;
