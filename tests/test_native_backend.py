@@ -403,6 +403,12 @@ def test_native_cost_model_is_inspectable_without_changing_selection(tmp_path) -
         ),
     )
     payload = artifact.read_text(encoding="utf-8")
+    crlf_artifact = tmp_path / "planner-crlf.qpcost"
+    crlf_artifact.write_bytes(payload.replace("\n", "\r\n").encode("utf-8"))
+    crlf_model = qp.load_planner_cost_model(str(crlf_artifact))
+    assert crlf_model.host_fingerprint == qp.planner_host_fingerprint()
+    assert crlf_model.cost_classes == model.cost_classes
+
     for name, old, new, message in invalid_cases:
         candidate = tmp_path / name
         candidate.write_text(payload.replace(old, new), encoding="utf-8")

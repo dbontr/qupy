@@ -118,8 +118,14 @@ constexpr std::string_view kCoreVersion = "0.3.0a0";
         }
     }
 #elif defined(_WIN32)
-    if (const char* identifier = std::getenv("PROCESSOR_IDENTIFIER"); identifier != nullptr) {
-        return identifier;
+    char* identifier = nullptr;
+    std::size_t length = 0U;
+    if (_dupenv_s(&identifier, &length, "PROCESSOR_IDENTIFIER") == 0 && identifier != nullptr) {
+        const std::string result(identifier);
+        std::free(identifier);
+        if (!result.empty()) {
+            return result;
+        }
     }
 #elif defined(__linux__)
     std::ifstream cpuinfo("/proc/cpuinfo");
@@ -1683,6 +1689,12 @@ std::string planner_host_fingerprint() {
     return fingerprint_text(planner_host_text());
 }
 
+void strip_trailing_carriage_return(std::string& line) {
+    if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+    }
+}
+
 PlannerCostModel load_planner_cost_model(const std::string& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -1693,7 +1705,11 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     };
     std::istringstream lines(text);
     std::string line;
-    if (!std::getline(lines, line) || line != "qupy-planner-cost 1") {
+    if (!std::getline(lines, line)) {
+        throw std::invalid_argument("planner cost artifact has an unsupported schema");
+    }
+    strip_trailing_carriage_return(line);
+    if (line != "qupy-planner-cost 1") {
         throw std::invalid_argument("planner cost artifact has an unsupported schema");
     }
 
@@ -1705,6 +1721,7 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     bool validated = false;
     std::set<std::string> classes;
     while (std::getline(lines, line)) {
+        strip_trailing_carriage_return(line);
         if (line.empty()) {
             continue;
         }
