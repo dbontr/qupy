@@ -1,10 +1,10 @@
 # QuPy
 
-QuPy is a NumPy-style quantum numerical-computing layer for simulators, hybrid quantum-classical workflows, and physical QPUs.
+QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, program IR, target validation, planner, simulator, sampling, and expectation evaluation.
 
-The project aims for one compact Python programming model while preserving the differences that matter on quantum hardware. Classical parameters use the existing array ecosystem. Qubits, measurements, target constraints, and quantum result requests use explicit quantum semantics.
+Python is the user-facing language. It does not implement the quantum simulator. NumPy provides an interoperable array surface for native results.
 
-> **Status:** early alpha. The reference backend works now. The public API and compiler IR can still change.
+> **Status:** early alpha. The native CPU core is usable and tested. The public API can still change.
 
 ## Quick start
 
@@ -19,65 +19,100 @@ samples = qp.sample(program, shots=1000, seed=7)
 energy = qp.expect(program, qp.Z(0))
 state = qp.statevector(program)
 
+print(qp.core_language())     # C++20
 print(samples.counts())
 print(energy.value)
 print(state.values)
 ```
 
-QuPy aims to run the same program on compatible CPU, GPU, specialized-simulator, and QPU targets. Unsupported semantics must fail during validation rather than degrade silently.
-## Architecture direction
+Native C++ objects back all program objects and execution results in this example.
 
-QuPy uses a compiler/runtime structure rather than a simulator wrapper:
+## Native architecture
 
-1. A compact Python API builds or captures a quantum program.
-2. A typed QuPy IR becomes the stable transformation boundary.
-3. Compiler passes simplify, differentiate, batch, and validate the program.
-4. A target describes operations, topology, timing, dynamic control, result modes, and execution limits.
-5. A planner selects an exact execution strategy by default from the requested result and available targets.
-6. A backend executes the lowered program and returns a typed result.
+```text
+Python API
+    |
+    v
+nanobind extension
+    |
+    v
+C++20 QuPy core
+    |-- immutable Program / Operation IR
+    |-- target capability validation
+    |-- execution planner
+    |-- gate kernels
+    |-- state-vector runtime
+    |-- sampling and expectation evaluation
+    `-- typed result storage
+         |
+         `-- zero-copy NumPy views
+```
 
-`backend="auto"` will choose among dense state-vector, stabilizer, tensor-network, Pauli-propagation, distributed, or physical-QPU execution. Approximate execution requires an explicit accuracy policy.
+The core library is independent of Python bindings. CTest validates the C++ implementation directly. The Python tests validate the bound API separately.
 
-## Current reference slice
+## Current native capabilities
 
-Implemented now:
-
-- immutable `Program` and `Operation` IR objects
-- H, X, RX, and CX operations
-- target capability validation
-- NumPy state-vector execution
-- deterministic seeded sampling
+- H, X, Y, Z, RX, RY, and RZ single-qubit gates
+- CX, CZ, and SWAP two-qubit gates
+- immutable native program IR
+- explicit native target and execution plans
+- exact dense state-vector simulation
 - Pauli-Z expectation values
-- explicit simulator state-vector access
-- typed sample, expectation, and state-vector results
+- deterministic seeded sampling
+- read-only zero-copy NumPy views over native result storage
+- OpenMP parallelism for sufficiently large amplitude workloads
+- compiler-optimized release builds
 
-The NumPy backend is the correctness oracle for future backend conformance tests.
-## Development
+## Execution model
 
-QuPy currently requires Python 3.12 or newer. The provisional distribution name is `qupy-compute`. The import package is `qupy`.
+C++ handles `backend="auto"`. The planner validates the requested result against a target before execution and returns an inspectable `ExecutionPlan`.
+
+```python
+plan = qp.plan(program, qp.ResultMode.SAMPLE)
+print(plan.backend)   # native-cpu
+print(plan.method)    # statevector
+print(plan.exact)     # True
+print(plan.threads)
+```
+
+Automatic execution must preserve declared semantics. Future accelerator and specialized-simulator strategies can share this planner without moving backend policy into Python.
+
+## Build and test
+
+QuPy requires Python 3.12 or newer and a C++20 compiler. Python packaging uses scikit-build-core and nanobind.
 
 ```text
 uv sync
-uv run pytest
-uv run ruff check .
+uv run pytest -q
+uv run ruff check src tests
 uv run mypy src/qupy
 ```
 
-The core dependency set is intentionally small. CUDA, specialized simulators, autodiff frameworks, and QPU providers will be optional integrations.
+The native core can also be built and tested without Python:
 
-## Roadmap
+```text
+cmake -S . -B build/native -DQUPY_BUILD_PYTHON=OFF -DQUPY_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native
+ctest --test-dir build/native --output-on-failure
+```
 
-The next architecture milestones are:
+The distribution name is `qupy-compute`. The import package is `qupy`.
 
-1. stabilize the typed IR and result semantics
-2. formalize target capability and accuracy-policy models
-3. add a second backend and enforce backend conformance
-4. add automatic simulator planning
-5. add OpenQASM 3 and QIR lowering
-6. add differentiation transforms and JAX interoperability
-7. add physical-QPU provider adapters
+## Design rules
 
-See [REFERENCES.md](REFERENCES.md) for the external specifications and APIs that materially shape the current architecture.
+1. Keep quantum execution out of Python.
+2. Keep the C++ core usable without Python.
+3. Treat qubits as quantum resources, not NumPy arrays.
+4. Make target capabilities and result semantics explicit.
+5. Keep `backend="auto"` exact unless the caller explicitly permits approximation.
+6. Use standard array protocols at the language boundary rather than inventing a tensor ecosystem.
+7. Add specialized engines only behind conformance tests against shared semantics.
+
+## Direction
+
+The native planner is the integration point for CUDA/cuQuantum, stabilizer, tensor-network, distributed, and physical-QPU execution. Those engines should compete on measured cost while the QuPy program and result contracts remain stable.
+
+See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 
 ## License
 
