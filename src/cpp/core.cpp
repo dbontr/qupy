@@ -256,7 +256,10 @@ struct CompiledStep {
     return operation_spec(code).qubits == 1U;
 }
 
-[[nodiscard]] Matrix2 single_matrix(const Operation& operation) {
+[[nodiscard]] Matrix2 single_matrix(
+    const Operation& operation,
+    std::optional<double> parameter_override = std::nullopt
+) {
     const double inv_sqrt_two = 1.0 / std::sqrt(2.0);
     switch (operation.code) {
     case OperationCode::H:
@@ -268,19 +271,19 @@ struct CompiledStep {
     case OperationCode::Z:
         return {1.0, 0.0, 0.0, -1.0};
     case OperationCode::RX: {
-        const double half = operation.parameters.front() / 2.0;
+        const double half = parameter_override.value_or(operation.parameters.front()) / 2.0;
         const double cosine = std::cos(half);
         const Complex sine{0.0, -std::sin(half)};
         return {cosine, sine, sine, cosine};
     }
     case OperationCode::RY: {
-        const double half = operation.parameters.front() / 2.0;
+        const double half = parameter_override.value_or(operation.parameters.front()) / 2.0;
         const double cosine = std::cos(half);
         const double sine = std::sin(half);
         return {cosine, -sine, sine, cosine};
     }
     case OperationCode::RZ: {
-        const double half = operation.parameters.front() / 2.0;
+        const double half = parameter_override.value_or(operation.parameters.front()) / 2.0;
         return {std::polar(1.0, -half), 0.0, 0.0, std::polar(1.0, half)};
     }
     case OperationCode::CX:
@@ -301,9 +304,11 @@ struct CompiledStep {
     throw std::invalid_argument("operation is not a two-qubit gate");
 }
 
-[[nodiscard]] std::vector<CompiledStep> compile_operations(
+template <typename ParameterResolver>
+[[nodiscard]] std::vector<CompiledStep> compile_operations_with(
     std::size_t num_qubits,
-    const std::vector<Operation>& operations
+    const std::vector<Operation>& operations,
+    ParameterResolver&& parameter_resolver
 ) {
     const Matrix2 identity = identity_matrix();
     std::vector<Matrix2> pending(num_qubits, identity);
@@ -320,10 +325,14 @@ struct CompiledStep {
         has_pending[qubit] = false;
     };
 
-    for (const Operation& operation : operations) {
+    for (std::size_t index = 0; index < operations.size(); ++index) {
+        const Operation& operation = operations[index];
         if (is_single_qubit(operation.code)) {
             const std::size_t qubit = operation.qubits.front();
-            pending[qubit] = multiply(single_matrix(operation), pending[qubit]);
+            pending[qubit] = multiply(
+                single_matrix(operation, parameter_resolver(index, operation)),
+                pending[qubit]
+            );
             has_pending[qubit] = true;
             continue;
         }
@@ -339,6 +348,17 @@ struct CompiledStep {
         flush(qubit);
     }
     return steps;
+}
+
+[[nodiscard]] std::vector<CompiledStep> compile_operations(
+    std::size_t num_qubits,
+    const std::vector<Operation>& operations
+) {
+    return compile_operations_with(
+        num_qubits,
+        operations,
+        [](std::size_t, const Operation&) { return std::optional<double>{}; }
+    );
 }
 
 [[nodiscard]] std::vector<CompiledStep> compile_program(const Program& program) {
@@ -358,6 +378,191 @@ struct PreparedExpectation {
     bool pauli_propagation;
 };
 
+struct ReducedExpectation {
+    std::size_t active_qubits;
+    std::size_t observable_qubit;
+    std::vector<Operation> operations;
+    std::vector<std::size_t> source_operation_indices;
+};
+
+struct ParameterLayout {
+    std::vector<std::size_t> column_by_operation;
+    std::size_t parameter_count;
+};
+
+constexpr std::size_t kMissingParameterColumn = std::numeric_limits<std::size_t>::max();
+
+struct BatchMatrixFactor {
+    Matrix2 fixed_matrix;
+    Operation operation;
+    std::size_t parameter_column;
+    bool parameterized;
+};
+
+struct BatchCompiledStep {
+    CompiledKind kind;
+    std::size_t first;
+    std::size_t second;
+    std::vector<BatchMatrixFactor> factors;
+};
+
+[[nodiscard]] ParameterLayout parameter_layout(
+    const Program& program,
+    const std::vector<ParameterSlot>& slots
+) {
+    std::vector<std::size_t> columns(program.operations().size(), kMissingParameterColumn);
+    for (std::size_t column = 0; column < slots.size(); ++column) {
+        const ParameterSlot slot = slots[column];
+        if (slot.operation_index >= program.operations().size()) {
+            throw std::invalid_argument("parameter slot operation is outside this program");
+        }
+        const Operation& operation = program.operations()[slot.operation_index];
+        if (slot.parameter_index >= operation.parameters.size()) {
+            throw std::invalid_argument("parameter slot does not reference an operation parameter");
+        }
+        if (operation.parameters.size() != 1U || slot.parameter_index != 0U) {
+            throw std::invalid_argument(
+                "native parameter batches currently support one parameter per operation"
+            );
+        }
+        if (columns[slot.operation_index] != kMissingParameterColumn) {
+            throw std::invalid_argument("parameter slots must reference distinct operations");
+        }
+        columns[slot.operation_index] = column;
+    }
+    return {std::move(columns), slots.size()};
+}
+
+void validate_parameter_batch_values(
+    const ParameterLayout& layout,
+    const std::vector<double>& values,
+    std::size_t batch_size
+) {
+    if (batch_size == 0U) {
+        throw std::invalid_argument("parameter batch must contain at least one row");
+    }
+    if (layout.parameter_count != 0U &&
+        batch_size > std::numeric_limits<std::size_t>::max() / layout.parameter_count) {
+        throw std::length_error("parameter batch shape exceeds native address space");
+    }
+    const std::size_t expected = batch_size * layout.parameter_count;
+    if (values.size() != expected) {
+        throw std::invalid_argument("parameter batch shape does not match its slots");
+    }
+    if (!std::all_of(values.begin(), values.end(), [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("parameter batch values must be finite");
+    }
+}
+
+[[nodiscard]] bool has_relevant_parameter_slot(
+    const ReducedExpectation& reduced,
+    const ParameterLayout& layout
+) {
+    return std::any_of(
+        reduced.source_operation_indices.begin(),
+        reduced.source_operation_indices.end(),
+        [&](std::size_t source_index) {
+            return layout.column_by_operation[source_index] != kMissingParameterColumn;
+        }
+    );
+}
+
+[[nodiscard]] std::vector<BatchCompiledStep> compile_parameterized_operations(
+    std::size_t num_qubits,
+    const std::vector<Operation>& operations,
+    const std::vector<std::size_t>& source_operation_indices,
+    const ParameterLayout& layout
+) {
+    if (source_operation_indices.size() != operations.size()) {
+        throw std::logic_error("parameterized compiler source index mismatch");
+    }
+
+    const Matrix2 identity = identity_matrix();
+    std::vector<std::vector<BatchMatrixFactor>> pending(num_qubits);
+    std::vector<BatchCompiledStep> steps;
+    steps.reserve(operations.size());
+
+    const auto flush = [&](std::size_t qubit) {
+        if (pending[qubit].empty()) {
+            return;
+        }
+        std::vector<BatchMatrixFactor> factors;
+        factors.swap(pending[qubit]);
+        steps.push_back({CompiledKind::Single, qubit, 0U, std::move(factors)});
+    };
+
+    for (std::size_t index = 0; index < operations.size(); ++index) {
+        const Operation& operation = operations[index];
+        if (is_single_qubit(operation.code)) {
+            const std::size_t qubit = operation.qubits.front();
+            const std::size_t source_index = source_operation_indices[index];
+            if (source_index >= layout.column_by_operation.size()) {
+                throw std::logic_error("parameterized compiler source operation is invalid");
+            }
+            const std::size_t column = layout.column_by_operation[source_index];
+            if (column == kMissingParameterColumn) {
+                const Matrix2 matrix = single_matrix(operation);
+                if (!pending[qubit].empty() && !pending[qubit].back().parameterized) {
+                    pending[qubit].back().fixed_matrix = multiply(
+                        matrix, pending[qubit].back().fixed_matrix
+                    );
+                } else {
+                    pending[qubit].push_back({matrix, operation, column, false});
+                }
+            } else {
+                pending[qubit].push_back({identity, operation, column, true});
+            }
+            continue;
+        }
+
+        const std::size_t first = operation.qubits[0];
+        const std::size_t second = operation.qubits[1];
+        flush(first);
+        flush(second);
+        steps.push_back({compiled_kind(operation.code), first, second, {}});
+    }
+
+    for (std::size_t qubit = 0; qubit < num_qubits; ++qubit) {
+        flush(qubit);
+    }
+    return steps;
+}
+
+void materialize_parameterized_steps(
+    const std::vector<BatchCompiledStep>& batch_steps,
+    const double* row,
+    std::vector<CompiledStep>& steps
+) {
+    const Matrix2 identity = identity_matrix();
+    steps.clear();
+    if (steps.capacity() < batch_steps.size()) {
+        steps.reserve(batch_steps.size());
+    }
+
+    for (const BatchCompiledStep& step : batch_steps) {
+        if (step.kind != CompiledKind::Single) {
+            steps.push_back({step.kind, identity, step.first, step.second});
+            continue;
+        }
+
+        Matrix2 matrix = identity;
+        for (const BatchMatrixFactor& factor : step.factors) {
+            const Matrix2 current = factor.parameterized
+                ? single_matrix(factor.operation, row[factor.parameter_column])
+                : factor.fixed_matrix;
+            matrix = multiply(current, matrix);
+        }
+        steps.push_back({CompiledKind::Single, matrix, step.first, 0U});
+    }
+}
+
+[[nodiscard]] std::vector<std::size_t> operation_indices(const Program& program) {
+    std::vector<std::size_t> indices(program.operations().size());
+    for (std::size_t index = 0; index < indices.size(); ++index) {
+        indices[index] = index;
+    }
+    return indices;
+}
 void validate_backend(const std::string& backend) {
     if (backend != "auto" && backend != "native" && backend != "native-cpu") {
         throw std::invalid_argument("unknown backend: " + backend);
@@ -666,21 +871,13 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     return {std::move(execution_plan), std::move(steps)};
 }
 
-[[nodiscard]] PreparedExpectation prepare_expectation(
+[[nodiscard]] ReducedExpectation reduce_expectation(
     const Program& program,
-    PauliZ observable,
-    ResultMode result_mode,
-    const std::string& backend
+    PauliZ observable
 ) {
     if (observable.qubit >= program.num_qubits()) {
         throw std::invalid_argument("observable qubit is outside this program");
     }
-    if (result_mode != ResultMode::Expectation && result_mode != ResultMode::Variance) {
-        throw std::invalid_argument("observable plan requires expectation or variance mode");
-    }
-    validate_backend(backend);
-    const Target target = native_target();
-    target.validate(program, result_mode);
 
     const auto& operations = program.operations();
     std::vector<bool> active(program.num_qubits(), false);
@@ -715,7 +912,9 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     }
 
     std::vector<Operation> reduced_operations;
+    std::vector<std::size_t> source_operation_indices;
     reduced_operations.reserve(operations.size());
+    source_operation_indices.reserve(operations.size());
     for (std::size_t index = 0; index < operations.size(); ++index) {
         if (!retained[index]) {
             continue;
@@ -725,9 +924,35 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
             qubit = mapping[qubit];
         }
         reduced_operations.push_back(std::move(operation));
+        source_operation_indices.push_back(index);
     }
 
-    const bool pauli_propagation = supports_pauli_propagation(reduced_operations);
+    return {
+        active_count,
+        mapping[observable.qubit],
+        std::move(reduced_operations),
+        std::move(source_operation_indices),
+    };
+}
+
+[[nodiscard]] PreparedExpectation prepare_expectation(
+    const Program& program,
+    PauliZ observable,
+    ResultMode result_mode,
+    const std::string& backend
+) {
+    if (observable.qubit >= program.num_qubits()) {
+        throw std::invalid_argument("observable qubit is outside this program");
+    }
+    if (result_mode != ResultMode::Expectation && result_mode != ResultMode::Variance) {
+        throw std::invalid_argument("observable plan requires expectation or variance mode");
+    }
+    validate_backend(backend);
+    const Target target = native_target();
+    target.validate(program, result_mode);
+
+    ReducedExpectation reduced = reduce_expectation(program, observable);
+    const bool pauli_propagation = supports_pauli_propagation(reduced.operations);
     std::vector<CompiledStep> steps;
     std::vector<Operation> pauli_operations;
     std::string method;
@@ -735,15 +960,15 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     std::size_t estimated_state_bytes = 0U;
     if (pauli_propagation) {
         method = "pauli-propagation";
-        compiled_steps = reduced_operations.size();
-        pauli_operations = std::move(reduced_operations);
+        compiled_steps = reduced.operations.size();
+        pauli_operations = std::move(reduced.operations);
     } else {
-        steps = compile_operations(active_count, reduced_operations);
-        method = active_count < program.num_qubits()
+        steps = compile_operations(reduced.active_qubits, reduced.operations);
+        method = reduced.active_qubits < program.num_qubits()
             ? "statevector-lightcone"
             : "statevector";
         compiled_steps = steps.size();
-        estimated_state_bytes = state_memory_bytes(active_count);
+        estimated_state_bytes = state_memory_bytes(reduced.active_qubits);
     }
 
     const std::string qualifier = "z:" + std::to_string(observable.qubit);
@@ -751,15 +976,15 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         program,
         target,
         result_mode,
-        operations.size(),
+        program.operations().size(),
         compiled_steps,
-        active_count,
+        reduced.active_qubits,
         estimated_state_bytes,
         method,
         qualifier
     );
     return {
-        mapping[observable.qubit],
+        reduced.observable_qubit,
         std::move(execution_plan),
         std::move(steps),
         std::move(pauli_operations),
@@ -938,6 +1163,45 @@ private:
     std::vector<std::size_t> alias_;
 };
 
+[[nodiscard]] std::size_t checked_product(
+    std::size_t left,
+    std::size_t right,
+    const char* message
+) {
+    if (left != 0U && right > std::numeric_limits<std::size_t>::max() / left) {
+        throw std::length_error(message);
+    }
+    return left * right;
+}
+
+[[nodiscard]] std::mt19937_64 sampling_generator(std::optional<std::uint64_t> seed) {
+    std::mt19937_64 generator;
+    if (seed.has_value()) {
+        generator.seed(*seed);
+    } else {
+        std::random_device source;
+        generator.seed((static_cast<std::uint64_t>(source()) << 32U) ^ source());
+    }
+    return generator;
+}
+
+void draw_samples(
+    const AliasSampler& distribution,
+    std::mt19937_64& generator,
+    std::size_t num_qubits,
+    std::size_t shots,
+    std::int8_t* values
+) {
+    for (std::size_t shot = 0; shot < shots; ++shot) {
+        const std::size_t basis = distribution.draw(generator);
+        for (std::size_t column = 0; column < num_qubits; ++column) {
+            const std::size_t qubit = num_qubits - column - 1U;
+            values[shot * num_qubits + column] =
+                static_cast<std::int8_t>((basis >> qubit) & 1U);
+        }
+    }
+}
+
 }  // namespace
 
 std::string Operation::name() const {
@@ -1018,6 +1282,38 @@ Program Program::appended(Operation operation) const {
 
     Program next = *this;
     next.operations_.push_back(std::move(operation));
+    return next;
+}
+
+Program Program::bound(
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& values
+) const {
+    if (slots.size() != values.size()) {
+        throw std::invalid_argument("parameter slot and value counts must match");
+    }
+
+    Program next = *this;
+    for (std::size_t index = 0; index < slots.size(); ++index) {
+        const ParameterSlot slot = slots[index];
+        if (slot.operation_index >= next.operations_.size()) {
+            throw std::invalid_argument("parameter slot operation is outside this program");
+        }
+        Operation& operation = next.operations_[slot.operation_index];
+        if (slot.parameter_index >= operation.parameters.size()) {
+            throw std::invalid_argument("parameter slot does not reference an operation parameter");
+        }
+        if (!std::isfinite(values[index])) {
+            throw std::invalid_argument("bound parameter values must be finite");
+        }
+        for (std::size_t prior = 0; prior < index; ++prior) {
+            if (slots[prior].operation_index == slot.operation_index &&
+                slots[prior].parameter_index == slot.parameter_index) {
+                throw std::invalid_argument("parameter slots must be unique");
+            }
+        }
+        operation.parameters[slot.parameter_index] = values[index];
+    }
     return next;
 }
 
@@ -1102,7 +1398,7 @@ Target native_target() {
         false,
         false,
         false,
-        false,
+        true,
     };
 }
 
@@ -1209,26 +1505,14 @@ Samples sample(
     const std::vector<Complex>& state = run_statevector_workspace(
         program.num_qubits(), prepared.steps
     );
-    const std::vector<double> probabilities = state_probabilities(state);
+    const AliasSampler distribution(state_probabilities(state));
+    std::mt19937_64 generator = sampling_generator(seed);
 
-    std::mt19937_64 generator;
-    if (seed.has_value()) {
-        generator.seed(*seed);
-    } else {
-        std::random_device source;
-        generator.seed((static_cast<std::uint64_t>(source()) << 32U) ^ source());
-    }
-    const AliasSampler distribution(probabilities);
-
-    std::vector<std::int8_t> values(shots * program.num_qubits());
-    for (std::size_t shot = 0; shot < shots; ++shot) {
-        const std::size_t basis = distribution.draw(generator);
-        for (std::size_t column = 0; column < program.num_qubits(); ++column) {
-            const std::size_t qubit = program.num_qubits() - column - 1U;
-            values[shot * program.num_qubits() + column] =
-                static_cast<std::int8_t>((basis >> qubit) & 1U);
-        }
-    }
+    const std::size_t value_count = checked_product(
+        shots, program.num_qubits(), "sample result shape exceeds native address space"
+    );
+    std::vector<std::int8_t> values(value_count);
+    draw_samples(distribution, generator, program.num_qubits(), shots, values.data());
 
     return {
         std::move(values),
@@ -1238,6 +1522,72 @@ Samples sample(
     };
 }
 
+SamplesBatch sample_batch(
+    const Program& program,
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& parameter_values,
+    std::size_t batch_size,
+    std::size_t shots,
+    std::optional<std::uint64_t> seed,
+    const std::string& backend
+) {
+    if (shots == 0U) {
+        throw std::invalid_argument("shots must be at least 1");
+    }
+    validate_backend(backend);
+    const Target target = native_target();
+    target.validate(program, ResultMode::Sample);
+    if (!target.parameter_batches) {
+        throw std::invalid_argument("target does not support parameter batches");
+    }
+
+    const ParameterLayout layout = parameter_layout(program, slots);
+    validate_parameter_batch_values(layout, parameter_values, batch_size);
+    const std::vector<BatchCompiledStep> batch_steps = compile_parameterized_operations(
+        program.num_qubits(), program.operations(), operation_indices(program), layout
+    );
+    const std::size_t row_width = checked_product(
+        shots, program.num_qubits(), "sample batch row shape exceeds native address space"
+    );
+    const std::size_t value_count = checked_product(
+        batch_size, row_width, "sample batch result shape exceeds native address space"
+    );
+    std::vector<std::int8_t> values(value_count);
+    std::vector<CompiledStep> steps;
+    steps.reserve(batch_steps.size());
+    std::mt19937_64 generator = sampling_generator(seed);
+
+    for (std::size_t row_index = 0; row_index < batch_size; ++row_index) {
+        if (row_index == 0U || layout.parameter_count != 0U) {
+            const double* row = layout.parameter_count == 0U
+                ? nullptr
+                : parameter_values.data() + row_index * layout.parameter_count;
+            materialize_parameterized_steps(batch_steps, row, steps);
+        }
+        const std::vector<Complex>& state = run_statevector_workspace(
+            program.num_qubits(), steps
+        );
+        const AliasSampler distribution(state_probabilities(state));
+        draw_samples(
+            distribution,
+            generator,
+            program.num_qubits(),
+            shots,
+            values.data() + row_index * row_width
+        );
+    }
+
+    return {
+        std::move(values),
+        batch_size,
+        shots,
+        program.num_qubits(),
+        layout.parameter_count,
+        target.name,
+        batch_steps.size(),
+        state_memory_bytes(program.num_qubits()),
+    };
+}
 Expectation expectation(
     const Program& program,
     PauliZ observable,
@@ -1266,6 +1616,70 @@ Expectation expectation(
         prepared.execution_plan.active_qubits,
         prepared.execution_plan.compiled_steps,
         prepared.execution_plan.estimated_state_bytes,
+    };
+}
+
+ExpectationBatch expectation_batch(
+    const Program& program,
+    PauliZ observable,
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& parameter_values,
+    std::size_t batch_size,
+    const std::string& backend
+) {
+    validate_backend(backend);
+    const Target target = native_target();
+    target.validate(program, ResultMode::Expectation);
+    if (!target.parameter_batches) {
+        throw std::invalid_argument("target does not support parameter batches");
+    }
+
+    const ParameterLayout layout = parameter_layout(program, slots);
+    validate_parameter_batch_values(layout, parameter_values, batch_size);
+    ReducedExpectation reduced = reduce_expectation(program, observable);
+    std::vector<double> values(batch_size);
+
+    if (!has_relevant_parameter_slot(reduced, layout)) {
+        const Expectation scalar = expectation(program, observable, backend);
+        std::fill(values.begin(), values.end(), scalar.value);
+        return {
+            std::move(values),
+            batch_size,
+            layout.parameter_count,
+            scalar.backend,
+            scalar.active_qubits,
+            scalar.compiled_steps,
+            scalar.estimated_state_bytes,
+        };
+    }
+
+    const std::size_t parameter_count = layout.parameter_count;
+    const std::size_t estimated_state_bytes = state_memory_bytes(reduced.active_qubits);
+    const std::vector<BatchCompiledStep> batch_steps = compile_parameterized_operations(
+        reduced.active_qubits,
+        reduced.operations,
+        reduced.source_operation_indices,
+        layout
+    );
+    std::vector<CompiledStep> steps;
+    steps.reserve(batch_steps.size());
+    for (std::size_t row_index = 0; row_index < batch_size; ++row_index) {
+        const double* row = parameter_values.data() + row_index * parameter_count;
+        materialize_parameterized_steps(batch_steps, row, steps);
+        const std::vector<Complex>& state = run_statevector_workspace(
+            reduced.active_qubits, steps
+        );
+        values[row_index] = pauli_z_value(state, reduced.observable_qubit);
+    }
+
+    return {
+        std::move(values),
+        batch_size,
+        parameter_count,
+        target.name,
+        reduced.active_qubits,
+        batch_steps.size(),
+        estimated_state_bytes,
     };
 }
 
@@ -1306,6 +1720,24 @@ std::map<std::string, std::size_t> Samples::counts() const {
         std::string key;
         key.reserve(num_qubits);
         const std::size_t row = shot * num_qubits;
+        for (std::size_t column = 0; column < num_qubits; ++column) {
+            key.push_back(values[row + column] == 0 ? '0' : '1');
+        }
+        ++result[key];
+    }
+    return result;
+}
+
+std::map<std::string, std::size_t> SamplesBatch::counts(std::size_t batch_index) const {
+    if (batch_index >= batch_size) {
+        throw std::out_of_range("sample batch index is outside this result");
+    }
+    std::map<std::string, std::size_t> result;
+    const std::size_t batch_offset = batch_index * shots * num_qubits;
+    for (std::size_t shot = 0; shot < shots; ++shot) {
+        std::string key;
+        key.reserve(num_qubits);
+        const std::size_t row = batch_offset + shot * num_qubits;
         for (std::size_t column = 0; column < num_qubits; ++column) {
             key.push_back(values[row + column] == 0 ? '0' : '1');
         }
