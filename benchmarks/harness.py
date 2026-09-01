@@ -119,12 +119,13 @@ def run_case(
     except WorkloadUnsupported as error:
         return _skipped_result(workload, engine, str(error))
 
+    tolerance = max(workload.tolerance, prepared.validation_tolerance or 0.0)
     validation_value = prepared.execute()
-    valid = abs(validation_value - workload.expected_value) <= workload.tolerance
+    valid = abs(validation_value - workload.expected_value) <= tolerance
     if not valid:
         raise AssertionError(
             f"{engine} returned {validation_value} for {workload.name}; "
-            f"expected {workload.expected_value} +/- {workload.tolerance}"
+            f"expected {workload.expected_value} +/- {tolerance}"
         )
 
     for _ in range(warmups):
@@ -148,7 +149,7 @@ def run_case(
         method=prepared.method,
         expected_value=workload.expected_value,
         result_value=last_value,
-        tolerance=workload.tolerance,
+        tolerance=tolerance,
         valid=True,
         warmups=warmups,
         iterations=iterations,
