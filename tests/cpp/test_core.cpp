@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -17,6 +18,34 @@ void require(bool condition, const std::string& message) {
 
 void require_close(qupy::Complex actual, qupy::Complex expected, const std::string& message) {
     require(std::abs(actual - expected) <= kTolerance, message);
+}
+
+[[nodiscard]] double dense_z_value(const qupy::Program& program, std::size_t qubit) {
+    const qupy::StateVector state = qupy::statevector(program);
+    const std::size_t mask = std::size_t{1} << qubit;
+    double value = 0.0;
+    for (std::size_t index = 0; index < state.values.size(); ++index) {
+        value += ((index & mask) == 0U ? 1.0 : -1.0) * std::norm(state.values[index]);
+    }
+    return value;
+}
+
+[[nodiscard]] qupy::Program append_clifford_gate(qupy::Program program, std::size_t gate) {
+    switch (gate) {
+    case 0U: return qupy::h(program, 0);
+    case 1U: return qupy::h(program, 1);
+    case 2U: return qupy::x(program, 0);
+    case 3U: return qupy::x(program, 1);
+    case 4U: return qupy::y(program, 0);
+    case 5U: return qupy::y(program, 1);
+    case 6U: return qupy::z(program, 0);
+    case 7U: return qupy::z(program, 1);
+    case 8U: return qupy::cx(program, 0, 1);
+    case 9U: return qupy::cx(program, 1, 0);
+    case 10U: return qupy::cz(program, 0, 1);
+    case 11U: return qupy::swap(program, 0, 1);
+    default: throw std::logic_error("unknown Clifford test gate");
+    }
 }
 
 void test_bell_state() {
@@ -151,18 +180,81 @@ void test_compiler_fusion() {
     require(execution_plan.compiled_steps == 2, "single-qubit fusion did not reduce steps");
 }
 
-void test_expectation_lightcone() {
+void test_clifford_expectation_uses_pauli_propagation() {
     qupy::Program program(100);
     program = qupy::h(program, 0);
     program = qupy::x(program, 98);
     program = qupy::ry(program, 0.7, 99);
+
     const auto execution_plan = qupy::expectation_plan(program, qupy::pauli_z(0));
-    require(execution_plan.method == "statevector-lightcone", "lightcone method not selected");
-    require(execution_plan.active_qubits == 1, "lightcone retained unrelated qubits");
-    require(execution_plan.estimated_state_bytes == 32, "lightcone memory estimate is wrong");
+    require(execution_plan.method == "pauli-propagation", "Pauli propagation was not selected");
+    require(execution_plan.active_qubits == 1, "Pauli propagation retained unrelated qubits");
+    require(execution_plan.compiled_steps == 1, "Pauli propagation work estimate is wrong");
+    require(execution_plan.estimated_state_bytes == 0, "Pauli propagation allocated state memory");
+
     const auto result = qupy::expectation(program, qupy::pauli_z(0));
-    require(std::abs(result.value) <= kTolerance, "lightcone expectation is wrong");
+    require(std::abs(result.value) <= kTolerance, "Pauli-propagated expectation is wrong");
     require(result.active_qubits == 1, "expectation metadata has wrong active qubit count");
+    require(result.estimated_state_bytes == 0, "expectation metadata reports state memory");
+
+    qupy::Program sign_program(2);
+    sign_program = qupy::x(sign_program, 0);
+    sign_program = qupy::swap(sign_program, 0, 1);
+    const auto signed_result = qupy::expectation(sign_program, qupy::pauli_z(1));
+    require(std::abs(signed_result.value + 1.0) <= kTolerance, "Pauli sign propagation is wrong");
+}
+
+void test_non_clifford_expectation_falls_back_to_statevector_lightcone() {
+    qupy::Program program(100);
+    program = qupy::h(program, 0);
+    program = qupy::ry(program, 0.7, 0);
+    program = qupy::x(program, 99);
+
+    const auto execution_plan = qupy::expectation_plan(program, qupy::pauli_z(0));
+    require(execution_plan.method == "statevector-lightcone", "non-Clifford cone did not fall back");
+    require(execution_plan.active_qubits == 1, "fallback retained unrelated qubits");
+    require(execution_plan.estimated_state_bytes == 32, "fallback memory estimate is wrong");
+
+    const auto result = qupy::expectation(program, qupy::pauli_z(0));
+    require(
+        std::abs(result.value + std::sin(0.7)) <= kTolerance,
+        "non-Clifford fallback expectation is wrong"
+    );
+}
+
+void test_pauli_propagation_matches_dense_statevector() {
+    constexpr std::size_t gate_count = 12U;
+    for (std::size_t first = 0; first < gate_count; ++first) {
+        for (std::size_t second = 0; second < gate_count; ++second) {
+            for (std::size_t third = 0; third < gate_count; ++third) {
+                qupy::Program program(2);
+                program = append_clifford_gate(std::move(program), first);
+                program = append_clifford_gate(std::move(program), second);
+                program = append_clifford_gate(std::move(program), third);
+                for (std::size_t qubit = 0; qubit < 2U; ++qubit) {
+                    const auto execution_plan = qupy::expectation_plan(
+                        program, qupy::pauli_z(qubit)
+                    );
+                    require(
+                        execution_plan.method == "pauli-propagation",
+                        "Clifford circuit did not use Pauli propagation"
+                    );
+                    require(
+                        execution_plan.estimated_state_bytes == 0,
+                        "Pauli propagation reported state-vector memory"
+                    );
+                    const double propagated = qupy::expectation(
+                        program, qupy::pauli_z(qubit)
+                    ).value;
+                    const double dense = dense_z_value(program, qubit);
+                    require(
+                        std::abs(propagated - dense) <= kTolerance,
+                        "Pauli propagation disagrees with dense state-vector execution"
+                    );
+                }
+            }
+        }
+    }
 }
 
 void test_probabilities_and_variance() {
@@ -180,6 +272,7 @@ void test_probabilities_and_variance() {
     const auto bell_variance = qupy::variance(program, qupy::pauli_z(0));
     require(std::abs(bell_variance.value - 1.0) <= kTolerance, "Bell Z variance is wrong");
     require(bell_variance.active_qubits == 2, "variance active-qubit metadata is wrong");
+    require(bell_variance.estimated_state_bytes == 0, "Clifford variance allocated state memory");
 
     qupy::Program basis(1);
     basis = qupy::x(basis, 0);
@@ -230,7 +323,9 @@ int main() {
         test_results_and_planner();
         test_semantic_identity();
         test_compiler_fusion();
-        test_expectation_lightcone();
+        test_clifford_expectation_uses_pauli_propagation();
+        test_non_clifford_expectation_falls_back_to_statevector_lightcone();
+        test_pauli_propagation_matches_dense_statevector();
         test_probabilities_and_variance();
         test_validation();
         std::cout << "QuPy native core tests: PASS\n";
