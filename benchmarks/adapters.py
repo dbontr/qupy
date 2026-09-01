@@ -69,7 +69,16 @@ def prepare_qupy(workload: Workload) -> PreparedCase:
     plan = qp.expectation_plan(program, qp.Z(workload.observable_qubit))
     metadata: dict[str, object] = {
         "backend": plan.backend,
+        "workload_version": plan.workload_version,
+        "workload_fingerprint": plan.workload_fingerprint,
+        "original_qubits": plan.original_qubits,
+        "original_operations": plan.original_operations,
         "active_qubits": plan.active_qubits,
+        "active_operations": plan.active_operations,
+        "single_qubit_operations": plan.single_qubit_operations,
+        "two_qubit_operations": plan.two_qubit_operations,
+        "parameterized_operations": plan.parameterized_operations,
+        "non_clifford_operations": plan.non_clifford_operations,
         "compiled_steps": plan.compiled_steps,
         "estimated_state_bytes": plan.estimated_state_bytes,
         "exact": plan.exact,

@@ -179,17 +179,62 @@ def test_native_target_and_planner_are_explicit() -> None:
     assert execution_plan.method == "statevector"
     assert execution_plan.exact
     assert execution_plan.threads == 1
+    assert execution_plan.original_qubits == 2
     assert execution_plan.original_operations == 2
-    assert execution_plan.compiled_steps == 2
     assert execution_plan.active_qubits == 2
+    assert execution_plan.active_operations == 2
+    assert execution_plan.single_qubit_operations == 1
+    assert execution_plan.two_qubit_operations == 1
+    assert execution_plan.parameterized_operations == 0
+    assert execution_plan.non_clifford_operations == 0
+    assert execution_plan.compiled_steps == 2
     assert execution_plan.estimated_state_bytes == 64
     assert execution_plan.result_mode == qp.ResultMode.SAMPLE
+    assert execution_plan.workload_version == 1
+    assert len(execution_plan.workload_fingerprint) == 64
+    assert execution_plan.workload_fingerprint == (
+        "6146406a5bd9baf7b57435a3815bc8427a2a6990b1c183fd10db46cebb841b0d"
+    )
     assert execution_plan.program_fingerprint == program.fingerprint
     assert execution_plan.target_fingerprint == target.fingerprint
     assert execution_plan.cache_key.startswith("qupy-cache/1/0.3.0a0/")
 
     parallel_plan = qp.plan(qp.Program(16), qp.ResultMode.STATEVECTOR)
     assert parallel_plan.threads == min(qp.parallel_threads(), 8)
+
+
+def test_workload_fingerprint_is_structural_and_result_aware() -> None:
+    first = qp.Program(4)
+    first = qp.ry(first, 0.1, 0)
+    first = qp.cx(first, 0, 1)
+    first = qp.rz(first, 0.2, 3)
+
+    second = qp.Program(4)
+    second = qp.ry(second, 1.1, 0)
+    second = qp.cx(second, 0, 1)
+    second = qp.rz(second, -0.7, 3)
+
+    first_dense = qp.plan(first, qp.ResultMode.STATEVECTOR)
+    second_dense = qp.plan(second, qp.ResultMode.STATEVECTOR)
+    assert first.fingerprint != second.fingerprint
+    assert first_dense.workload_fingerprint == second_dense.workload_fingerprint
+    assert first_dense.active_operations == 3
+    assert first_dense.single_qubit_operations == 2
+    assert first_dense.two_qubit_operations == 1
+    assert first_dense.parameterized_operations == 2
+    assert first_dense.non_clifford_operations == 2
+
+    lightcone = qp.expectation_plan(first, qp.Z(1))
+    assert lightcone.workload_fingerprint != first_dense.workload_fingerprint
+    assert lightcone.active_qubits == 2
+    assert lightcone.active_operations == 2
+    assert lightcone.single_qubit_operations == 1
+    assert lightcone.two_qubit_operations == 1
+    assert lightcone.parameterized_operations == 1
+    assert lightcone.non_clifford_operations == 1
+
+    sample_plan = qp.plan(first, qp.ResultMode.SAMPLE)
+    assert sample_plan.workload_fingerprint != first_dense.workload_fingerprint
 
 
 def test_invalid_programs_and_execution_options_are_rejected() -> None:

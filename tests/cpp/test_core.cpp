@@ -319,6 +319,20 @@ void test_semantic_identity() {
     require(sample_plan.program_fingerprint == first.fingerprint(), "plan program fingerprint is wrong");
     require(sample_plan.target_fingerprint == target.fingerprint(), "plan target fingerprint is wrong");
     require(sample_plan.result_mode == qupy::ResultMode::Sample, "plan result mode is wrong");
+    require(sample_plan.workload_version == 1U, "workload fingerprint version is wrong");
+    require(sample_plan.original_qubits == 2U, "workload original qubit count is wrong");
+    require(sample_plan.active_operations == 2U, "workload active operation count is wrong");
+    require(sample_plan.single_qubit_operations == 1U, "workload single-qubit count is wrong");
+    require(sample_plan.two_qubit_operations == 1U, "workload two-qubit count is wrong");
+    require(sample_plan.parameterized_operations == 0U, "workload parameter count is wrong");
+    require(sample_plan.non_clifford_operations == 0U, "workload non-Clifford count is wrong");
+    require(
+        sample_plan.workload_fingerprint ==
+            "6146406a5bd9baf7b57435a3815bc8427a2a6990b1c183fd10db46cebb841b0d",
+        "workload SHA-256 fingerprint is wrong"
+    );
+    require(sample_plan.workload_fingerprint != state_plan.workload_fingerprint,
+        "different result modes share a workload fingerprint");
     require(sample_plan.cache_key != state_plan.cache_key, "different result modes share a cache key");
 
     const auto z0 = qupy::expectation_plan(first, qupy::pauli_z(0));
