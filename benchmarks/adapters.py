@@ -25,6 +25,7 @@ class PreparedCase:
     method: str
     execute: Callable[[], float]
     metadata: dict[str, object]
+    validation_tolerance: float | None = None
 
 
 def _package_version(distribution: str) -> str:
@@ -180,6 +181,7 @@ def prepare_qsim(workload: Workload) -> PreparedCase:
         method="qsim-statevector",
         execute=execute,
         metadata={"exact": True, "portable_qubit_cap": 24},
+        validation_tolerance=1e-5,
     )
 
 
