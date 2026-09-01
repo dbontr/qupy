@@ -11,7 +11,7 @@ from .model import workloads_for_profile
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run QuPy workload-class benchmarks")
-    parser.add_argument("--profile", choices=("smoke", "standard"), default="smoke")
+    parser.add_argument("--profile", choices=("smoke", "standard", "calibration"), default="smoke")
     parser.add_argument(
         "--engines",
         default="qupy",
