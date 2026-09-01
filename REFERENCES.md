@@ -15,10 +15,11 @@
 ## Stabilizer and Pauli methods
 - [Improved Simulation of Stabilizer Circuits](https://doi.org/10.1103/PhysRevA.70.052328) — Scott Aaronson and Daniel Gottesman, Physical Review A 70, 052328 (2004), arXiv:quant-ph/0406196. Used for: Clifford and Pauli conjugation principles behind exact backward Pauli propagation.
 
-## Quantum execution architecture
+## Quantum execution architecture and benchmark adapters
 - [Qiskit Target](https://quantum.cloud.ibm.com/docs/en/api/qiskit/2.3/qiskit.transpiler.Target) — IBM Quantum, Qiskit 2.3. Used for: separation of target capability data from execution.
-- [AerSimulator](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html) — Qiskit Aer. Used for: result-aware simulator method and backend architecture comparisons.
-- [qsim](https://github.com/quantumlib/qsim) — Google Quantum AI. Used for: native state-vector and gate-fusion optimization design comparison.
+- [AerSimulator](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html) — Qiskit Aer. Used for: result-aware simulator architecture and state-vector/stabilizer benchmark adapters.
+- [qsim](https://github.com/quantumlib/qsim) — Google Quantum AI. Used for: native state-vector optimization comparison and the qsim expectation benchmark adapter.
+- [Stim](https://github.com/quantumlib/Stim) — Google Quantum AI. Used for: independent stabilizer/tableau expectation benchmark comparisons.
 - [CircuitToEinsum](https://docs.nvidia.com/cuda/cuquantum/26.06.0/python/generated/cuquantum.tensornet.CircuitToEinsum.html) — NVIDIA cuQuantum 26.06. Used for: reverse-lightcone expectation reduction design comparison.
 
 ## Tooling

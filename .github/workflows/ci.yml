@@ -90,7 +90,7 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - run: uv sync --frozen --python ${{ matrix.python-version }}
       - run: uv run pytest -q
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests benchmarks
       - run: uv run mypy src/qupy
       - run: uv build
       - name: Confirm native runtime
@@ -119,3 +119,36 @@ jobs:
         run: >-
           uv run python -c "import qupy; assert qupy.core_language() == 'C++20';
           assert qupy.core_version() == '0.3.0a0'; assert qupy.ir_version() == 1"
+
+  benchmark-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - run: uv sync --frozen --python 3.12
+      - name: Install optional benchmark engines
+        run: >-
+          uv pip install --python .venv/bin/python
+          qiskit-aer==0.17.2
+          qsimcirq==0.22.1
+          stim==1.16.0
+      - name: Run benchmark adapter smoke
+        run: >-
+          uv run --no-sync python -m benchmarks.run
+          --profile smoke
+          --engines qupy,stim,qsim,aer-statevector,aer-stabilizer
+          --warmups 0
+          --iterations 1
+          --require-engines
+          --output build/benchmark-smoke.json
+      - name: Validate benchmark report
+        run: >-
+          uv run --no-sync python -c
+          "import json; data=json.load(open('build/benchmark-smoke.json', encoding='utf-8'));
+          assert data['schema_version'] == 1;
+          assert all(row['valid'] is True for row in data['results'] if not row['skipped'])"
