@@ -639,7 +639,7 @@ void apply_swap(
     if (bound == 0U) {
         throw std::invalid_argument("random bound must be positive");
     }
-    const std::uint64_t threshold = static_cast<std::uint64_t>(-bound) % bound;
+    const std::uint64_t threshold = (std::uint64_t{0} - bound) % bound;
     std::uint64_t value = 0U;
     do {
         value = generator();
