@@ -60,6 +60,10 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - Pauli-Z expectation values
 - deterministic seeded sampling
 - read-only zero-copy NumPy views over native result storage
+- fused single-qubit native kernels
+- compact branch-free CX, CZ, and SWAP pair traversal
+- alias-table sampling for repeated shots
+- exact reverse-lightcone reduction for Pauli-Z expectations
 - OpenMP parallelism for sufficiently large amplitude workloads
 - compiler-optimized release builds
 
@@ -76,6 +80,23 @@ print(plan.threads)
 ```
 
 Automatic execution must preserve declared semantics. Future accelerator and specialized-simulator strategies can share this planner without moving backend policy into Python.
+
+### Result-aware expectation planning
+
+Expectation evaluation first computes the exact reverse causal cone of the requested observable. Unrelated qubits and operations do not enter the simulated state.
+
+```python
+program = qp.Program(100)
+program = qp.h(program, 0)
+program = qp.x(program, 99)
+
+plan = qp.expectation_plan(program, qp.Z(0))
+print(plan.method)                 # statevector-lightcone
+print(plan.active_qubits)          # 1
+print(plan.estimated_state_bytes)  # 32
+```
+
+The nominal program has 100 qubits, but this expectation requires a two-amplitude state because qubit 99 cannot affect `Z(0)`. Entangling gates expand the causal cone automatically. The reduction is exact and does not use truncation or approximation.
 
 ## Build and test
 
