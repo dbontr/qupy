@@ -45,6 +45,40 @@ def test_bell_samples_are_correlated_and_reproducible() -> None:
     np.testing.assert_array_equal(deterministic.values, expected)
 
 
+def test_large_clifford_sampling_uses_stabilizer_execution() -> None:
+    program = qp.Program(24)
+    program = qp.h(program, 0)
+    for qubit in range(1, 24):
+        program = qp.cx(program, qubit - 1, qubit)
+
+    execution_plan = qp.plan(program, qp.ResultMode.SAMPLE)
+    assert execution_plan.method == "stabilizer"
+    assert execution_plan.threads == 1
+    assert execution_plan.estimated_state_bytes == 408
+    assert execution_plan.predicted_ns is None
+
+    first = qp.sample(program, shots=32, seed=7)
+    second = qp.sample(program, shots=32, seed=7)
+    np.testing.assert_array_equal(first.values, second.values)
+    assert not first.values.flags.writeable
+    assert set(first.counts()) == {"0" * 24, "1" * 24}
+    assert "".join(str(int(value)) for value in first.values[:, 0]) == (
+        "11100101100110110110011011010111"
+    )
+
+    batch = qp.sample_batch(
+        program, [], np.empty((2, 0), dtype=np.float64), shots=16, seed=7
+    )
+    assert batch.estimated_state_bytes == 408
+    assert batch.compiled_steps == 24
+    assert batch.parameter_count == 0
+    np.testing.assert_array_equal(batch.values.reshape((-1, 24)), first.values)
+    assert all(set(batch.counts(row)) == {"0" * 24, "1" * 24} for row in range(2))
+
+    small_plan = qp.plan(bell_program(), qp.ResultMode.SAMPLE)
+    assert small_plan.method == "statevector"
+
+
 def test_parameter_binding_and_native_batches() -> None:
     template = qp.ry(qp.Program(1), 0.0, 0)
     template_fingerprint = template.fingerprint

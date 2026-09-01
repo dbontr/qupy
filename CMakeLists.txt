@@ -11,7 +11,7 @@ option(QUPY_BUILD_TESTS "Build native C++ tests" OFF)
 option(QUPY_WARNINGS_AS_ERRORS "Treat native compiler warnings as errors" OFF)
 option(QUPY_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
-add_library(qupy_core STATIC src/cpp/core.cpp)
+add_library(qupy_core STATIC src/cpp/core.cpp src/cpp/stabilizer.cpp)
 target_compile_features(qupy_core PUBLIC cxx_std_20)
 target_include_directories(
     qupy_core
@@ -61,6 +61,7 @@ if(QUPY_BUILD_TESTS)
     add_executable(qupy_core_tests tests/cpp/test_core.cpp)
     target_compile_features(qupy_core_tests PRIVATE cxx_std_20)
     target_link_libraries(qupy_core_tests PRIVATE qupy_core)
+    target_include_directories(qupy_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/cpp)
     if(MSVC)
         target_compile_options(qupy_core_tests PRIVATE /W4 /permissive-)
         if(QUPY_WARNINGS_AS_ERRORS)
