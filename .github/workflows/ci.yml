@@ -32,6 +32,28 @@ jobs:
       - name: Test native core
         run: ctest --test-dir build/native --output-on-failure
 
+  native-core-platform:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure native core
+        run: >-
+          cmake -S . -B build/native
+          -DQUPY_BUILD_PYTHON=OFF
+          -DQUPY_BUILD_TESTS=ON
+          -DQUPY_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Build native core
+        run: cmake --build build/native --config Release --parallel 4
+      - name: Test native core
+        run: ctest --test-dir build/native -C Release --output-on-failure
+
   sanitizers:
     runs-on: ubuntu-latest
     steps:
@@ -72,4 +94,28 @@ jobs:
       - run: uv run mypy src/qupy
       - run: uv build
       - name: Confirm native runtime
-        run: uv run python -c "import qupy; assert qupy.core_language() == 'C++20'"
+        run: >-
+          uv run python -c "import qupy; assert qupy.core_language() == 'C++20';
+          assert qupy.core_version() == '0.3.0a0'; assert qupy.ir_version() == 1"
+
+  python-platform:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - run: uv sync --frozen --python 3.12
+      - run: uv run pytest -q
+      - run: uv build
+      - name: Confirm native runtime
+        run: >-
+          uv run python -c "import qupy; assert qupy.core_language() == 'C++20';
+          assert qupy.core_version() == '0.3.0a0'; assert qupy.ir_version() == 1"

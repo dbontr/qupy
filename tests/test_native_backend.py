@@ -14,6 +14,8 @@ def bell_program() -> qp.Program:
 
 def test_native_core_identity_and_bell_statevector() -> None:
     assert qp.core_language() == "C++20"
+    assert qp.core_version() == "0.3.0a0"
+    assert qp.ir_version() == 1
     assert qp.parallel_threads() >= 1
 
     state = qp.statevector(bell_program())
@@ -30,11 +32,40 @@ def test_bell_samples_are_correlated_and_reproducible() -> None:
     assert first.shots == 512
     np.testing.assert_array_equal(first.values, second.values)
 
+    deterministic = qp.sample(bell_program(), shots=16, seed=7)
+    expected = np.array(
+        [
+            [0, 0], [1, 1], [1, 1], [1, 1],
+            [1, 1], [1, 1], [0, 0], [0, 0],
+            [1, 1], [0, 0], [1, 1], [0, 0],
+            [1, 1], [0, 0], [0, 0], [0, 0],
+        ],
+        dtype=np.int8,
+    )
+    np.testing.assert_array_equal(deterministic.values, expected)
+
 
 def test_bell_z_expectation_is_zero() -> None:
     result = qp.expect(bell_program(), qp.Z(0))
     assert result.value == pytest.approx(0.0, abs=1e-12)
     assert result.backend == "native-cpu"
+
+
+def test_native_probabilities_and_variance() -> None:
+    program = bell_program()
+    probabilities = qp.probabilities(program)
+    np.testing.assert_allclose(probabilities.values, [0.5, 0.0, 0.0, 0.5], atol=1e-12)
+    assert probabilities.backend == "native-cpu"
+    assert not probabilities.values.flags.writeable
+
+    result = qp.variance(program, qp.Z(0))
+    assert result.value == pytest.approx(1.0, abs=1e-12)
+    assert result.active_qubits == 2
+
+    expectation_plan = qp.expectation_plan(program, qp.Z(0))
+    variance_plan = qp.variance_plan(program, qp.Z(0))
+    assert variance_plan.result_mode == qp.ResultMode.VARIANCE
+    assert expectation_plan.cache_key != variance_plan.cache_key
 
 
 def test_single_qubit_gate_conventions() -> None:
@@ -69,10 +100,20 @@ def test_native_target_and_planner_are_explicit() -> None:
     target = qp.native_target()
     assert target.name == "native-cpu"
     assert target.simulator
+    assert target.state_access
+    assert not target.mid_circuit_measurement
+    assert not target.reset
+    assert not target.dynamic_control
+    assert not target.parameter_batches
+    assert len(target.fingerprint) == 64
     assert target.supports_operation(qp.OperationCode.CX)
     assert target.supports_result(qp.ResultMode.STATEVECTOR)
+    assert target.supports_result(qp.ResultMode.PROBABILITIES)
+    assert target.supports_result(qp.ResultMode.VARIANCE)
 
-    execution_plan = qp.plan(bell_program(), qp.ResultMode.SAMPLE)
+    program = bell_program()
+    assert program.fingerprint == "ab7840ba9d0cd5353fe9e66c9100b195a8f5ad566f13e82f8d775e350f7e8009"
+    execution_plan = qp.plan(program, qp.ResultMode.SAMPLE)
     assert execution_plan.backend == "native-cpu"
     assert execution_plan.method == "statevector"
     assert execution_plan.exact
@@ -81,6 +122,10 @@ def test_native_target_and_planner_are_explicit() -> None:
     assert execution_plan.compiled_steps == 2
     assert execution_plan.active_qubits == 2
     assert execution_plan.estimated_state_bytes == 64
+    assert execution_plan.result_mode == qp.ResultMode.SAMPLE
+    assert execution_plan.program_fingerprint == program.fingerprint
+    assert execution_plan.target_fingerprint == target.fingerprint
+    assert execution_plan.cache_key.startswith("qupy-cache/1/0.3.0a0/")
 
 
 def test_invalid_programs_and_execution_options_are_rejected() -> None:
@@ -96,14 +141,23 @@ def test_invalid_programs_and_execution_options_are_rejected() -> None:
     with pytest.raises(ValueError, match="unknown backend"):
         qp.statevector(qp.Program(1), backend="missing")
 
+    with pytest.raises(ValueError, match="observable result mode requires"):
+        qp.plan(qp.Program(1), qp.ResultMode.EXPECTATION)
+
 
 def test_program_ir_is_native_and_immutable() -> None:
     base = qp.Program(2)
     derived = qp.h(base, 1)
+    repeated = qp.h(qp.Program(2), 1)
     assert base.operations == []
     assert len(derived.operations) == 1
     assert derived.operations[0].name == "h"
     assert derived.operations[0].qubits == [1]
+    assert derived.canonical_text.startswith("qupy-ir 1\nqubits 2\n")
+    assert derived.canonical_text == repeated.canonical_text
+    assert derived.fingerprint == repeated.fingerprint
+    assert derived.fingerprint != base.fingerprint
+    assert len(derived.fingerprint) == 64
 
 
 def test_native_compiler_fuses_single_qubit_runs() -> None:

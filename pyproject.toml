@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "qupy-compute"
-version = "0.2.0a0"
+version = "0.3.0a0"
 description = "Native quantum numerical computing for simulators, hybrid workflows, and QPUs."
 readme = "README.md"
 license = "MIT"
