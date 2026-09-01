@@ -1,0 +1,54 @@
+# QuPy benchmark harness
+
+The benchmark harness measures semantic workload classes rather than one undifferentiated circuit set. It is development infrastructure and is not imported by the `qupy` runtime package.
+
+## Workload classes
+
+- `clifford-ghz-z` measures exact Pauli or stabilizer-compatible observable evaluation on an entangled Clifford circuit.
+- `local-nonclifford-z` places the relevant non-Clifford work in a one-qubit observable cone and adds unrelated non-Clifford work elsewhere. This exposes exact result-aware reduction.
+- `entangled-nonclifford-z` keeps the non-Clifford operation inside an all-qubit entangled cone. This is the dense exact fallback class.
+
+Every workload carries a closed-form expected Pauli-Z value. Each adapter must reproduce that value within the declared tolerance before any timing samples are accepted.
+
+## Timing contract
+
+Circuit/program construction and adapter translation happen before timing. The timed region is the engine's user-level expectation execution call on the prepared workload. QuPy therefore includes its native planning, compilation, and execution work in each timed call. External adapters use their prepared circuit and simulator objects.
+
+The JSON report records:
+
+- workload family, qubits, operation count, and observable;
+- engine, version, and selected method;
+- expected value, measured value, tolerance, and semantic-validity status;
+- warmup count and raw nanosecond timing samples;
+- median, minimum, and maximum timing;
+- host platform and Python version;
+- QuPy planner evidence such as active qubits, compiled steps, estimated state bytes, thread count, core version, and IR version;
+- explicit skip reasons for unsupported workload/engine pairs.
+
+Skipped work is never replaced by a different simulation method without being reported.
+
+## Profiles
+
+`smoke` uses six-qubit workloads and is intended for adapter compatibility checks.
+
+`standard` includes 64, 512, and 4,096-qubit Clifford workloads plus 12, 16, and 20-qubit local and entangled non-Clifford workloads. Dense qsim and Aer state-vector adapters are capped at 24 qubits by the portable harness. Specialized engines can run larger workloads when their declared method supports them.
+
+## Usage
+
+Run QuPy only:
+
+```text
+python -m benchmarks.run --profile standard --engines qupy --warmups 2 --iterations 10 --output benchmark.json
+```
+
+Run all compatibility adapters after installing their optional packages:
+
+```text
+python -m benchmarks.run --profile smoke --engines qupy,stim,qsim,aer-statevector,aer-stabilizer --warmups 1 --iterations 5 --require-engines
+```
+
+The repository CI compatibility job installs Stim 1.16.0, qsimcirq 0.22.1, and Qiskit Aer 0.17.2 only for benchmark-adapter verification. These packages are not QuPy runtime dependencies.
+
+## Interpretation
+
+Do not compare methods that answer different questions as if they were interchangeable. The report must be interpreted by workload family, result semantics, exactness, and method. CI verifies adapter correctness but does not enforce timing thresholds because hosted-runner performance is not stable enough for regression claims.
