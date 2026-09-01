@@ -87,6 +87,36 @@ void test_results_and_planner() {
     const auto execution_plan = qupy::plan(program, qupy::ResultMode::Sample);
     require(execution_plan.exact, "native plan must be exact");
     require(execution_plan.threads >= 1, "native plan reported no threads");
+    require(execution_plan.original_operations == 2, "plan operation count is wrong");
+    require(execution_plan.compiled_steps == 2, "Bell plan step count is wrong");
+    require(execution_plan.active_qubits == 2, "Bell plan active qubits are wrong");
+    require(execution_plan.estimated_state_bytes == 64, "Bell plan memory is wrong");
+}
+
+void test_compiler_fusion() {
+    qupy::Program program(2);
+    program = qupy::h(program, 0);
+    program = qupy::rx(program, 0.2, 0);
+    program = qupy::rz(program, -0.4, 0);
+    program = qupy::x(program, 1);
+    program = qupy::ry(program, 0.3, 1);
+    const auto execution_plan = qupy::plan(program, qupy::ResultMode::StateVector);
+    require(execution_plan.original_operations == 5, "fusion input count is wrong");
+    require(execution_plan.compiled_steps == 2, "single-qubit fusion did not reduce steps");
+}
+
+void test_expectation_lightcone() {
+    qupy::Program program(100);
+    program = qupy::h(program, 0);
+    program = qupy::x(program, 98);
+    program = qupy::ry(program, 0.7, 99);
+    const auto execution_plan = qupy::expectation_plan(program, qupy::pauli_z(0));
+    require(execution_plan.method == "statevector-lightcone", "lightcone method not selected");
+    require(execution_plan.active_qubits == 1, "lightcone retained unrelated qubits");
+    require(execution_plan.estimated_state_bytes == 32, "lightcone memory estimate is wrong");
+    const auto result = qupy::expectation(program, qupy::pauli_z(0));
+    require(std::abs(result.value) <= kTolerance, "lightcone expectation is wrong");
+    require(result.active_qubits == 1, "expectation metadata has wrong active qubit count");
 }
 
 void test_validation() {
@@ -116,6 +146,8 @@ int main() {
         test_rotation_and_pauli_gates();
         test_two_qubit_gates();
         test_results_and_planner();
+        test_compiler_fusion();
+        test_expectation_lightcone();
         test_validation();
         std::cout << "QuPy native core tests: PASS\n";
         return 0;

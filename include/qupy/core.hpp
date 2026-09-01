@@ -73,6 +73,10 @@ struct ExecutionPlan {
     std::string method;
     bool exact;
     std::size_t threads;
+    std::size_t original_operations;
+    std::size_t compiled_steps;
+    std::size_t active_qubits;
+    std::size_t estimated_state_bytes;
 };
 
 struct StateVector {
@@ -92,12 +96,20 @@ struct Samples {
 struct Expectation {
     double value;
     std::string backend;
+    std::size_t active_qubits;
+    std::size_t compiled_steps;
+    std::size_t estimated_state_bytes;
 };
 
 [[nodiscard]] Target native_target();
 [[nodiscard]] ExecutionPlan plan(
     const Program& program,
     ResultMode result_mode,
+    const std::string& backend = "auto"
+);
+[[nodiscard]] ExecutionPlan expectation_plan(
+    const Program& program,
+    PauliZ observable,
     const std::string& backend = "auto"
 );
 

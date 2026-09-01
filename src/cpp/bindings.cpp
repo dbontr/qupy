@@ -96,7 +96,11 @@ NB_MODULE(_native, module) {
         .def_ro("backend", &qupy::ExecutionPlan::backend)
         .def_ro("method", &qupy::ExecutionPlan::method)
         .def_ro("exact", &qupy::ExecutionPlan::exact)
-        .def_ro("threads", &qupy::ExecutionPlan::threads);
+        .def_ro("threads", &qupy::ExecutionPlan::threads)
+        .def_ro("original_operations", &qupy::ExecutionPlan::original_operations)
+        .def_ro("compiled_steps", &qupy::ExecutionPlan::compiled_steps)
+        .def_ro("active_qubits", &qupy::ExecutionPlan::active_qubits)
+        .def_ro("estimated_state_bytes", &qupy::ExecutionPlan::estimated_state_bytes);
 
     nb::class_<qupy::StateVector>(module, "StateVector")
         .def_prop_ro("values", &state_values)
@@ -110,7 +114,10 @@ NB_MODULE(_native, module) {
 
     nb::class_<qupy::Expectation>(module, "Expectation")
         .def_ro("value", &qupy::Expectation::value)
-        .def_ro("backend", &qupy::Expectation::backend);
+        .def_ro("backend", &qupy::Expectation::backend)
+        .def_ro("active_qubits", &qupy::Expectation::active_qubits)
+        .def_ro("compiled_steps", &qupy::Expectation::compiled_steps)
+        .def_ro("estimated_state_bytes", &qupy::Expectation::estimated_state_bytes);
 
     module.def("h", &qupy::h, "program"_a, "qubit"_a);
     module.def("x", &qupy::x, "program"_a, "qubit"_a);
@@ -130,6 +137,13 @@ NB_MODULE(_native, module) {
         &qupy::plan,
         "program"_a,
         "result_mode"_a,
+        "backend"_a = "auto"
+    );
+    module.def(
+        "expectation_plan",
+        &qupy::expectation_plan,
+        "program"_a,
+        "observable"_a,
         "backend"_a = "auto"
     );
     module.def(

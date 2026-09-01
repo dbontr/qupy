@@ -77,6 +77,10 @@ def test_native_target_and_planner_are_explicit() -> None:
     assert execution_plan.method == "statevector"
     assert execution_plan.exact
     assert execution_plan.threads >= 1
+    assert execution_plan.original_operations == 2
+    assert execution_plan.compiled_steps == 2
+    assert execution_plan.active_qubits == 2
+    assert execution_plan.estimated_state_bytes == 64
 
 
 def test_invalid_programs_and_execution_options_are_rejected() -> None:
@@ -100,3 +104,52 @@ def test_program_ir_is_native_and_immutable() -> None:
     assert len(derived.operations) == 1
     assert derived.operations[0].name == "h"
     assert derived.operations[0].qubits == [1]
+
+
+def test_native_compiler_fuses_single_qubit_runs() -> None:
+    program = qp.Program(2)
+    program = qp.h(program, 0)
+    program = qp.rx(program, 0.2, 0)
+    program = qp.rz(program, -0.4, 0)
+    program = qp.x(program, 1)
+    program = qp.ry(program, 0.3, 1)
+
+    execution_plan = qp.plan(program, qp.ResultMode.STATEVECTOR)
+    assert execution_plan.original_operations == 5
+    assert execution_plan.compiled_steps == 2
+    assert execution_plan.active_qubits == 2
+
+
+def test_expectation_planner_reduces_to_exact_reverse_lightcone() -> None:
+    program = qp.Program(100)
+    program = qp.h(program, 0)
+    program = qp.x(program, 98)
+    program = qp.ry(program, 0.7, 99)
+
+    execution_plan = qp.expectation_plan(program, qp.Z(0))
+    assert execution_plan.method == "statevector-lightcone"
+    assert execution_plan.exact
+    assert execution_plan.active_qubits == 1
+    assert execution_plan.compiled_steps == 1
+    assert execution_plan.estimated_state_bytes == 32
+    result = qp.expect(program, qp.Z(0))
+    assert result.value == pytest.approx(0.0, abs=1e-12)
+    assert result.active_qubits == 1
+    assert result.compiled_steps == 1
+    assert result.estimated_state_bytes == 32
+
+
+def test_expectation_lightcone_expands_across_entanglement() -> None:
+    program = qp.Program(64)
+    program = qp.h(program, 0)
+    program = qp.cx(program, 0, 37)
+    program = qp.x(program, 63)
+
+    execution_plan = qp.expectation_plan(program, qp.Z(37))
+    assert execution_plan.method == "statevector-lightcone"
+    assert execution_plan.active_qubits == 2
+    assert execution_plan.estimated_state_bytes == 64
+
+    result = qp.expect(program, qp.Z(37))
+    assert result.value == pytest.approx(0.0, abs=1e-12)
+    assert result.active_qubits == 2

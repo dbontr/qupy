@@ -12,6 +12,8 @@
 ## Quantum execution architecture
 - [Qiskit Target](https://quantum.cloud.ibm.com/docs/en/api/qiskit/2.3/qiskit.transpiler.Target) — IBM Quantum, Qiskit 2.3. Used for: separation of target capability data from execution.
 - [AerSimulator](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html) — Qiskit Aer. Used for: result-aware simulator method and backend architecture comparisons.
+- [qsim](https://github.com/quantumlib/qsim) — Google Quantum AI. Used for: native state-vector and gate-fusion optimization design comparison.
+- [CircuitToEinsum](https://docs.nvidia.com/cuda/cuquantum/26.06.0/python/generated/cuquantum.tensornet.CircuitToEinsum.html) — NVIDIA cuQuantum 26.06. Used for: reverse-lightcone expectation reduction design comparison.
 
 ## Tooling
 - [setup-uv](https://github.com/astral-sh/setup-uv) — Astral, v9.0.0. Used for: pinned uv installation in GitHub Actions CI.
