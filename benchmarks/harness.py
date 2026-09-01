@@ -64,11 +64,14 @@ class BenchmarkReport:
 
 
 def _host_metadata() -> dict[str, str]:
+    import qupy as qp
+
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
         "python": platform.python_version(),
         "implementation": platform.python_implementation(),
+        "planner_host_fingerprint": qp.planner_host_fingerprint(),
     }
 
 

@@ -171,6 +171,15 @@ NB_MODULE(_native, module) {
         .def("supports_operation", nb::overload_cast<qupy::OperationCode>(&qupy::Target::supports, nb::const_))
         .def("supports_result", nb::overload_cast<qupy::ResultMode>(&qupy::Target::supports, nb::const_));
 
+    nb::class_<qupy::PlannerCostModel>(module, "PlannerCostModel")
+        .def_prop_ro("schema_version", &qupy::PlannerCostModel::schema_version)
+        .def_prop_ro("workload_version", &qupy::PlannerCostModel::workload_version)
+        .def_prop_ro("engine_version", &qupy::PlannerCostModel::engine_version)
+        .def_prop_ro("host_fingerprint", &qupy::PlannerCostModel::host_fingerprint)
+        .def_prop_ro("artifact_fingerprint", &qupy::PlannerCostModel::artifact_fingerprint)
+        .def_prop_ro("cost_classes", &qupy::PlannerCostModel::cost_classes)
+        .def("predict_ns", &qupy::PlannerCostModel::predict_ns, "plan"_a);
+
     nb::class_<qupy::ExecutionPlan>(module, "ExecutionPlan")
         .def_ro("backend", &qupy::ExecutionPlan::backend)
         .def_ro("method", &qupy::ExecutionPlan::method)
@@ -191,7 +200,11 @@ NB_MODULE(_native, module) {
         .def_ro("workload_fingerprint", &qupy::ExecutionPlan::workload_fingerprint)
         .def_ro("program_fingerprint", &qupy::ExecutionPlan::program_fingerprint)
         .def_ro("target_fingerprint", &qupy::ExecutionPlan::target_fingerprint)
-        .def_ro("cache_key", &qupy::ExecutionPlan::cache_key);
+        .def_ro("cache_key", &qupy::ExecutionPlan::cache_key)
+        .def_ro("predicted_ns", &qupy::ExecutionPlan::predicted_ns)
+        .def_ro("cost_model_class", &qupy::ExecutionPlan::cost_model_class)
+        .def_ro("cost_model_fingerprint", &qupy::ExecutionPlan::cost_model_fingerprint)
+        .def_ro("cost_model_host_fingerprint", &qupy::ExecutionPlan::cost_model_host_fingerprint);
 
     nb::class_<qupy::StateVector>(module, "StateVector")
         .def_prop_ro("values", &state_values)
@@ -254,26 +267,37 @@ NB_MODULE(_native, module) {
     module.def("Z", &qupy::pauli_z, "qubit"_a);
 
     module.def("native_target", &qupy::native_target);
+    module.def("planner_host_fingerprint", &qupy::planner_host_fingerprint);
+    module.def("load_planner_cost_model", &qupy::load_planner_cost_model, "path"_a);
     module.def(
         "plan",
-        &qupy::plan,
-        "program"_a,
-        "result_mode"_a,
-        "backend"_a = "auto"
+        [](const qupy::Program& program, qupy::ResultMode result_mode,
+           const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            return qupy::plan(program, result_mode, backend, model);
+        },
+        "program"_a, "result_mode"_a, "backend"_a = "auto", "cost_model"_a = nb::none()
     );
     module.def(
         "expectation_plan",
-        &qupy::expectation_plan,
-        "program"_a,
-        "observable"_a,
-        "backend"_a = "auto"
+        [](const qupy::Program& program, qupy::PauliZ observable,
+           const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            return qupy::expectation_plan(program, observable, backend, model);
+        },
+        "program"_a, "observable"_a, "backend"_a = "auto", "cost_model"_a = nb::none()
     );
     module.def(
         "variance_plan",
-        &qupy::variance_plan,
-        "program"_a,
-        "observable"_a,
-        "backend"_a = "auto"
+        [](const qupy::Program& program, qupy::PauliZ observable,
+           const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            return qupy::variance_plan(program, observable, backend, model);
+        },
+        "program"_a, "observable"_a, "backend"_a = "auto", "cost_model"_a = nb::none()
     );
     module.def(
         "statevector",

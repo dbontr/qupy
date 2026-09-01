@@ -336,3 +336,75 @@ def test_pauli_propagation_tracks_entanglement_and_ignores_unrelated_rotations()
     assert result.value == pytest.approx(0.0, abs=1e-12)
     assert result.active_qubits == 2
     assert result.estimated_state_bytes == 0
+
+
+def test_native_cost_model_is_inspectable_without_changing_selection(tmp_path) -> None:
+    artifact = tmp_path / "planner.qpcost"
+    artifact.write_text(
+        "\n".join(
+            (
+                "qupy-planner-cost 1",
+                f"engine {qp.core_version()}",
+                "workload 1",
+                f"host {qp.planner_host_fingerprint()}",
+                "validated 1",
+                "model pauli-propagation 2 5 0.85 1.1 1.2",
+                "model statevector-parallel 3 4.5 0.55 0.012 1.1 1.2",
+                "model statevector-serial 3 4.5 0.55 0.012 1.1 1.2",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    model = qp.load_planner_cost_model(str(artifact))
+    assert model.schema_version == 1
+    assert model.workload_version == 1
+    assert model.engine_version == qp.core_version()
+    assert model.host_fingerprint == qp.planner_host_fingerprint()
+    assert len(model.artifact_fingerprint) == 64
+    assert model.cost_classes == [
+        "pauli-propagation",
+        "statevector-parallel",
+        "statevector-serial",
+    ]
+
+    program = qp.ry(qp.Program(1), 0.37, 0)
+    base = qp.expectation_plan(program, qp.Z(0))
+    costed = qp.expectation_plan(program, qp.Z(0), cost_model=model)
+    assert costed.backend == base.backend
+    assert costed.method == base.method
+    assert costed.cache_key == base.cache_key
+    assert base.predicted_ns is None
+    assert costed.predicted_ns is not None and costed.predicted_ns > 0.0
+    assert costed.predicted_ns == pytest.approx(model.predict_ns(costed))
+    assert costed.cost_model_class == "statevector-serial"
+    assert costed.cost_model_fingerprint == model.artifact_fingerprint
+    assert costed.cost_model_host_fingerprint == model.host_fingerprint
+
+    wrong_host = tmp_path / "wrong-host.qpcost"
+    wrong_host.write_text(
+        artifact.read_text(encoding="utf-8").replace(
+            qp.planner_host_fingerprint(), "0" * 64
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="host does not match"):
+        qp.load_planner_cost_model(str(wrong_host))
+
+    invalid_cases = (
+        ("wrong-engine.qpcost", f"engine {qp.core_version()}", "engine incompatible", "engine version"),
+        ("wrong-workload.qpcost", "workload 1", "workload 2", "workload version"),
+        ("unvalidated.qpcost", "validated 1", "validated 0", "not validated"),
+        (
+            "weak-holdout.qpcost",
+            "model pauli-propagation 2 5 0.85 1.1 1.2",
+            "model pauli-propagation 2 5 0.85 1.1 2.1",
+            "holdout metrics",
+        ),
+    )
+    payload = artifact.read_text(encoding="utf-8")
+    for name, old, new, message in invalid_cases:
+        candidate = tmp_path / name
+        candidate.write_text(payload.replace(old, new), encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            qp.load_planner_cost_model(str(candidate))

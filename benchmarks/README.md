@@ -21,7 +21,7 @@ The JSON report records:
 - expected value, measured value, effective tolerance, and semantic-validity status;
 - warmup count and raw nanosecond timing samples;
 - median, minimum, and maximum timing;
-- host platform and Python version;
+- host platform, Python version, and the native planner host fingerprint;
 - QuPy planner evidence including the versioned structural workload fingerprint, original/active qubits and operations, gate-class counts, compiled steps, estimated state bytes, thread count, core version, and IR version;
 - explicit skip reasons for unsupported workload/engine pairs.
 
@@ -42,6 +42,15 @@ Run QuPy only:
 ```text
 python -m benchmarks.run --profile standard --engines qupy --warmups 2 --iterations 10 --output benchmark.json
 ```
+
+Fit held-out QuPy planner cost models and emit a native artifact:
+
+```text
+python -m benchmarks.run --profile calibration --engines qupy --warmups 1 --iterations 3 --output calibration.json
+python -m benchmarks.calibrate calibration.json --output cost-model.json --planner-output planner.qpcost
+```
+
+The calibration command requires every fitted cost class to pass its held-out error thresholds before it emits `planner.qpcost`. The native artifact is scoped to the QuPy core version, workload schema, and planner host fingerprint recorded by the benchmark process.
 
 Run all compatibility adapters after installing their optional packages:
 

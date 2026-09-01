@@ -3,11 +3,18 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <locale>
 #include <random>
+#include <set>
+#include <thread>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -15,6 +22,14 @@
 
 #ifdef QUPY_HAS_OPENMP
 #include <omp.h>
+#endif
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <intrin.h>
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#include <cpuid.h>
+#endif
+#ifdef __APPLE__
+#include <sys/sysctl.h>
 #endif
 
 namespace qupy {
@@ -58,7 +73,118 @@ constexpr int kMaximumOpenMpTeam = 16;
 
 constexpr std::uint32_t kIrVersion = 1U;
 constexpr std::uint32_t kWorkloadVersion = 1U;
+constexpr std::uint32_t kPlannerCostSchemaVersion = 1U;
+constexpr double kPlannerPromotionMaxHoldoutMedianFactor = 1.5;
+constexpr double kPlannerPromotionMaxHoldoutFactor = 2.0;
 constexpr std::string_view kCoreVersion = "0.3.0a0";
+
+[[nodiscard]] std::string cpu_identity() {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    int registers[4]{};
+    __cpuid(registers, static_cast<int>(0x80000000U));
+    const unsigned int max_leaf = static_cast<unsigned int>(registers[0]);
+    if (max_leaf >= 0x80000004U) {
+        std::array<char, 49> brand{};
+        for (unsigned int index = 0U; index < 3U; ++index) {
+            __cpuid(registers, static_cast<int>(0x80000002U + index));
+            std::memcpy(brand.data() + index * 16U, registers, 16U);
+        }
+        return std::string(brand.data());
+    }
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+    const unsigned int max_leaf = __get_cpuid_max(0x80000000U, nullptr);
+    if (max_leaf >= 0x80000004U) {
+        std::array<char, 49> brand{};
+        for (unsigned int index = 0U; index < 3U; ++index) {
+            unsigned int eax = 0U;
+            unsigned int ebx = 0U;
+            unsigned int ecx = 0U;
+            unsigned int edx = 0U;
+            __cpuid(0x80000002U + index, eax, ebx, ecx, edx);
+            const std::array<unsigned int, 4> values{eax, ebx, ecx, edx};
+            std::memcpy(brand.data() + index * 16U, values.data(), 16U);
+        }
+        return std::string(brand.data());
+    }
+#endif
+#ifdef __APPLE__
+    for (const char* key : {"machdep.cpu.brand_string", "hw.model"}) {
+        std::size_t size = 0U;
+        if (sysctlbyname(key, nullptr, &size, nullptr, 0) == 0 && size > 1U) {
+            std::vector<char> buffer(size);
+            if (sysctlbyname(key, buffer.data(), &size, nullptr, 0) == 0) {
+                return std::string(buffer.data());
+            }
+        }
+    }
+#elif defined(_WIN32)
+    if (const char* identifier = std::getenv("PROCESSOR_IDENTIFIER"); identifier != nullptr) {
+        return identifier;
+    }
+#elif defined(__linux__)
+    std::ifstream cpuinfo("/proc/cpuinfo");
+    std::string line;
+    while (std::getline(cpuinfo, line)) {
+        if (line.rfind("model name", 0U) == 0U || line.rfind("Hardware", 0U) == 0U) {
+            const std::size_t separator = line.find(':');
+            if (separator != std::string::npos) {
+                std::string identity = line.substr(separator + 1U);
+                identity.erase(
+                    identity.begin(),
+                    std::find_if(identity.begin(), identity.end(), [](unsigned char value) {
+                        return !std::isspace(value);
+                    })
+                );
+                if (!identity.empty()) {
+                    return identity;
+                }
+            }
+        }
+    }
+#endif
+    return "unknown";
+}
+
+[[nodiscard]] std::string planner_host_text() {
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << "qupy-planner-host 1\n";
+#if defined(_WIN32)
+    output << "os windows\n";
+#elif defined(__APPLE__)
+    output << "os macos\n";
+#elif defined(__linux__)
+    output << "os linux\n";
+#else
+    output << "os other\n";
+#endif
+#if defined(__x86_64__) || defined(_M_X64)
+    output << "arch x86_64\n";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    output << "arch aarch64\n";
+#else
+    output << "arch other\n";
+#endif
+    output << "pointer-bits " << sizeof(void*) * 8U << '\n';
+    output << "cpu " << cpu_identity() << '\n';
+#if defined(__clang__)
+    output << "compiler clang-" << __clang_major__ << '.' << __clang_minor__ << '\n';
+#elif defined(_MSC_VER)
+    output << "compiler msvc-" << _MSC_VER << '\n';
+#elif defined(__GNUC__)
+    output << "compiler gcc-" << __GNUC__ << '.' << __GNUC_MINOR__ << '\n';
+#else
+    output << "compiler other\n";
+#endif
+    output << "logical-processors " << std::thread::hardware_concurrency() << '\n';
+#ifdef QUPY_HAS_OPENMP
+    output << "openmp-max " << omp_get_max_threads() << '\n';
+#else
+    output << "openmp-max 1\n";
+#endif
+    output << "kernel-team-ceiling 16\n";
+    return output.str();
+}
 
 struct OperationSpec {
     std::size_t qubits;
@@ -663,6 +789,28 @@ void validate_backend(const std::string& backend) {
     }
 }
 
+[[nodiscard]] std::string plan_cost_class(const ExecutionPlan& plan) {
+    if (plan.method == "pauli-propagation") {
+        return "pauli-propagation";
+    }
+    if (plan.method == "statevector" || plan.method == "statevector-lightcone") {
+        return plan.threads == 1U ? "statevector-serial" : "statevector-parallel";
+    }
+    throw std::invalid_argument("planner cost model does not support method " + plan.method);
+}
+
+[[nodiscard]] std::vector<double> plan_cost_features(const ExecutionPlan& plan) {
+    const std::string cost_class = plan_cost_class(plan);
+    if (cost_class == "pauli-propagation") {
+        return {1.0, std::log(static_cast<double>(std::max<std::size_t>(plan.active_operations, 1U)))};
+    }
+    const double log_work =
+        std::log(static_cast<double>(std::max<std::size_t>(plan.compiled_steps, 1U))) +
+        static_cast<double>(plan.active_qubits) * std::log(2.0) -
+        std::log(static_cast<double>(std::max<std::size_t>(plan.threads, 1U)));
+    return {1.0, log_work, log_work * log_work};
+}
+
 [[nodiscard]] ExecutionPlan make_plan(
     const Program& source_program,
     const Target& target,
@@ -674,9 +822,10 @@ void validate_backend(const std::string& backend) {
     std::size_t estimated_state_bytes,
     const std::string& method,
     std::string_view qualifier,
-    bool collect_workload_fingerprint
+    bool collect_workload_fingerprint,
+    const PlannerCostModel* cost_model
 ) {
-    const WorkloadFeatures features = collect_workload_fingerprint
+    const WorkloadFeatures features = (collect_workload_fingerprint || cost_model != nullptr)
         ? workload_features(source_program, result_mode, active_qubits, workload_operations)
         : WorkloadFeatures{workload_operations.size(), 0U, 0U, 0U, 0U, {}};
     const std::string program_fingerprint = source_program.fingerprint();
@@ -689,28 +838,22 @@ void validate_backend(const std::string& backend) {
         cache_key << '/' << qualifier;
     }
 
-    return {
-        target.name,
-        method,
-        true,
-        planned_threads(estimated_state_bytes),
-        source_program.num_qubits(),
-        original_operations,
-        active_qubits,
-        features.active_operations,
-        features.single_qubit_operations,
-        features.two_qubit_operations,
-        features.parameterized_operations,
-        features.non_clifford_operations,
-        compiled_steps,
-        estimated_state_bytes,
-        result_mode,
-        kWorkloadVersion,
-        features.fingerprint,
-        program_fingerprint,
-        target_fingerprint,
-        cache_key.str(),
+    ExecutionPlan execution_plan{
+        target.name, method, true, planned_threads(estimated_state_bytes),
+        source_program.num_qubits(), original_operations, active_qubits,
+        features.active_operations, features.single_qubit_operations,
+        features.two_qubit_operations, features.parameterized_operations,
+        features.non_clifford_operations, compiled_steps, estimated_state_bytes,
+        result_mode, kWorkloadVersion, features.fingerprint, program_fingerprint,
+        target_fingerprint, cache_key.str(), std::nullopt, {}, {}, {},
     };
+    if (cost_model != nullptr) {
+        execution_plan.predicted_ns = cost_model->predict_ns(execution_plan);
+        execution_plan.cost_model_class = plan_cost_class(execution_plan);
+        execution_plan.cost_model_fingerprint = cost_model->artifact_fingerprint();
+        execution_plan.cost_model_host_fingerprint = cost_model->host_fingerprint();
+    }
+    return execution_plan;
 }
 
 [[nodiscard]] std::size_t insert_zero_bit(std::size_t value, std::size_t position) {
@@ -960,7 +1103,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     const Program& program,
     ResultMode result_mode,
     const std::string& backend,
-    bool collect_workload_fingerprint = false
+    bool collect_workload_fingerprint = false,
+    const PlannerCostModel* cost_model = nullptr
 ) {
     validate_backend(backend);
     const Target target = native_target();
@@ -977,7 +1121,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         state_memory_bytes(program.num_qubits()),
         "statevector",
         {},
-        collect_workload_fingerprint
+        collect_workload_fingerprint,
+        cost_model
     );
     return {std::move(execution_plan), std::move(steps)};
 }
@@ -1051,7 +1196,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     PauliZ observable,
     ResultMode result_mode,
     const std::string& backend,
-    bool collect_workload_fingerprint = false
+    bool collect_workload_fingerprint = false,
+    const PlannerCostModel* cost_model = nullptr
 ) {
     if (observable.qubit >= program.num_qubits()) {
         throw std::invalid_argument("observable qubit is outside this program");
@@ -1094,7 +1240,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         estimated_state_bytes,
         method,
         qualifier,
-        collect_workload_fingerprint
+        collect_workload_fingerprint,
+        cost_model
     );
     if (pauli_propagation) {
         pauli_operations = std::move(reduced.operations);
@@ -1486,6 +1633,159 @@ void Target::validate(const Program& program, ResultMode mode) const {
     }
 }
 
+
+std::uint32_t PlannerCostModel::schema_version() const noexcept { return schema_version_; }
+std::uint32_t PlannerCostModel::workload_version() const noexcept { return workload_version_; }
+const std::string& PlannerCostModel::engine_version() const noexcept { return engine_version_; }
+const std::string& PlannerCostModel::host_fingerprint() const noexcept { return host_fingerprint_; }
+const std::string& PlannerCostModel::artifact_fingerprint() const noexcept {
+    return artifact_fingerprint_;
+}
+
+std::vector<std::string> PlannerCostModel::cost_classes() const {
+    std::vector<std::string> result;
+    result.reserve(curves_.size());
+    for (const Curve& curve : curves_) {
+        result.push_back(curve.cost_class);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+double PlannerCostModel::predict_ns(const ExecutionPlan& execution_plan) const {
+    if (execution_plan.workload_version != workload_version_) {
+        throw std::invalid_argument("execution plan workload version does not match cost model");
+    }
+    const std::string cost_class = plan_cost_class(execution_plan);
+    const auto curve = std::find_if(
+        curves_.begin(), curves_.end(),
+        [&](const Curve& item) { return item.cost_class == cost_class; }
+    );
+    if (curve == curves_.end()) {
+        throw std::invalid_argument("cost model does not contain class " + cost_class);
+    }
+    const std::vector<double> features = plan_cost_features(execution_plan);
+    if (features.size() != curve->coefficients.size()) {
+        throw std::logic_error("cost model coefficient count does not match plan features");
+    }
+    double log_runtime = 0.0;
+    for (std::size_t index = 0; index < features.size(); ++index) {
+        log_runtime += features[index] * curve->coefficients[index];
+    }
+    const double prediction = std::exp(log_runtime);
+    if (!std::isfinite(prediction) || prediction <= 0.0) {
+        throw std::overflow_error("cost model produced an invalid runtime prediction");
+    }
+    return prediction;
+}
+
+std::string planner_host_fingerprint() {
+    return fingerprint_text(planner_host_text());
+}
+
+PlannerCostModel load_planner_cost_model(const std::string& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        throw std::invalid_argument("cannot open planner cost artifact: " + path);
+    }
+    const std::string text{
+        std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()
+    };
+    std::istringstream lines(text);
+    std::string line;
+    if (!std::getline(lines, line) || line != "qupy-planner-cost 1") {
+        throw std::invalid_argument("planner cost artifact has an unsupported schema");
+    }
+
+    PlannerCostModel model;
+    model.schema_version_ = kPlannerCostSchemaVersion;
+    bool has_engine = false;
+    bool has_workload = false;
+    bool has_host = false;
+    bool validated = false;
+    std::set<std::string> classes;
+    while (std::getline(lines, line)) {
+        if (line.empty()) {
+            continue;
+        }
+        std::istringstream fields(line);
+        std::string key;
+        fields >> key;
+        if (key == "engine") {
+            if (has_engine || !(fields >> model.engine_version_)) {
+                throw std::invalid_argument("planner cost artifact has invalid engine metadata");
+            }
+            has_engine = true;
+        } else if (key == "workload") {
+            if (has_workload || !(fields >> model.workload_version_)) {
+                throw std::invalid_argument("planner cost artifact has invalid workload metadata");
+            }
+            has_workload = true;
+        } else if (key == "host") {
+            if (has_host || !(fields >> model.host_fingerprint_)) {
+                throw std::invalid_argument("planner cost artifact has invalid host metadata");
+            }
+            has_host = true;
+        } else if (key == "validated") {
+            int value = 0;
+            if (!(fields >> value) || value != 1) {
+                throw std::invalid_argument("planner cost artifact is not validated");
+            }
+            validated = true;
+        } else if (key == "model") {
+            PlannerCostModel::Curve curve;
+            std::size_t coefficient_count = 0U;
+            if (!(fields >> curve.cost_class >> coefficient_count)) {
+                throw std::invalid_argument("planner cost artifact has a malformed model row");
+            }
+            const std::size_t expected = curve.cost_class == "pauli-propagation" ? 2U :
+                ((curve.cost_class == "statevector-serial" ||
+                  curve.cost_class == "statevector-parallel") ? 3U : 0U);
+            if (expected == 0U || coefficient_count != expected || !classes.insert(curve.cost_class).second) {
+                throw std::invalid_argument("planner cost artifact has an invalid model class");
+            }
+            curve.coefficients.resize(coefficient_count);
+            for (double& coefficient : curve.coefficients) {
+                if (!(fields >> coefficient) || !std::isfinite(coefficient)) {
+                    throw std::invalid_argument("planner cost artifact has an invalid coefficient");
+                }
+            }
+            if (!(fields >> curve.holdout_median_factor >> curve.holdout_max_factor) ||
+                !std::isfinite(curve.holdout_median_factor) ||
+                !std::isfinite(curve.holdout_max_factor) ||
+                curve.holdout_median_factor < 1.0 || curve.holdout_max_factor < 1.0 ||
+                curve.holdout_median_factor > kPlannerPromotionMaxHoldoutMedianFactor ||
+                curve.holdout_max_factor > kPlannerPromotionMaxHoldoutFactor) {
+                throw std::invalid_argument("planner cost artifact has invalid holdout metrics");
+            }
+            model.curves_.push_back(std::move(curve));
+        } else {
+            throw std::invalid_argument("planner cost artifact contains an unknown field");
+        }
+        std::string extra;
+        if (fields >> extra) {
+            throw std::invalid_argument("planner cost artifact row contains unexpected data");
+        }
+    }
+    const std::set<std::string> expected_classes = {
+        "pauli-propagation", "statevector-parallel", "statevector-serial"
+    };
+    if (!has_engine || !has_workload || !has_host || !validated || classes != expected_classes) {
+        throw std::invalid_argument("planner cost artifact is incomplete");
+    }
+    if (model.engine_version_ != kCoreVersion) {
+        throw std::invalid_argument("planner cost artifact engine version does not match this runtime");
+    }
+    if (model.workload_version_ != kWorkloadVersion) {
+        throw std::invalid_argument("planner cost artifact workload version does not match this runtime");
+    }
+    if (model.host_fingerprint_ != planner_host_fingerprint()) {
+        throw std::invalid_argument("planner cost artifact host does not match this runtime");
+    }
+    model.artifact_fingerprint_ = fingerprint_text(text);
+    return model;
+}
+
 Target native_target() {
     return {
         "native-cpu",
@@ -1521,33 +1821,36 @@ Target native_target() {
 ExecutionPlan plan(
     const Program& program,
     ResultMode result_mode,
-    const std::string& backend
+    const std::string& backend,
+    const PlannerCostModel* cost_model
 ) {
     if (result_mode == ResultMode::Expectation || result_mode == ResultMode::Variance) {
         throw std::invalid_argument(
             "observable result mode requires expectation_plan or variance_plan"
         );
     }
-    return prepare_program(program, result_mode, backend, true).execution_plan;
+    return prepare_program(program, result_mode, backend, true, cost_model).execution_plan;
 }
 
 ExecutionPlan expectation_plan(
     const Program& program,
     PauliZ observable,
-    const std::string& backend
+    const std::string& backend,
+    const PlannerCostModel* cost_model
 ) {
     return prepare_expectation(
-        program, observable, ResultMode::Expectation, backend, true
+        program, observable, ResultMode::Expectation, backend, true, cost_model
     ).execution_plan;
 }
 
 ExecutionPlan variance_plan(
     const Program& program,
     PauliZ observable,
-    const std::string& backend
+    const std::string& backend,
+    const PlannerCostModel* cost_model
 ) {
     return prepare_expectation(
-        program, observable, ResultMode::Variance, backend, true
+        program, observable, ResultMode::Variance, backend, true, cost_model
     ).execution_plan;
 }
 

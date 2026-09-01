@@ -77,6 +77,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - immutable parameter binding with explicit native `ParameterSlot` objects
 - vectorized exact expectation and sampling batches with reusable compiled templates
 - compiler-optimized release builds
+- validated host/version-scoped planner cost artifacts with native predicted-runtime introspection
 
 ## Parameter binding and batches
 
@@ -119,6 +120,21 @@ print(plan.cache_key)
 ```
 
 Automatic execution preserves declared semantics. Execution strategies can change without moving backend policy into Python.
+
+### Validated planner cost evidence
+
+Validated benchmark calibration can be promoted into a compact native planner artifact. The C++ runtime accepts an artifact only when its schema, QuPy core version, workload schema, and native host fingerprint match the current runtime. Invalid, stale, unvalidated, or wrong-host artifacts fail closed.
+
+```python
+model = qp.load_planner_cost_model("planner.qpcost")
+plan = qp.expectation_plan(program, qp.Z(0), cost_model=model)
+
+print(plan.predicted_ns)
+print(plan.cost_model_class)
+print(plan.cost_model_fingerprint)
+```
+
+The model is evidence, not execution policy. Supplying it does not change `backend`, `method`, or `cache_key`; it only adds an inspectable runtime estimate and provenance to the returned plan. This preserves current `backend="auto"` behavior while allowing calibrated planner decisions to be evaluated before they are enabled.
 
 ### Result-aware expectation planning
 
@@ -182,7 +198,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation is the first specialized exact method selected by the native planner. Workload fingerprint version 1 and a held-out, host-specific cost-model calibration pipeline now provide inspectable evidence for future planner decisions. Automatic method selection remains unchanged until calibrated models are promoted with explicit validation and uncertainty guards; SIMD/cache tuning and broader stabilizer execution remain benchmark-driven follow-on work. CUDA/cuQuantum, tensor-network, distributed, and physical-QPU engines remain additional planner targets behind the same conformance contracts.
+Pauli propagation is the first specialized exact method selected by the native planner. Workload fingerprint version 1, held-out calibration, and validated native planner cost artifacts provide host-scoped predicted-runtime evidence with explicit provenance. Automatic method selection remains unchanged until competing methods or backends demonstrate better held-out decisions under the same contracts. Broader stabilizer, CUDA/cuQuantum, tensor-network, noise, and physical-QPU engines remain additional planner targets behind the shared conformance boundary.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

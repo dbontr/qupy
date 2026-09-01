@@ -15,6 +15,8 @@ import numpy as np
 _COST_MODEL_SCHEMA_VERSION = 1
 _BENCHMARK_SCHEMA_VERSION = 1
 _WORKLOAD_VERSION = 1
+_PLANNER_PROMOTION_MAX_HOLDOUT_FACTOR = 2.0
+_PLANNER_PROMOTION_MAX_HOLDOUT_MEDIAN_FACTOR = 1.5
 _LN2 = math.log(2.0)
 
 
@@ -111,6 +113,37 @@ class CostModelReport:
 
     def to_json(self, *, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, sort_keys=True)
+
+    def to_planner_text(self) -> str:
+        if not self.validated:
+            raise ValueError("planner artifacts require a validated cost-model report")
+        host_fingerprint = self.host.get("planner_host_fingerprint")
+        if (
+            not isinstance(host_fingerprint, str)
+            or len(host_fingerprint) != 64
+            or any(character not in "0123456789abcdef" for character in host_fingerprint)
+        ):
+            raise ValueError("planner artifacts require a valid native host fingerprint")
+        lines = [
+            "qupy-planner-cost 1",
+            f"engine {self.engine_version}",
+            f"workload {self.workload_version}",
+            f"host {host_fingerprint}",
+            "validated 1",
+        ]
+        for model in sorted(self.models, key=lambda item: item.cost_class):
+            if (
+                model.holdout_error.median_factor > _PLANNER_PROMOTION_MAX_HOLDOUT_MEDIAN_FACTOR
+                or model.holdout_error.max_factor > _PLANNER_PROMOTION_MAX_HOLDOUT_FACTOR
+            ):
+                raise ValueError("planner artifact does not meet fixed promotion thresholds")
+            coefficients = " ".join(format(value, ".17g") for value in model.coefficients)
+            lines.append(
+                f"model {model.cost_class} {len(model.coefficients)} {coefficients} "
+                f"{format(model.holdout_error.median_factor, '.17g')} "
+                f"{format(model.holdout_error.max_factor, '.17g')}"
+            )
+        return "\n".join(lines) + "\n"
 
 
 def _cost_class(method: str, threads: int) -> str:

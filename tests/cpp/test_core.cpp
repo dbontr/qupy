@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -146,6 +148,49 @@ void test_results_and_planner() {
         large_parallel_plan.threads == expected_large_threads,
         "large native plan exceeded the verified OpenMP team ceiling"
     );
+}
+
+void test_native_planner_cost_artifact() {
+    const std::filesystem::path artifact = std::filesystem::temp_directory_path() /
+        ("qupy-planner-cost-" + qupy::planner_host_fingerprint().substr(0, 12) + ".qpcost");
+    {
+        std::ofstream output(artifact);
+        require(static_cast<bool>(output), "planner cost fixture could not be created");
+        output << "qupy-planner-cost 1\n";
+        output << "engine " << qupy::core_version() << "\n";
+        output << "workload 1\n";
+        output << "host " << qupy::planner_host_fingerprint() << "\n";
+        output << "validated 1\n";
+        output << "model pauli-propagation 2 5 0.85 1.1 1.2\n";
+        output << "model statevector-parallel 3 4.5 0.55 0.012 1.1 1.2\n";
+        output << "model statevector-serial 3 4.5 0.55 0.012 1.1 1.2\n";
+    }
+
+    const qupy::PlannerCostModel model = qupy::load_planner_cost_model(artifact.string());
+    require(model.schema_version() == 1U, "planner cost schema version is wrong");
+    require(model.workload_version() == 1U, "planner workload version is wrong");
+    require(model.engine_version() == qupy::core_version(), "planner engine version is wrong");
+    require(
+        model.host_fingerprint() == qupy::planner_host_fingerprint(),
+        "planner host fingerprint is wrong"
+    );
+    require(model.artifact_fingerprint().size() == 64U, "planner artifact fingerprint is wrong");
+
+    qupy::Program program(1);
+    program = qupy::ry(program, 0.37, 0);
+    const auto base = qupy::expectation_plan(program, qupy::pauli_z(0));
+    const auto costed = qupy::expectation_plan(program, qupy::pauli_z(0), "auto", &model);
+    require(base.method == costed.method, "cost evidence changed planner method selection");
+    require(base.backend == costed.backend, "cost evidence changed planner backend selection");
+    require(base.cache_key == costed.cache_key, "cost evidence changed execution cache identity");
+    require(!base.predicted_ns.has_value(), "uncalibrated plan reported a predicted cost");
+    require(costed.predicted_ns.has_value(), "calibrated plan did not report a predicted cost");
+    require(*costed.predicted_ns > 0.0, "calibrated plan predicted a non-positive cost");
+    require(
+        costed.cost_model_fingerprint == model.artifact_fingerprint(),
+        "plan cost-model provenance is wrong"
+    );
+    require(std::filesystem::remove(artifact), "planner cost fixture was not removed");
 }
 
 void test_parameter_binding_and_batches() {
@@ -524,6 +569,7 @@ int main() {
         test_rotation_and_pauli_gates();
         test_two_qubit_gates();
         test_results_and_planner();
+        test_native_planner_cost_artifact();
         test_parameter_binding_and_batches();
         test_internal_state_workspace_resets_between_calls();
         test_semantic_identity();
