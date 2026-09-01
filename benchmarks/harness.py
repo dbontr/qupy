@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import json
 import platform
 import statistics
 import time
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 
 from .adapters import AdapterUnavailable, WorkloadUnsupported, prepare
 from .model import Workload
@@ -190,7 +190,7 @@ def run_suite(
                 raise RuntimeError(f"benchmark engine {engine} ran no compatible workloads")
     return BenchmarkReport(
         schema_version=_SCHEMA_VERSION,
-        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_at=datetime.now(UTC).isoformat(),
         host=_host_metadata(),
         results=results,
     )
