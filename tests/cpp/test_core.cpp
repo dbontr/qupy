@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -134,6 +135,137 @@ void test_results_and_planner() {
     const auto parallel_plan = qupy::plan(qupy::Program(16), qupy::ResultMode::StateVector);
     const std::size_t expected_threads = std::min<std::size_t>(qupy::parallel_threads(), 8U);
     require(parallel_plan.threads == expected_threads, "16-qubit plan thread count is wrong");
+}
+
+void test_parameter_binding_and_batches() {
+    const double pi = std::acos(-1.0);
+    qupy::Program templated(1);
+    templated = qupy::ry(templated, 0.0, 0);
+    const std::string template_fingerprint = templated.fingerprint();
+    const std::vector<qupy::ParameterSlot> slots{{0U, 0U}};
+
+    const qupy::Program bound = templated.bound(slots, {pi});
+    require(templated.fingerprint() == template_fingerprint, "parameter binding mutated its template");
+    require(bound.fingerprint() != template_fingerprint, "parameter binding did not change identity");
+    require(
+        std::abs(qupy::expectation(bound, qupy::pauli_z(0)).value + 1.0) <= kTolerance,
+        "bound program expectation is wrong"
+    );
+
+    const qupy::ExpectationBatch batch = qupy::expectation_batch(
+        templated,
+        qupy::pauli_z(0),
+        slots,
+        {0.0, pi / 2.0, pi},
+        3U
+    );
+    require(batch.values.size() == 3U, "parameter batch result size is wrong");
+    require(std::abs(batch.values[0] - 1.0) <= kTolerance, "batch row 0 is wrong");
+    require(std::abs(batch.values[1]) <= kTolerance, "batch row 1 is wrong");
+    require(std::abs(batch.values[2] + 1.0) <= kTolerance, "batch row 2 is wrong");
+    require(batch.batch_size == 3U, "parameter batch row count is wrong");
+    require(batch.parameter_count == 1U, "parameter batch column count is wrong");
+    require(batch.active_qubits == 1U, "parameter batch active qubits are wrong");
+    require(batch.estimated_state_bytes == 32U, "parameter batch state estimate is wrong");
+    require(qupy::native_target().parameter_batches, "native target does not advertise batches");
+
+    qupy::Program fused(1);
+    fused = qupy::rx(fused, 0.0, 0);
+    fused = qupy::ry(fused, 0.0, 0);
+    const std::vector<qupy::ParameterSlot> fused_slots{{0U, 0U}, {1U, 0U}};
+    const std::vector<double> fused_values{0.1, 0.2, -0.3, 0.4};
+    const qupy::ExpectationBatch fused_batch = qupy::expectation_batch(
+        fused, qupy::pauli_z(0), fused_slots, fused_values, 2U
+    );
+    for (std::size_t row = 0; row < 2U; ++row) {
+        const qupy::Program scalar_program = fused.bound(
+            fused_slots,
+            {fused_values[row * 2U], fused_values[row * 2U + 1U]}
+        );
+        const double scalar = qupy::expectation(scalar_program, qupy::pauli_z(0)).value;
+        require(
+            std::abs(fused_batch.values[row] - scalar) <= kTolerance,
+            "multi-slot batch diverged from scalar binding"
+        );
+    }
+
+    qupy::Program irrelevant(2);
+    irrelevant = qupy::ry(irrelevant, 0.37, 0);
+    irrelevant = qupy::ry(irrelevant, 0.0, 1);
+    const qupy::ExpectationBatch irrelevant_batch = qupy::expectation_batch(
+        irrelevant,
+        qupy::pauli_z(0),
+        {{1U, 0U}},
+        {0.0, 1.0, 2.0},
+        3U
+    );
+    const double expected_irrelevant = std::cos(0.37);
+    require(irrelevant_batch.active_qubits == 1U, "irrelevant batch slot expanded causal cone");
+    require(
+        std::all_of(
+            irrelevant_batch.values.begin(),
+            irrelevant_batch.values.end(),
+            [&](double value) { return std::abs(value - expected_irrelevant) <= kTolerance; }
+        ),
+        "irrelevant parameter slot changed an observable"
+    );
+
+    qupy::Program sampled(2);
+    sampled = qupy::ry(sampled, 0.0, 0);
+    sampled = qupy::cx(sampled, 0, 1);
+    const qupy::SamplesBatch sampled_batch = qupy::sample_batch(
+        sampled, slots, {0.0, pi}, 2U, 32U, 7U
+    );
+    require(sampled_batch.batch_size == 2U, "sample batch row count is wrong");
+    require(sampled_batch.shots == 32U, "sample batch shot count is wrong");
+    require(sampled_batch.num_qubits == 2U, "sample batch qubit count is wrong");
+    require(sampled_batch.parameter_count == 1U, "sample batch parameter count is wrong");
+    require(sampled_batch.values.size() == 128U, "sample batch result size is wrong");
+    require(sampled_batch.counts(0).at("00") == 32U, "sample batch row 0 is wrong");
+    require(sampled_batch.counts(1).at("11") == 32U, "sample batch row 1 is wrong");
+
+    const qupy::SamplesBatch one_row = qupy::sample_batch(
+        sampled, slots, {pi / 2.0}, 1U, 32U, 19U
+    );
+    const qupy::Samples scalar_samples = qupy::sample(
+        sampled.bound(slots, {pi / 2.0}), 32U, 19U
+    );
+    require(
+        one_row.values == scalar_samples.values,
+        "one-row sample batch changed deterministic seeded sampling"
+    );
+
+    bool rejected = false;
+    try {
+        static_cast<void>(templated.bound({{0U, 0U}, {0U, 0U}}, {0.1, 0.2}));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "duplicate parameter slots were not rejected");
+
+    rejected = false;
+    try {
+        static_cast<void>(qupy::expectation_batch(
+            templated, qupy::pauli_z(0), slots, {0.0, 1.0}, 3U
+        ));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "invalid parameter batch shape was not rejected");
+
+    rejected = false;
+    try {
+        static_cast<void>(qupy::expectation_batch(
+            templated,
+            qupy::pauli_z(0),
+            slots,
+            {std::numeric_limits<double>::quiet_NaN()},
+            1U
+        ));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "non-finite parameter batch value was not rejected");
 }
 
 void test_internal_state_workspace_resets_between_calls() {
@@ -367,6 +499,7 @@ int main() {
         test_rotation_and_pauli_gates();
         test_two_qubit_gates();
         test_results_and_planner();
+        test_parameter_binding_and_batches();
         test_internal_state_workspace_resets_between_calls();
         test_semantic_identity();
         test_compiler_fusion();

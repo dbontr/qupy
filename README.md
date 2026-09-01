@@ -74,7 +74,35 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - exact reverse-causal-cone reduction before observable-method selection
 - workload-scaled OpenMP teams for sufficiently large amplitude workloads
 - reusable per-thread state workspaces for internal result execution
+- immutable parameter binding with explicit native `ParameterSlot` objects
+- vectorized exact expectation and sampling batches with reusable compiled templates
 - compiler-optimized release builds
+
+## Parameter binding and batches
+
+A parameter slot identifies an existing operation parameter without changing IR version 1. Binding returns a new immutable `Program`; it does not mutate the template.
+
+```python
+import math
+import numpy as np
+import qupy as qp
+
+template = qp.ry(qp.Program(1), 0.0, 0)
+slots = [qp.ParameterSlot(0)]
+angles = np.array([[0.0], [math.pi / 2.0], [math.pi]], dtype=np.float64)
+
+expectations = qp.expect_batch(template, qp.Z(0), slots, angles)
+samples = qp.sample_batch(template, slots, angles, shots=128, seed=7)
+
+print(expectations.values)  # [ 1.  0. -1.]
+print(samples.values.shape) # (3, 128, 1)
+```
+
+The parameter table has shape `(batch_size, len(slots))`. Native expectation batches reuse causal-cone analysis, fusion structure, fixed matrices, and the internal state workspace across rows. Sampling batches reuse the compiled template and state workspace across rows. Result arrays are read-only NumPy views over native storage.
+
+A seeded sampling batch uses one deterministic QuPy random stream in row-major batch order. A one-row batch therefore produces the same sample array as scalar `sample()` on the corresponding bound program with the same seed.
+
+The native target advertises `parameter_batches=True`. Current parameterized gates have one parameter per operation, so `ParameterSlot(operation_index)` is sufficient for RX, RY, and RZ. The optional `parameter_index` remains explicit for forward-compatible slot identity.
 
 ## Execution model
 
@@ -154,7 +182,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation is the first specialized exact method selected by the native planner. The next performance work is reproducible workload-class benchmarking, measured planner cost models, SIMD/cache tuning, parameter batching, and broader stabilizer execution. CUDA/cuQuantum, tensor-network, distributed, and physical-QPU engines remain additional planner targets behind the same conformance contracts.
+Pauli propagation is the first specialized exact method selected by the native planner. The next performance work is workload fingerprints, measured planner cost models, SIMD/cache tuning, and broader stabilizer execution. CUDA/cuQuantum, tensor-network, distributed, and physical-QPU engines remain additional planner targets behind the same conformance contracts.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

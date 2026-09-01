@@ -45,6 +45,55 @@ def test_bell_samples_are_correlated_and_reproducible() -> None:
     np.testing.assert_array_equal(deterministic.values, expected)
 
 
+def test_parameter_binding_and_native_batches() -> None:
+    template = qp.ry(qp.Program(1), 0.0, 0)
+    template_fingerprint = template.fingerprint
+    slots = [qp.ParameterSlot(0)]
+
+    bound = template.bind(slots, [math.pi])
+    assert template.fingerprint == template_fingerprint
+    assert bound.fingerprint != template_fingerprint
+    assert qp.expect(bound, qp.Z(0)).value == pytest.approx(-1.0, abs=1e-12)
+
+    parameters = np.array([[0.0], [math.pi / 2.0], [math.pi]], dtype=np.float64)
+    expectations = qp.expect_batch(template, qp.Z(0), slots, parameters)
+    np.testing.assert_allclose(expectations.values, [1.0, 0.0, -1.0], atol=1e-12)
+    assert expectations.values.shape == (3,)
+    assert not expectations.values.flags.writeable
+    assert expectations.batch_size == 3
+    assert expectations.parameter_count == 1
+    assert expectations.active_qubits == 1
+    assert expectations.compiled_steps == 1
+    assert expectations.estimated_state_bytes == 32
+
+    sampled = qp.cx(qp.ry(qp.Program(2), 0.0, 0), 0, 1)
+    sample_parameters = np.array([[0.0], [math.pi]], dtype=np.float64)
+    first = qp.sample_batch(sampled, slots, sample_parameters, shots=32, seed=7)
+    second = qp.sample_batch(sampled, slots, sample_parameters, shots=32, seed=7)
+    assert first.values.shape == (2, 32, 2)
+    assert not first.values.flags.writeable
+    np.testing.assert_array_equal(first.values, second.values)
+    assert first.counts(0) == {"00": 32}
+    assert first.counts(1) == {"11": 32}
+    assert first.batch_size == 2
+    assert first.parameter_count == 1
+    assert first.compiled_steps == 2
+    assert first.estimated_state_bytes == 64
+
+    one_row = qp.sample_batch(
+        sampled,
+        slots,
+        np.array([[math.pi / 2.0]], dtype=np.float64),
+        shots=32,
+        seed=19,
+    )
+    scalar = qp.sample(sampled.bind(slots, [math.pi / 2.0]), shots=32, seed=19)
+    np.testing.assert_array_equal(one_row.values[0], scalar.values)
+
+    with pytest.raises(ValueError, match="columns must match"):
+        qp.expect_batch(template, qp.Z(0), slots, np.empty((2, 0), dtype=np.float64))
+
+
 def test_bell_z_expectation_is_zero() -> None:
     result = qp.expect(bell_program(), qp.Z(0))
     assert result.value == pytest.approx(0.0, abs=1e-12)
@@ -116,7 +165,7 @@ def test_native_target_and_planner_are_explicit() -> None:
     assert not target.mid_circuit_measurement
     assert not target.reset
     assert not target.dynamic_control
-    assert not target.parameter_batches
+    assert target.parameter_batches
     assert len(target.fingerprint) == 64
     assert target.supports_operation(qp.OperationCode.CX)
     assert target.supports_result(qp.ResultMode.STATEVECTOR)

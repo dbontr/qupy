@@ -41,6 +41,14 @@ struct Operation {
     [[nodiscard]] std::string name() const;
 };
 
+struct ParameterSlot {
+    ParameterSlot(std::size_t operation_index_, std::size_t parameter_index_ = 0U)
+        : operation_index(operation_index_), parameter_index(parameter_index_) {}
+
+    std::size_t operation_index;
+    std::size_t parameter_index;
+};
+
 class Program {
 public:
     explicit Program(std::size_t num_qubits);
@@ -50,6 +58,10 @@ public:
     [[nodiscard]] std::string canonical_text() const;
     [[nodiscard]] std::string fingerprint() const;
     [[nodiscard]] Program appended(Operation operation) const;
+    [[nodiscard]] Program bound(
+        const std::vector<ParameterSlot>& slots,
+        const std::vector<double>& values
+    ) const;
 
 private:
     std::size_t num_qubits_;
@@ -112,8 +124,31 @@ struct Samples {
     [[nodiscard]] std::map<std::string, std::size_t> counts() const;
 };
 
+struct SamplesBatch {
+    std::vector<std::int8_t> values;
+    std::size_t batch_size;
+    std::size_t shots;
+    std::size_t num_qubits;
+    std::size_t parameter_count;
+    std::string backend;
+    std::size_t compiled_steps;
+    std::size_t estimated_state_bytes;
+
+    [[nodiscard]] std::map<std::string, std::size_t> counts(std::size_t batch_index) const;
+};
+
 struct Expectation {
     double value;
+    std::string backend;
+    std::size_t active_qubits;
+    std::size_t compiled_steps;
+    std::size_t estimated_state_bytes;
+};
+
+struct ExpectationBatch {
+    std::vector<double> values;
+    std::size_t batch_size;
+    std::size_t parameter_count;
     std::string backend;
     std::size_t active_qubits;
     std::size_t compiled_steps;
@@ -171,9 +206,26 @@ struct Variance {
     std::optional<std::uint64_t> seed = std::nullopt,
     const std::string& backend = "auto"
 );
+[[nodiscard]] SamplesBatch sample_batch(
+    const Program& program,
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& parameter_values,
+    std::size_t batch_size,
+    std::size_t shots = 1024,
+    std::optional<std::uint64_t> seed = std::nullopt,
+    const std::string& backend = "auto"
+);
 [[nodiscard]] Expectation expectation(
     const Program& program,
     PauliZ observable,
+    const std::string& backend = "auto"
+);
+[[nodiscard]] ExpectationBatch expectation_batch(
+    const Program& program,
+    PauliZ observable,
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& parameter_values,
+    std::size_t batch_size,
     const std::string& backend = "auto"
 );
 [[nodiscard]] Variance variance(

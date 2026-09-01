@@ -27,10 +27,22 @@ using DoubleArray = nb::ndarray<
     nb::ndim<1>,
     nb::c_contig
 >;
+using ParameterArray = nb::ndarray<
+    nb::numpy,
+    const double,
+    nb::ndim<2>,
+    nb::c_contig
+>;
 using SampleArray = nb::ndarray<
     nb::numpy,
     const std::int8_t,
     nb::ndim<2>,
+    nb::c_contig
+>;
+using SampleBatchArray = nb::ndarray<
+    nb::numpy,
+    const std::int8_t,
+    nb::ndim<3>,
     nb::c_contig
 >;
 
@@ -50,12 +62,45 @@ DoubleArray probability_values(qupy::Probabilities& result) {
     );
 }
 
+DoubleArray expectation_batch_values(qupy::ExpectationBatch& result) {
+    return DoubleArray(
+        result.values.data(),
+        {result.values.size()},
+        nb::find(&result)
+    );
+}
+
 SampleArray sample_values(qupy::Samples& result) {
     return SampleArray(
         result.values.data(),
         {result.shots, result.num_qubits},
         nb::find(&result)
     );
+}
+
+SampleBatchArray sample_batch_values(qupy::SamplesBatch& result) {
+    return SampleBatchArray(
+        result.values.data(),
+        {result.batch_size, result.shots, result.num_qubits},
+        nb::find(&result)
+    );
+}
+
+std::vector<double> parameter_table_values(
+    ParameterArray parameter_values,
+    std::size_t parameter_count
+) {
+    if (parameter_values.shape(1) != parameter_count) {
+        throw nb::value_error("parameter table columns must match parameter slots");
+    }
+    std::vector<double> flattened;
+    if (parameter_values.size() != 0U) {
+        flattened.assign(
+            parameter_values.data(),
+            parameter_values.data() + parameter_values.size()
+        );
+    }
+    return flattened;
 }
 
 }  // namespace
@@ -88,6 +133,15 @@ NB_MODULE(_native, module) {
         .def_ro("qubits", &qupy::Operation::qubits)
         .def_ro("parameters", &qupy::Operation::parameters);
 
+    nb::class_<qupy::ParameterSlot>(module, "ParameterSlot")
+        .def(
+            nb::init<std::size_t, std::size_t>(),
+            "operation_index"_a,
+            "parameter_index"_a = 0U
+        )
+        .def_ro("operation_index", &qupy::ParameterSlot::operation_index)
+        .def_ro("parameter_index", &qupy::ParameterSlot::parameter_index);
+
     nb::class_<qupy::Program>(module, "Program")
         .def(nb::init<std::size_t>(), "num_qubits"_a)
         .def_prop_ro("num_qubits", &qupy::Program::num_qubits)
@@ -96,7 +150,8 @@ NB_MODULE(_native, module) {
             [](const qupy::Program& program) { return program.operations(); }
         )
         .def_prop_ro("canonical_text", &qupy::Program::canonical_text)
-        .def_prop_ro("fingerprint", &qupy::Program::fingerprint);
+        .def_prop_ro("fingerprint", &qupy::Program::fingerprint)
+        .def("bind", &qupy::Program::bound, "slots"_a, "values"_a);
 
     nb::class_<qupy::PauliZ>(module, "PauliZ")
         .def_ro("qubit", &qupy::PauliZ::qubit);
@@ -144,12 +199,32 @@ NB_MODULE(_native, module) {
         .def_ro("backend", &qupy::Samples::backend)
         .def("counts", &qupy::Samples::counts);
 
+    nb::class_<qupy::SamplesBatch>(module, "SamplesBatch")
+        .def_prop_ro("values", &sample_batch_values)
+        .def_ro("batch_size", &qupy::SamplesBatch::batch_size)
+        .def_ro("shots", &qupy::SamplesBatch::shots)
+        .def_ro("num_qubits", &qupy::SamplesBatch::num_qubits)
+        .def_ro("parameter_count", &qupy::SamplesBatch::parameter_count)
+        .def_ro("backend", &qupy::SamplesBatch::backend)
+        .def_ro("compiled_steps", &qupy::SamplesBatch::compiled_steps)
+        .def_ro("estimated_state_bytes", &qupy::SamplesBatch::estimated_state_bytes)
+        .def("counts", &qupy::SamplesBatch::counts, "batch_index"_a);
+
     nb::class_<qupy::Expectation>(module, "Expectation")
         .def_ro("value", &qupy::Expectation::value)
         .def_ro("backend", &qupy::Expectation::backend)
         .def_ro("active_qubits", &qupy::Expectation::active_qubits)
         .def_ro("compiled_steps", &qupy::Expectation::compiled_steps)
         .def_ro("estimated_state_bytes", &qupy::Expectation::estimated_state_bytes);
+
+    nb::class_<qupy::ExpectationBatch>(module, "ExpectationBatch")
+        .def_prop_ro("values", &expectation_batch_values)
+        .def_ro("batch_size", &qupy::ExpectationBatch::batch_size)
+        .def_ro("parameter_count", &qupy::ExpectationBatch::parameter_count)
+        .def_ro("backend", &qupy::ExpectationBatch::backend)
+        .def_ro("active_qubits", &qupy::ExpectationBatch::active_qubits)
+        .def_ro("compiled_steps", &qupy::ExpectationBatch::compiled_steps)
+        .def_ro("estimated_state_bytes", &qupy::ExpectationBatch::estimated_state_bytes);
 
     nb::class_<qupy::Variance>(module, "Variance")
         .def_ro("value", &qupy::Variance::value)
@@ -216,12 +291,62 @@ NB_MODULE(_native, module) {
         nb::call_guard<nb::gil_scoped_release>()
     );
     module.def(
+        "sample_batch",
+        [](
+            const qupy::Program& program,
+            const std::vector<qupy::ParameterSlot>& slots,
+            ParameterArray parameter_values,
+            std::size_t shots,
+            std::optional<std::uint64_t> seed,
+            const std::string& backend
+        ) {
+            const std::size_t rows = parameter_values.shape(0);
+            std::vector<double> flattened = parameter_table_values(
+                parameter_values, slots.size()
+            );
+            nb::gil_scoped_release release;
+            return qupy::sample_batch(
+                program, slots, flattened, rows, shots, seed, backend
+            );
+        },
+        "program"_a,
+        "slots"_a,
+        "parameter_values"_a,
+        "shots"_a = 1024,
+        "seed"_a = std::nullopt,
+        "backend"_a = "auto"
+    );
+    module.def(
         "expect",
         &qupy::expectation,
         "program"_a,
         "observable"_a,
         "backend"_a = "auto",
         nb::call_guard<nb::gil_scoped_release>()
+    );
+    module.def(
+        "expect_batch",
+        [](
+            const qupy::Program& program,
+            qupy::PauliZ observable,
+            const std::vector<qupy::ParameterSlot>& slots,
+            ParameterArray parameter_values,
+            const std::string& backend
+        ) {
+            const std::size_t rows = parameter_values.shape(0);
+            std::vector<double> flattened = parameter_table_values(
+                parameter_values, slots.size()
+            );
+            nb::gil_scoped_release release;
+            return qupy::expectation_batch(
+                program, observable, slots, flattened, rows, backend
+            );
+        },
+        "program"_a,
+        "observable"_a,
+        "slots"_a,
+        "parameter_values"_a,
+        "backend"_a = "auto"
     );
     module.def(
         "variance",
