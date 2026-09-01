@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qupy-compute"
+version = "0.1.0a0"
+description = "NumPy-style quantum numerical computing for simulators, hybrid workflows, and QPUs."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.0"]
+
+[dependency-groups]
+dev = ["mypy>=1.17", "pytest>=8.4", "ruff>=0.12"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qupy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["qupy"]
