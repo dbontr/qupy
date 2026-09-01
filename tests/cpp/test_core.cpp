@@ -257,6 +257,26 @@ void test_pauli_propagation_matches_dense_statevector() {
     }
 }
 
+void test_large_clifford_cone_avoids_statevector_allocation() {
+    constexpr std::size_t qubits = 4096U;
+    qupy::Program program(qubits);
+    program = qupy::h(program, 0);
+    for (std::size_t qubit = 1; qubit < qubits; ++qubit) {
+        program = qupy::cx(program, qubit - 1U, qubit);
+    }
+
+    const auto execution_plan = qupy::expectation_plan(
+        program, qupy::pauli_z(qubits - 1U)
+    );
+    require(execution_plan.method == "pauli-propagation", "large Clifford cone used statevector");
+    require(execution_plan.active_qubits == qubits, "large Clifford cone lost dependencies");
+    require(execution_plan.estimated_state_bytes == 0, "large Clifford cone requested state memory");
+
+    const auto result = qupy::expectation(program, qupy::pauli_z(qubits - 1U));
+    require(std::abs(result.value) <= kTolerance, "large Clifford expectation is wrong");
+    require(result.estimated_state_bytes == 0, "large Clifford result reports state memory");
+}
+
 void test_probabilities_and_variance() {
     qupy::Program program(2);
     program = qupy::h(program, 0);
@@ -326,6 +346,7 @@ int main() {
         test_clifford_expectation_uses_pauli_propagation();
         test_non_clifford_expectation_falls_back_to_statevector_lightcone();
         test_pauli_propagation_matches_dense_statevector();
+        test_large_clifford_cone_avoids_statevector_allocation();
         test_probabilities_and_variance();
         test_validation();
         std::cout << "QuPy native core tests: PASS\n";
