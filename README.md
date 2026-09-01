@@ -72,7 +72,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - compact branch-free CX, CZ, and SWAP pair traversal
 - alias-table sampling for repeated shots
 - exact reverse-causal-cone reduction before observable-method selection
-- workload-scaled OpenMP teams for sufficiently large amplitude workloads
+- workload-scaled OpenMP teams for sufficiently large amplitude workloads, currently capped at the verified 16-thread kernel scaling limit
 - reusable per-thread state workspaces for internal result execution
 - immutable parameter binding with explicit native `ParameterSlot` objects
 - vectorized exact expectation and sampling batches with reusable compiled templates

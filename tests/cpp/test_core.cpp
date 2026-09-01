@@ -135,6 +135,17 @@ void test_results_and_planner() {
     const auto parallel_plan = qupy::plan(qupy::Program(16), qupy::ResultMode::StateVector);
     const std::size_t expected_threads = std::min<std::size_t>(qupy::parallel_threads(), 8U);
     require(parallel_plan.threads == expected_threads, "16-qubit plan thread count is wrong");
+
+    const auto large_parallel_plan = qupy::plan(
+        qupy::Program(20), qupy::ResultMode::StateVector
+    );
+    const std::size_t expected_large_threads = std::min<std::size_t>(
+        qupy::parallel_threads(), 16U
+    );
+    require(
+        large_parallel_plan.threads == expected_large_threads,
+        "large native plan exceeded the verified OpenMP team ceiling"
+    );
 }
 
 void test_parameter_binding_and_batches() {

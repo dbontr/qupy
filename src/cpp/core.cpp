@@ -23,13 +23,15 @@ namespace {
 #ifdef QUPY_HAS_OPENMP
 constexpr std::size_t kParallelMinimumState = 1U << 16U;
 constexpr std::size_t kAmplitudesPerThread = 1U << 13U;
+constexpr int kMaximumOpenMpTeam = 16;
 
 [[nodiscard]] int parallel_team_size(std::size_t state_size) noexcept {
     if (state_size < kParallelMinimumState) {
         return 1;
     }
-    const int max_threads = omp_get_max_threads();
-    omp_set_num_threads(max_threads);
+    const int runtime_max_threads = omp_get_max_threads();
+    omp_set_num_threads(runtime_max_threads);
+    const int max_threads = std::min(runtime_max_threads, kMaximumOpenMpTeam);
     if (max_threads <= 1) {
         return 1;
     }
