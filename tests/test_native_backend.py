@@ -52,6 +52,16 @@ def test_bell_z_expectation_is_zero() -> None:
     assert result.estimated_state_bytes == 0
 
 
+def test_statevector_storage_is_independent_of_internal_workspace() -> None:
+    owned_program = qp.ry(qp.Program(1), math.pi, 0)
+    owned = qp.statevector(owned_program)
+    expected = owned.values.copy()
+
+    workspace_program = qp.ry(qp.Program(1), 0.0, 0)
+    assert qp.expect(workspace_program, qp.Z(0)).value == pytest.approx(1.0, abs=1e-12)
+    np.testing.assert_allclose(owned.values, expected, atol=1e-12)
+
+
 def test_native_probabilities_and_variance() -> None:
     program = bell_program()
     probabilities = qp.probabilities(program)

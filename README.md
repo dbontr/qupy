@@ -73,6 +73,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - alias-table sampling for repeated shots
 - exact reverse-causal-cone reduction before observable-method selection
 - workload-scaled OpenMP teams for sufficiently large amplitude workloads
+- reusable per-thread state workspaces for internal result execution
 - compiler-optimized release builds
 
 ## Execution model
