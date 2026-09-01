@@ -8,7 +8,7 @@ The benchmark harness measures semantic workload classes rather than one undiffe
 - `local-nonclifford-z` places the relevant non-Clifford work in a one-qubit observable cone and adds unrelated non-Clifford work elsewhere. This exposes exact result-aware reduction.
 - `entangled-nonclifford-z` keeps the non-Clifford operation inside an all-qubit entangled cone. This is the dense exact fallback class.
 
-Every workload carries a closed-form expected Pauli-Z value. Each adapter must reproduce that value within the declared tolerance before any timing samples are accepted.
+Every workload carries a closed-form expected Pauli-Z value. Each adapter must reproduce that value within the declared tolerance before any timing samples are accepted. Workloads default to `1e-9`. An adapter may declare a larger numerical validation tolerance when its upstream numerical contract requires it; the effective tolerance is written into every result. The qsim adapter uses `1e-5`, matching qsim's own expectation-value comparison tolerance.
 
 ## Timing contract
 
@@ -18,7 +18,7 @@ The JSON report records:
 
 - workload family, qubits, operation count, and observable;
 - engine, version, and selected method;
-- expected value, measured value, tolerance, and semantic-validity status;
+- expected value, measured value, effective tolerance, and semantic-validity status;
 - warmup count and raw nanosecond timing samples;
 - median, minimum, and maximum timing;
 - host platform and Python version;
@@ -51,4 +51,4 @@ The repository CI compatibility job installs Stim 1.16.0, qsimcirq 0.22.1, and Q
 
 ## Interpretation
 
-Do not compare methods that answer different questions as if they were interchangeable. The report must be interpreted by workload family, result semantics, exactness, and method. CI verifies adapter correctness but does not enforce timing thresholds because hosted-runner performance is not stable enough for regression claims.
+Do not compare methods that answer different questions as if they were interchangeable. The report must be interpreted by workload family, result semantics, exactness, method, and effective numerical tolerance. CI verifies adapter correctness but does not enforce timing thresholds because hosted-runner performance is not stable enough for regression claims.
