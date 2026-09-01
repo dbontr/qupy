@@ -1,8 +1,8 @@
 # QuPy
 
-QuPy is a native quantum numerical-computing library with a compact Python interface. The execution core, program IR, target validation, planner, simulator, sampling, and expectation evaluation are implemented in C++20.
+QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, program IR, target validation, planner, simulator, sampling, and expectation evaluation.
 
-Python is the user-facing language. It does not implement the quantum simulator. NumPy is used as an interoperable array surface for native results.
+Python is the user-facing language. It does not implement the quantum simulator. NumPy provides an interoperable array surface for native results.
 
 > **Status:** early alpha. The native CPU core is usable and tested. The public API can still change.
 
@@ -25,7 +25,7 @@ print(energy.value)
 print(state.values)
 ```
 
-All program objects and execution results in this example are backed by native C++ objects.
+Native C++ objects back all program objects and execution results in this example.
 
 ## Native architecture
 
@@ -65,7 +65,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 
 ## Execution model
 
-`backend="auto"` is handled inside C++. The planner validates the requested result against a target before execution and returns an inspectable `ExecutionPlan`.
+C++ handles `backend="auto"`. The planner validates the requested result against a target before execution and returns an inspectable `ExecutionPlan`.
 
 ```python
 plan = qp.plan(program, qp.ResultMode.SAMPLE)
