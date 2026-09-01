@@ -318,6 +318,7 @@ struct PreparedExpectation {
     std::size_t observable_qubit;
     ExecutionPlan execution_plan;
     std::vector<CompiledStep> steps;
+    bool pauli_propagation;
 };
 
 void validate_backend(const std::string& backend) {
@@ -333,6 +334,7 @@ void validate_backend(const std::string& backend) {
     std::size_t original_operations,
     std::size_t compiled_steps,
     std::size_t active_qubits,
+    std::size_t estimated_state_bytes,
     const std::string& method,
     std::string_view qualifier = {}
 ) {
@@ -354,7 +356,7 @@ void validate_backend(const std::string& backend) {
         original_operations,
         compiled_steps,
         active_qubits,
-        state_memory_bytes(active_qubits),
+        estimated_state_bytes,
         result_mode,
         program_fingerprint,
         target_fingerprint,
@@ -471,6 +473,136 @@ void apply_swap(
     }
 }
 
+struct PauliFrame {
+    std::vector<std::uint8_t> x;
+    std::vector<std::uint8_t> z;
+    bool negative = false;
+};
+
+void conjugate_h(PauliFrame& pauli, std::size_t qubit) {
+    if (pauli.x[qubit] != 0U && pauli.z[qubit] != 0U) {
+        pauli.negative = !pauli.negative;
+    }
+    std::swap(pauli.x[qubit], pauli.z[qubit]);
+}
+
+void conjugate_x(PauliFrame& pauli, std::size_t qubit) {
+    if (pauli.z[qubit] != 0U) {
+        pauli.negative = !pauli.negative;
+    }
+}
+
+void conjugate_y(PauliFrame& pauli, std::size_t qubit) {
+    if ((pauli.x[qubit] != 0U) != (pauli.z[qubit] != 0U)) {
+        pauli.negative = !pauli.negative;
+    }
+}
+
+void conjugate_z(PauliFrame& pauli, std::size_t qubit) {
+    if (pauli.x[qubit] != 0U) {
+        pauli.negative = !pauli.negative;
+    }
+}
+
+void conjugate_cx(PauliFrame& pauli, std::size_t control, std::size_t target) {
+    const bool phase_flip = pauli.x[control] != 0U &&
+                            pauli.z[target] != 0U &&
+                            ((pauli.x[target] != 0U) == (pauli.z[control] != 0U));
+    if (phase_flip) {
+        pauli.negative = !pauli.negative;
+    }
+    pauli.x[target] ^= pauli.x[control];
+    pauli.z[control] ^= pauli.z[target];
+}
+
+void conjugate_cz(PauliFrame& pauli, std::size_t control, std::size_t target) {
+    conjugate_h(pauli, target);
+    conjugate_cx(pauli, control, target);
+    conjugate_h(pauli, target);
+}
+
+void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
+    std::swap(pauli.x[first], pauli.x[second]);
+    std::swap(pauli.z[first], pauli.z[second]);
+}
+
+[[nodiscard]] bool supports_pauli_propagation(const Program& program) {
+    return std::all_of(
+        program.operations().begin(),
+        program.operations().end(),
+        [](const Operation& operation) {
+            switch (operation.code) {
+            case OperationCode::H:
+            case OperationCode::X:
+            case OperationCode::Y:
+            case OperationCode::Z:
+            case OperationCode::CX:
+            case OperationCode::CZ:
+            case OperationCode::SWAP:
+                return true;
+            case OperationCode::RX:
+            case OperationCode::RY:
+            case OperationCode::RZ:
+                return false;
+            }
+            return false;
+        }
+    );
+}
+
+[[nodiscard]] double pauli_z_propagated_value(
+    const Program& program,
+    std::size_t observable_qubit
+) {
+    PauliFrame pauli{
+        std::vector<std::uint8_t>(program.num_qubits(), 0U),
+        std::vector<std::uint8_t>(program.num_qubits(), 0U),
+        false,
+    };
+    pauli.z[observable_qubit] = 1U;
+
+    const auto& operations = program.operations();
+    for (std::size_t index = operations.size(); index > 0U; --index) {
+        const Operation& operation = operations[index - 1U];
+        switch (operation.code) {
+        case OperationCode::H:
+            conjugate_h(pauli, operation.qubits[0]);
+            break;
+        case OperationCode::X:
+            conjugate_x(pauli, operation.qubits[0]);
+            break;
+        case OperationCode::Y:
+            conjugate_y(pauli, operation.qubits[0]);
+            break;
+        case OperationCode::Z:
+            conjugate_z(pauli, operation.qubits[0]);
+            break;
+        case OperationCode::CX:
+            conjugate_cx(pauli, operation.qubits[0], operation.qubits[1]);
+            break;
+        case OperationCode::CZ:
+            conjugate_cz(pauli, operation.qubits[0], operation.qubits[1]);
+            break;
+        case OperationCode::SWAP:
+            conjugate_swap(pauli, operation.qubits[0], operation.qubits[1]);
+            break;
+        case OperationCode::RX:
+        case OperationCode::RY:
+        case OperationCode::RZ:
+            throw std::logic_error("non-Clifford operation reached Pauli propagation");
+        }
+    }
+
+    if (std::any_of(
+            pauli.x.begin(),
+            pauli.x.end(),
+            [](std::uint8_t bit) { return bit != 0U; }
+        )) {
+        return 0.0;
+    }
+    return pauli.negative ? -1.0 : 1.0;
+}
+
 [[nodiscard]] PreparedProgram prepare_program(
     const Program& program,
     ResultMode result_mode,
@@ -487,6 +619,7 @@ void apply_swap(
         program.operations().size(),
         steps.size(),
         program.num_qubits(),
+        state_memory_bytes(program.num_qubits()),
         "statevector"
     );
     return {std::move(execution_plan), std::move(steps)};
@@ -552,18 +685,32 @@ void apply_swap(
         reduced = reduced.appended(std::move(operation));
     }
 
-    std::vector<CompiledStep> steps = compile_program(reduced);
-    const std::string method = active_count < program.num_qubits()
-        ? "statevector-lightcone"
-        : "statevector";
+    const bool pauli_propagation = supports_pauli_propagation(reduced);
+    std::vector<CompiledStep> steps;
+    std::string method;
+    std::size_t compiled_steps = 0U;
+    std::size_t estimated_state_bytes = 0U;
+    if (pauli_propagation) {
+        method = "pauli-propagation";
+        compiled_steps = reduced.operations().size();
+    } else {
+        steps = compile_program(reduced);
+        method = active_count < program.num_qubits()
+            ? "statevector-lightcone"
+            : "statevector";
+        compiled_steps = steps.size();
+        estimated_state_bytes = state_memory_bytes(active_count);
+    }
+
     const std::string qualifier = "z:" + std::to_string(observable.qubit);
     ExecutionPlan execution_plan = make_plan(
         program,
         target,
         result_mode,
         operations.size(),
-        steps.size(),
+        compiled_steps,
         active_count,
+        estimated_state_bytes,
         method,
         qualifier
     );
@@ -572,6 +719,7 @@ void apply_swap(
         mapping[observable.qubit],
         std::move(execution_plan),
         std::move(steps),
+        pauli_propagation,
     };
 }
 
@@ -1019,10 +1167,15 @@ Expectation expectation(
     PreparedExpectation prepared = prepare_expectation(
         program, observable, ResultMode::Expectation, backend
     );
-    StateVector state = run_statevector(
-        prepared.program.num_qubits(), prepared.steps, prepared.execution_plan
-    );
-    const double value = pauli_z_value(state.values, prepared.observable_qubit);
+    double value = 0.0;
+    if (prepared.pauli_propagation) {
+        value = pauli_z_propagated_value(prepared.program, prepared.observable_qubit);
+    } else {
+        StateVector state = run_statevector(
+            prepared.program.num_qubits(), prepared.steps, prepared.execution_plan
+        );
+        value = pauli_z_value(state.values, prepared.observable_qubit);
+    }
 
     return {
         value,
@@ -1041,10 +1194,17 @@ Variance variance(
     PreparedExpectation prepared = prepare_expectation(
         program, observable, ResultMode::Variance, backend
     );
-    StateVector state = run_statevector(
-        prepared.program.num_qubits(), prepared.steps, prepared.execution_plan
-    );
-    const double expectation_value = pauli_z_value(state.values, prepared.observable_qubit);
+    double expectation_value = 0.0;
+    if (prepared.pauli_propagation) {
+        expectation_value = pauli_z_propagated_value(
+            prepared.program, prepared.observable_qubit
+        );
+    } else {
+        StateVector state = run_statevector(
+            prepared.program.num_qubits(), prepared.steps, prepared.execution_plan
+        );
+        expectation_value = pauli_z_value(state.values, prepared.observable_qubit);
+    }
     const double variance_value = std::max(0.0, 1.0 - expectation_value * expectation_value);
     return {
         variance_value,
