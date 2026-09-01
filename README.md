@@ -45,8 +45,8 @@ C++20 QuPy core
     |-- deterministic program and target fingerprints
     |-- target capability validation
     |-- result-aware execution planner and cache identity
-    |-- gate kernels
-    |-- state-vector runtime
+    |-- exact Pauli propagation for eligible observables
+    |-- gate kernels and state-vector runtime
     |-- sampling and expectation evaluation
     `-- typed result storage
          |
@@ -64,13 +64,14 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - explicit target capabilities and result-aware execution plans
 - versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation
+- exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones
 - probabilities, Pauli-Z expectations, and Pauli-Z variances
 - platform-independent deterministic seeded sampling
 - read-only zero-copy NumPy views over native state, probability, and sample storage
 - fused single-qubit native kernels
 - compact branch-free CX, CZ, and SWAP pair traversal
 - alias-table sampling for repeated shots
-- exact reverse-lightcone reduction for Pauli-Z expectations
+- exact reverse-causal-cone reduction before observable-method selection
 - OpenMP parallelism for sufficiently large amplitude workloads
 - compiler-optimized release builds
 
@@ -88,11 +89,13 @@ print(plan.target_fingerprint)   # SHA-256
 print(plan.cache_key)
 ```
 
-Automatic execution must preserve declared semantics. Future accelerator and specialized-simulator strategies can share this planner without moving backend policy into Python.
+Automatic execution preserves declared semantics. Execution strategies can change without moving backend policy into Python.
 
 ### Result-aware expectation planning
 
-Expectation evaluation first computes the exact reverse causal cone of the requested observable. Unrelated qubits and operations do not enter the simulated state.
+Expectation and variance planning first computes the exact reverse causal cone of the requested observable. The planner then selects an exact method for that reduced problem.
+
+For a Clifford-compatible cone, QuPy propagates the Pauli observable backward to the initial computational-basis state. It does not allocate a state vector.
 
 ```python
 program = qp.Program(100)
@@ -100,12 +103,14 @@ program = qp.h(program, 0)
 program = qp.x(program, 99)
 
 plan = qp.expectation_plan(program, qp.Z(0))
-print(plan.method)                 # statevector-lightcone
+print(plan.method)                 # pauli-propagation
 print(plan.active_qubits)          # 1
-print(plan.estimated_state_bytes)  # 32
+print(plan.estimated_state_bytes)  # 0
 ```
 
-The nominal program has 100 qubits, but this expectation requires a two-amplitude state because qubit 99 cannot affect `Z(0)`. Entangling gates expand the causal cone automatically. The reduction is exact and does not use truncation or approximation.
+The gate on qubit 99 is outside the causal cone and is removed before method selection. A non-Clifford RX, RY, or RZ gate outside the cone is also irrelevant. If a retained gate is non-Clifford, QuPy falls back to the exact reduced state-vector method instead of approximating the result.
+
+Entangling gates expand the causal cone when they can affect the observable. The reduction and Pauli method are exact and do not use truncation, sampling, or approximation.
 
 ## Build and test
 
@@ -148,7 +153,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-The native planner is the integration point for CUDA/cuQuantum, stabilizer, tensor-network, distributed, and physical-QPU execution. Those engines should compete on measured cost while the QuPy program and result contracts remain stable.
+Pauli propagation is the first specialized exact method selected by the native planner. The next performance work is reproducible workload-class benchmarking, measured planner cost models, SIMD/cache tuning, parameter batching, and broader stabilizer execution. CUDA/cuQuantum, tensor-network, distributed, and physical-QPU engines remain additional planner targets behind the same conformance contracts.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 
