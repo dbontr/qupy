@@ -1,5 +1,6 @@
 #include "qupy/core.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -124,11 +125,15 @@ void test_results_and_planner() {
 
     const auto execution_plan = qupy::plan(program, qupy::ResultMode::Sample);
     require(execution_plan.exact, "native plan must be exact");
-    require(execution_plan.threads >= 1, "native plan reported no threads");
+    require(execution_plan.threads == 1, "small native plan must remain serial");
     require(execution_plan.original_operations == 2, "plan operation count is wrong");
     require(execution_plan.compiled_steps == 2, "Bell plan step count is wrong");
     require(execution_plan.active_qubits == 2, "Bell plan active qubits are wrong");
     require(execution_plan.estimated_state_bytes == 64, "Bell plan memory is wrong");
+
+    const auto parallel_plan = qupy::plan(qupy::Program(16), qupy::ResultMode::StateVector);
+    const std::size_t expected_threads = std::min<std::size_t>(qupy::parallel_threads(), 8U);
+    require(parallel_plan.threads == expected_threads, "16-qubit plan thread count is wrong");
 }
 
 void test_semantic_identity() {

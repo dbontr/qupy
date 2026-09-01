@@ -119,7 +119,7 @@ def test_native_target_and_planner_are_explicit() -> None:
     assert execution_plan.backend == "native-cpu"
     assert execution_plan.method == "statevector"
     assert execution_plan.exact
-    assert execution_plan.threads >= 1
+    assert execution_plan.threads == 1
     assert execution_plan.original_operations == 2
     assert execution_plan.compiled_steps == 2
     assert execution_plan.active_qubits == 2
@@ -128,6 +128,9 @@ def test_native_target_and_planner_are_explicit() -> None:
     assert execution_plan.program_fingerprint == program.fingerprint
     assert execution_plan.target_fingerprint == target.fingerprint
     assert execution_plan.cache_key.startswith("qupy-cache/1/0.3.0a0/")
+
+    parallel_plan = qp.plan(qp.Program(16), qp.ResultMode.STATEVECTOR)
+    assert parallel_plan.threads == min(qp.parallel_threads(), 8)
 
 
 def test_invalid_programs_and_execution_options_are_rejected() -> None:
