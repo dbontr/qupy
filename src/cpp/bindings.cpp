@@ -21,6 +21,12 @@ using ComplexArray = nb::ndarray<
     nb::ndim<1>,
     nb::c_contig
 >;
+using DoubleArray = nb::ndarray<
+    nb::numpy,
+    const double,
+    nb::ndim<1>,
+    nb::c_contig
+>;
 using SampleArray = nb::ndarray<
     nb::numpy,
     const std::int8_t,
@@ -30,6 +36,14 @@ using SampleArray = nb::ndarray<
 
 ComplexArray state_values(qupy::StateVector& result) {
     return ComplexArray(
+        result.values.data(),
+        {result.values.size()},
+        nb::find(&result)
+    );
+}
+
+DoubleArray probability_values(qupy::Probabilities& result) {
+    return DoubleArray(
         result.values.data(),
         {result.values.size()},
         nb::find(&result)
@@ -64,6 +78,8 @@ NB_MODULE(_native, module) {
     nb::enum_<qupy::ResultMode>(module, "ResultMode")
         .value("SAMPLE", qupy::ResultMode::Sample)
         .value("EXPECTATION", qupy::ResultMode::Expectation)
+        .value("PROBABILITIES", qupy::ResultMode::Probabilities)
+        .value("VARIANCE", qupy::ResultMode::Variance)
         .value("STATEVECTOR", qupy::ResultMode::StateVector);
 
     nb::class_<qupy::Operation>(module, "Operation")
@@ -78,7 +94,9 @@ NB_MODULE(_native, module) {
         .def_prop_ro(
             "operations",
             [](const qupy::Program& program) { return program.operations(); }
-        );
+        )
+        .def_prop_ro("canonical_text", &qupy::Program::canonical_text)
+        .def_prop_ro("fingerprint", &qupy::Program::fingerprint);
 
     nb::class_<qupy::PauliZ>(module, "PauliZ")
         .def_ro("qubit", &qupy::PauliZ::qubit);
@@ -89,6 +107,12 @@ NB_MODULE(_native, module) {
         .def_ro("result_modes", &qupy::Target::result_modes)
         .def_ro("max_qubits", &qupy::Target::max_qubits)
         .def_ro("simulator", &qupy::Target::simulator)
+        .def_ro("state_access", &qupy::Target::state_access)
+        .def_ro("mid_circuit_measurement", &qupy::Target::mid_circuit_measurement)
+        .def_ro("reset", &qupy::Target::reset)
+        .def_ro("dynamic_control", &qupy::Target::dynamic_control)
+        .def_ro("parameter_batches", &qupy::Target::parameter_batches)
+        .def_prop_ro("fingerprint", &qupy::Target::fingerprint)
         .def("supports_operation", nb::overload_cast<qupy::OperationCode>(&qupy::Target::supports, nb::const_))
         .def("supports_result", nb::overload_cast<qupy::ResultMode>(&qupy::Target::supports, nb::const_));
 
@@ -100,11 +124,19 @@ NB_MODULE(_native, module) {
         .def_ro("original_operations", &qupy::ExecutionPlan::original_operations)
         .def_ro("compiled_steps", &qupy::ExecutionPlan::compiled_steps)
         .def_ro("active_qubits", &qupy::ExecutionPlan::active_qubits)
-        .def_ro("estimated_state_bytes", &qupy::ExecutionPlan::estimated_state_bytes);
+        .def_ro("estimated_state_bytes", &qupy::ExecutionPlan::estimated_state_bytes)
+        .def_ro("result_mode", &qupy::ExecutionPlan::result_mode)
+        .def_ro("program_fingerprint", &qupy::ExecutionPlan::program_fingerprint)
+        .def_ro("target_fingerprint", &qupy::ExecutionPlan::target_fingerprint)
+        .def_ro("cache_key", &qupy::ExecutionPlan::cache_key);
 
     nb::class_<qupy::StateVector>(module, "StateVector")
         .def_prop_ro("values", &state_values)
         .def_ro("backend", &qupy::StateVector::backend);
+
+    nb::class_<qupy::Probabilities>(module, "Probabilities")
+        .def_prop_ro("values", &probability_values)
+        .def_ro("backend", &qupy::Probabilities::backend);
 
     nb::class_<qupy::Samples>(module, "Samples")
         .def_prop_ro("values", &sample_values)
@@ -118,6 +150,13 @@ NB_MODULE(_native, module) {
         .def_ro("active_qubits", &qupy::Expectation::active_qubits)
         .def_ro("compiled_steps", &qupy::Expectation::compiled_steps)
         .def_ro("estimated_state_bytes", &qupy::Expectation::estimated_state_bytes);
+
+    nb::class_<qupy::Variance>(module, "Variance")
+        .def_ro("value", &qupy::Variance::value)
+        .def_ro("backend", &qupy::Variance::backend)
+        .def_ro("active_qubits", &qupy::Variance::active_qubits)
+        .def_ro("compiled_steps", &qupy::Variance::compiled_steps)
+        .def_ro("estimated_state_bytes", &qupy::Variance::estimated_state_bytes);
 
     module.def("h", &qupy::h, "program"_a, "qubit"_a);
     module.def("x", &qupy::x, "program"_a, "qubit"_a);
@@ -147,8 +186,22 @@ NB_MODULE(_native, module) {
         "backend"_a = "auto"
     );
     module.def(
+        "variance_plan",
+        &qupy::variance_plan,
+        "program"_a,
+        "observable"_a,
+        "backend"_a = "auto"
+    );
+    module.def(
         "statevector",
         &qupy::statevector,
+        "program"_a,
+        "backend"_a = "auto",
+        nb::call_guard<nb::gil_scoped_release>()
+    );
+    module.def(
+        "probabilities",
+        &qupy::probabilities,
         "program"_a,
         "backend"_a = "auto",
         nb::call_guard<nb::gil_scoped_release>()
@@ -170,7 +223,17 @@ NB_MODULE(_native, module) {
         "backend"_a = "auto",
         nb::call_guard<nb::gil_scoped_release>()
     );
+    module.def(
+        "variance",
+        &qupy::variance,
+        "program"_a,
+        "observable"_a,
+        "backend"_a = "auto",
+        nb::call_guard<nb::gil_scoped_release>()
+    );
 
     module.def("core_language", &qupy::core_language);
+    module.def("core_version", &qupy::core_version);
+    module.def("ir_version", &qupy::ir_version);
     module.def("parallel_threads", &qupy::parallel_threads);
 }

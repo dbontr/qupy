@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20...4.4)
 if(DEFINED SKBUILD_PROJECT_NAME)
     project(${SKBUILD_PROJECT_NAME} VERSION ${SKBUILD_PROJECT_VERSION} LANGUAGES CXX)
 else()
-    project(qupy VERSION 0.2.0 LANGUAGES CXX)
+    project(qupy VERSION 0.3.0 LANGUAGES CXX)
 endif()
 
 option(QUPY_BUILD_PYTHON "Build the Python extension" ON)

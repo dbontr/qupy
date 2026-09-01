@@ -28,6 +28,8 @@ enum class OperationCode : std::uint8_t {
 enum class ResultMode : std::uint8_t {
     Sample,
     Expectation,
+    Probabilities,
+    Variance,
     StateVector,
 };
 
@@ -45,6 +47,8 @@ public:
 
     [[nodiscard]] std::size_t num_qubits() const noexcept;
     [[nodiscard]] const std::vector<Operation>& operations() const noexcept;
+    [[nodiscard]] std::string canonical_text() const;
+    [[nodiscard]] std::string fingerprint() const;
     [[nodiscard]] Program appended(Operation operation) const;
 
 private:
@@ -62,9 +66,15 @@ struct Target {
     std::vector<ResultMode> result_modes;
     std::optional<std::size_t> max_qubits;
     bool simulator = false;
+    bool state_access = false;
+    bool mid_circuit_measurement = false;
+    bool reset = false;
+    bool dynamic_control = false;
+    bool parameter_batches = false;
 
     [[nodiscard]] bool supports(OperationCode code) const;
     [[nodiscard]] bool supports(ResultMode mode) const;
+    [[nodiscard]] std::string fingerprint() const;
     void validate(const Program& program, ResultMode mode) const;
 };
 
@@ -77,10 +87,19 @@ struct ExecutionPlan {
     std::size_t compiled_steps;
     std::size_t active_qubits;
     std::size_t estimated_state_bytes;
+    ResultMode result_mode;
+    std::string program_fingerprint;
+    std::string target_fingerprint;
+    std::string cache_key;
 };
 
 struct StateVector {
     std::vector<Complex> values;
+    std::string backend;
+};
+
+struct Probabilities {
+    std::vector<double> values;
     std::string backend;
 };
 
@@ -101,6 +120,14 @@ struct Expectation {
     std::size_t estimated_state_bytes;
 };
 
+struct Variance {
+    double value;
+    std::string backend;
+    std::size_t active_qubits;
+    std::size_t compiled_steps;
+    std::size_t estimated_state_bytes;
+};
+
 [[nodiscard]] Target native_target();
 [[nodiscard]] ExecutionPlan plan(
     const Program& program,
@@ -108,6 +135,11 @@ struct Expectation {
     const std::string& backend = "auto"
 );
 [[nodiscard]] ExecutionPlan expectation_plan(
+    const Program& program,
+    PauliZ observable,
+    const std::string& backend = "auto"
+);
+[[nodiscard]] ExecutionPlan variance_plan(
     const Program& program,
     PauliZ observable,
     const std::string& backend = "auto"
@@ -129,6 +161,10 @@ struct Expectation {
     const Program& program,
     const std::string& backend = "auto"
 );
+[[nodiscard]] Probabilities probabilities(
+    const Program& program,
+    const std::string& backend = "auto"
+);
 [[nodiscard]] Samples sample(
     const Program& program,
     std::size_t shots = 1024,
@@ -140,8 +176,15 @@ struct Expectation {
     PauliZ observable,
     const std::string& backend = "auto"
 );
+[[nodiscard]] Variance variance(
+    const Program& program,
+    PauliZ observable,
+    const std::string& backend = "auto"
+);
 
 [[nodiscard]] const char* core_language() noexcept;
+[[nodiscard]] const char* core_version() noexcept;
+[[nodiscard]] std::uint32_t ir_version() noexcept;
 [[nodiscard]] std::size_t parallel_threads() noexcept;
 
 }  // namespace qupy

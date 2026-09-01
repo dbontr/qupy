@@ -1,6 +1,6 @@
 # QuPy
 
-QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, program IR, target validation, planner, simulator, sampling, and expectation evaluation.
+QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, versioned program IR, target validation, planning, simulation, sampling, probabilities, expectations, and variances.
 
 Python is the user-facing language. It does not implement the quantum simulator. NumPy provides an interoperable array surface for native results.
 
@@ -16,12 +16,16 @@ program = qp.h(program, 0)
 program = qp.cx(program, 0, 1)
 
 samples = qp.sample(program, shots=1000, seed=7)
+probabilities = qp.probabilities(program)
 energy = qp.expect(program, qp.Z(0))
+variance = qp.variance(program, qp.Z(0))
 state = qp.statevector(program)
 
 print(qp.core_language())     # C++20
+print(qp.core_version())      # 0.3.0a0
 print(samples.counts())
-print(energy.value)
+print(probabilities.values)
+print(energy.value, variance.value)
 print(state.values)
 ```
 
@@ -37,9 +41,10 @@ nanobind extension
     |
     v
 C++20 QuPy core
-    |-- immutable Program / Operation IR
+    |-- versioned immutable Program / Operation IR
+    |-- deterministic program and target fingerprints
     |-- target capability validation
-    |-- execution planner
+    |-- result-aware execution planner and cache identity
     |-- gate kernels
     |-- state-vector runtime
     |-- sampling and expectation evaluation
@@ -54,12 +59,14 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 
 - H, X, Y, Z, RX, RY, and RZ single-qubit gates
 - CX, CZ, and SWAP two-qubit gates
-- immutable native program IR
-- explicit native target and execution plans
+- versioned immutable native program IR with deterministic canonical text
+- SHA-256 program and target fingerprints for execution identity
+- explicit target capabilities and result-aware execution plans
+- versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation
-- Pauli-Z expectation values
-- deterministic seeded sampling
-- read-only zero-copy NumPy views over native result storage
+- probabilities, Pauli-Z expectations, and Pauli-Z variances
+- platform-independent deterministic seeded sampling
+- read-only zero-copy NumPy views over native state, probability, and sample storage
 - fused single-qubit native kernels
 - compact branch-free CX, CZ, and SWAP pair traversal
 - alias-table sampling for repeated shots
@@ -73,10 +80,12 @@ C++ handles `backend="auto"`. The planner validates the requested result against
 
 ```python
 plan = qp.plan(program, qp.ResultMode.SAMPLE)
-print(plan.backend)   # native-cpu
-print(plan.method)    # statevector
-print(plan.exact)     # True
-print(plan.threads)
+print(plan.backend)              # native-cpu
+print(plan.method)               # statevector
+print(plan.exact)                # True
+print(plan.program_fingerprint)  # SHA-256
+print(plan.target_fingerprint)   # SHA-256
+print(plan.cache_key)
 ```
 
 Automatic execution must preserve declared semantics. Future accelerator and specialized-simulator strategies can share this planner without moving backend policy into Python.
@@ -128,6 +137,14 @@ The distribution name is `qupy-compute`. The import package is `qupy`.
 5. Keep `backend="auto"` exact unless the caller explicitly permits approximation.
 6. Use standard array protocols at the language boundary rather than inventing a tensor ecosystem.
 7. Add specialized engines only behind conformance tests against shared semantics.
+
+## Foundation contracts
+
+QuPy separates semantic identity from execution strategy. IR version 1 has deterministic text and SHA-256 fingerprints. Targets publish explicit capabilities and independent fingerprints. Execution plans bind the program, target, requested result, method, and query-specific data into a versioned cache key.
+
+Seeded sampling uses QuPy-defined random-number mapping rather than implementation-defined standard-library distributions. The conformance suite pins the resulting sequence so supported operating systems must agree for the same program and seed.
+
+These contracts are the stable integration boundary for additional execution engines. A new engine can change performance or physical execution without changing the meaning of a QuPy program or silently changing an exact result request.
 
 ## Direction
 
