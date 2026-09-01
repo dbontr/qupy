@@ -140,4 +140,13 @@ def workloads_for_profile(profile: str) -> tuple[Workload, ...]:
             entangled_nonclifford_z(16),
             entangled_nonclifford_z(20),
         )
+    if profile == "calibration":
+        ghz_sizes = (32, 64, 128, 256, 512, 1024, 2048, 4096)
+        local_sizes = (8, 12, 16, 20, 24, 32, 64)
+        entangled_sizes = (10, 12, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24)
+        return (
+            tuple(ghz_z_clifford(size) for size in ghz_sizes)
+            + tuple(local_nonclifford_z(size) for size in local_sizes)
+            + tuple(entangled_nonclifford_z(size) for size in entangled_sizes)
+        )
     raise ValueError(f"unknown benchmark profile: {profile}")

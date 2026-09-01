@@ -182,7 +182,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation is the first specialized exact method selected by the native planner. The next performance work is workload fingerprints, measured planner cost models, SIMD/cache tuning, and broader stabilizer execution. CUDA/cuQuantum, tensor-network, distributed, and physical-QPU engines remain additional planner targets behind the same conformance contracts.
+Pauli propagation is the first specialized exact method selected by the native planner. Workload fingerprint version 1 and a held-out, host-specific cost-model calibration pipeline now provide inspectable evidence for future planner decisions. Automatic method selection remains unchanged until calibrated models are promoted with explicit validation and uncertainty guards; SIMD/cache tuning and broader stabilizer execution remain benchmark-driven follow-on work. CUDA/cuQuantum, tensor-network, distributed, and physical-QPU engines remain additional planner targets behind the same conformance contracts.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

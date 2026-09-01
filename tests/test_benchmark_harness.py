@@ -34,6 +34,26 @@ def test_smoke_profile_covers_distinct_execution_classes() -> None:
     assert not workloads[2].clifford
 
 
+def test_calibration_profile_has_dense_fit_and_holdout_coverage() -> None:
+    workloads = workloads_for_profile("calibration")
+    assert len(workloads) == 27
+    families = [workload.family for workload in workloads]
+    assert families.count("clifford-ghz-z") == 8
+    assert families.count("local-nonclifford-z") == 7
+    assert families.count("entangled-nonclifford-z") == 12
+    assert {workload.num_qubits for workload in workloads if workload.family == "entangled-nonclifford-z"} >= {
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+    }
+
+
 def test_qupy_benchmark_records_specialized_pauli_plan() -> None:
     result = run_case(ghz_z_clifford(64), "qupy", warmups=0, iterations=1)
     assert not result.skipped
