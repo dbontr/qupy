@@ -47,7 +47,7 @@ C++20 QuPy core
     |-- result-aware execution planner and cache identity
     |-- exact Pauli propagation for eligible observables
     |-- bit-packed stabilizer sampling for large Clifford programs
-    |-- CUDA Driver API state-vector execution with embedded PTX
+    |-- CUDA Driver API state-vector and Pauli-reduction execution with embedded PTX
     |-- gate kernels and state-vector runtime
     |-- sampling and expectation evaluation
     `-- typed result storage
@@ -66,6 +66,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - explicit target capabilities and result-aware execution plans with versioned structural workload fingerprints
 - versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation on CPU and explicit CUDA targets
+- GPU-resident exact Pauli-string, Hamiltonian, expectation, variance, covariance, and observable-batch reduction
 - exact adaptive MPS/dense observable execution behind validated host-scoped planner evidence
 - exact bit-packed stabilizer sampling for large Clifford programs with polynomial state memory
 - exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones
@@ -137,9 +138,9 @@ print(plan.cache_key)
 
 Automatic execution preserves declared semantics. Execution strategies can change without moving backend policy into Python.
 
-### CUDA state-vector execution
+### CUDA state-vector and Pauli reduction
 
-QuPy can execute an explicit `native-cuda` state-vector plan when a compatible NVIDIA CUDA driver is present. The core loads the CUDA Driver API at runtime and JIT-loads embedded PTX, so QuPy does not require CUDA Toolkit headers, `nvcc`, or NVRTC to build. CPU-only systems keep the same build and package.
+QuPy can execute explicit `native-cuda` state-vector, Pauli-Z expectation/variance, and arbitrary Pauli-sum observable plans when a compatible NVIDIA CUDA driver is present. The core loads the CUDA Driver API at runtime and JIT-loads embedded PTX, so QuPy does not require CUDA Toolkit headers, `nvcc`, or NVRTC to build. CPU-only systems keep the same build and package.
 
 ```python
 if qp.cuda_available():
@@ -149,9 +150,11 @@ if qp.cuda_available():
     print(plan.method)  # cuda-statevector
 ```
 
-The CUDA target currently exposes exact state-vector results for the same H, X, Y, Z, RX, RY, RZ, CX, CZ, and SWAP program operations as the CPU state-vector path. Unsupported CUDA result modes fail during target validation; QuPy does not silently execute them on the CPU. Device memory is reused between calls, and the public `StateVector` remains native host-owned storage after one device-to-host transfer.
+The CUDA target supports the same H, X, Y, Z, RX, RY, RZ, CX, CZ, and SWAP operations as the CPU state-vector path. `STATEVECTOR`, Pauli-Z `EXPECTATION`, and Pauli-Z `VARIANCE` are target capabilities. Rich `Observable` queries use the same compiled CUDA gate sequence and then evaluate unique Pauli strings directly against the resident device state. Each Pauli kernel reduces complex contributions in shared memory, recursive device reductions collapse block partials, and the host receives one complex value per unique Pauli string rather than the full state vector. Hamiltonian, variance, covariance, and multi-observable queries deduplicate identical Pauli strings across the complete request.
 
-`backend="auto"` remains CPU-only when no planner cost model is supplied. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Schema-v2 promotion requires validated CPU and CUDA return-cost curves plus at least eight held-out backend decisions with no decision exceeding 10% runtime regret. Other result modes keep the established planner policy. Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
+Unsupported CUDA result modes still fail during target validation; QuPy does not silently execute them on the CPU. Device state memory is reused between calls. A public `StateVector` still performs one complete device-to-host transfer because returning amplitudes is the requested result, while `cuda-pauli-reduction` keeps observable reduction on the accelerator.
+
+`backend="auto"` remains CPU-only when no planner cost model is supplied. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Rich non-Clifford observable queries may reuse that validated backend decision as a conservative execution gate, but `ObservableExecutionPlan.predicted_ns` remains unset for `cuda-pauli-reduction` until a dedicated observable calibration model exists. Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
 
 ### Exact MPS execution
 
@@ -243,7 +246,7 @@ energy = qp.expect(program, hamiltonian)
 plan = qp.observable_plan(program, [hamiltonian])
 ```
 
-For Clifford circuits, arbitrary Pauli strings and Pauli sums can use exact backward Pauli propagation with zero dense-state storage. Other observable requests use the reduced causal cone and the established state-vector planner. A validated CPU/CUDA cost artifact can therefore route a non-Clifford observable through CUDA without moving policy into Python.
+For Clifford circuits, arbitrary Pauli strings and Pauli sums can use exact backward Pauli propagation with zero dense-state storage. Other observable requests use the reduced causal cone and the established state-vector planner. Explicit `native-cuda` execution keeps the reduced state and Pauli reductions on the GPU. A validated CPU/CUDA cost artifact can route a non-Clifford observable through the same device-reduction path without moving policy into Python.
 
 ### Differentiation and circuit optimization
 
@@ -264,7 +267,7 @@ The optimizer preserves program semantics. Level 1 performs local inverse cancel
 
 ### Distributed and accelerator execution
 
-The CUDA target remains an explicit native state-vector target and participates in validated automatic state-vector selection. Rich non-Clifford observable requests can execute their reduced state on CUDA and perform the observable reduction through the native result path. QuPy does not expose GPU-native arbitrary-Pauli reductions or multi-GPU CUDA kernels.
+The CUDA target provides explicit native state-vector and GPU-resident arbitrary-Pauli reduction. Rich non-Clifford observable requests can execute their reduced state on CUDA and return only reduced observable values. Multi-GPU CUDA execution remains outside the current target; the distributed state-vector implementation is MPI-based.
 
 When QuPy is built with MPI C++ support, `distributed_statevector` shards amplitudes across a power-of-two communicator and implements local and cross-rank H/X/Y/Z/RX/RY/RZ/CX/CZ/SWAP execution. Builds without MPI expose the capability state and fail closed rather than silently substituting local execution.
 

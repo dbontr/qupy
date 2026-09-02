@@ -65,6 +65,49 @@ void test_observable_plan_and_optimizer() {
     require(optimized.program.operations().front().code == qupy::OperationCode::H, "optimizer result mismatch");
 }
 
+void test_cuda_pauli_reduction() {
+    if (!qupy::cuda_available()) {
+        return;
+    }
+    qupy::Program program(3U);
+    program = qupy::h(program, 0U);
+    program = qupy::ry(program, 0.371, 1U);
+    program = qupy::cx(program, 0U, 1U);
+    program = qupy::rz(program, -0.29, 2U);
+    program = qupy::cx(program, 1U, 2U);
+    const qupy::Observable left({
+        qupy::PauliTerm(0.41, {{0U, qupy::Pauli::X}, {1U, qupy::Pauli::Y}}),
+        qupy::PauliTerm(-0.27, {{1U, qupy::Pauli::Z}, {2U, qupy::Pauli::X}}),
+        qupy::PauliTerm(0.13, {}),
+    });
+    const qupy::Observable right({
+        qupy::PauliTerm(0.36, {{0U, qupy::Pauli::Y}, {2U, qupy::Pauli::Y}}),
+        qupy::PauliTerm(0.22, {{1U, qupy::Pauli::X}}),
+    });
+
+    const auto plan = qupy::observable_plan(program, {left, right}, "native-cuda");
+    require(plan.backend == "native-cuda", "CUDA observable plan backend mismatch");
+    require(plan.method == "cuda-pauli-reduction", "CUDA observable plan method mismatch");
+
+    const auto cpu_expect = qupy::expect_observable(program, left, "native-cpu");
+    const auto gpu_expect = qupy::expect_observable(program, left, "native-cuda");
+    const auto cpu_variance = qupy::variance_observable(program, left, "native-cpu");
+    const auto gpu_variance = qupy::variance_observable(program, left, "native-cuda");
+    const auto cpu_covariance = qupy::covariance_observable(program, left, right, "native-cpu");
+    const auto gpu_covariance = qupy::covariance_observable(program, left, right, "native-cuda");
+    require(std::abs(gpu_expect.value - cpu_expect.value) < 2e-12, "CUDA observable expectation mismatch");
+    require(std::abs(gpu_variance.value - cpu_variance.value) < 2e-12, "CUDA observable variance mismatch");
+    require(std::abs(gpu_covariance.value - cpu_covariance.value) < 2e-12, "CUDA observable covariance mismatch");
+
+    const auto cpu_batch = qupy::expect_observables(program, {left, right}, "native-cpu");
+    const auto gpu_batch = qupy::expect_observables(program, {left, right}, "native-cuda");
+    require(gpu_batch.backend == "native-cuda", "CUDA observable batch backend mismatch");
+    require(gpu_batch.values.size() == cpu_batch.values.size(), "CUDA observable batch shape mismatch");
+    for (std::size_t index = 0U; index < cpu_batch.values.size(); ++index) {
+        require(std::abs(gpu_batch.values[index] - cpu_batch.values[index]) < 2e-12, "CUDA observable batch mismatch");
+    }
+}
+
 void test_custom_kraus_channel() {
     const double gamma = 0.25;
     const double survive = std::sqrt(1.0 - gamma);
@@ -141,6 +184,7 @@ int main() {
     try {
         test_observable_and_gradient();
         test_observable_plan_and_optimizer();
+        test_cuda_pauli_reduction();
         test_custom_kraus_channel();
         test_qec_interchange_and_distributed_capability();
         test_provider_plugin();

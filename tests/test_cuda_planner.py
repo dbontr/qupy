@@ -112,6 +112,23 @@ def test_v2_artifact_selects_validated_cpu_or_cuda(tmp_path: Path) -> None:
     np.testing.assert_allclose(selected.values, explicit.values, atol=2e-12, rtol=2e-12)
     assert selected.backend == "native-cuda"
 
+    observable = qp.Observable([
+        qp.PauliTerm(0.7, [
+            qp.PauliFactor(0, qp.Pauli.X),
+            qp.PauliFactor(3, qp.Pauli.Y),
+        ]),
+        qp.PauliTerm(0.3, [qp.PauliFactor(2, qp.Pauli.Z)]),
+    ])
+    observable_plan = qp.observable_plan(program, [observable], cost_model=cuda_model)
+    assert observable_plan.backend == "native-cuda"
+    assert observable_plan.method == "cuda-pauli-reduction"
+    assert observable_plan.predicted_ns is None
+    assert observable_plan.cost_model_fingerprint == cuda_model.artifact_fingerprint
+    automatic_observable = qp.expect_observable(program, observable, cost_model=cuda_model)
+    explicit_observable = qp.expect_observable(program, observable, backend="native-cuda")
+    assert automatic_observable.backend == "native-cuda"
+    assert automatic_observable.value == pytest.approx(explicit_observable.value, abs=2e-12)
+
 
 def test_v2_artifact_rejects_weak_decision_evidence(tmp_path: Path) -> None:
     if not qp.cuda_available():

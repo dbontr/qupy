@@ -946,6 +946,8 @@ void test_cuda_statevector_backend() {
     require(target.simulator && target.state_access, "CUDA target capabilities are wrong");
     require(!target.parameter_batches, "CUDA target exposed unsupported parameter batches");
     require(target.supports(qupy::ResultMode::StateVector), "CUDA target lacks statevector result");
+    require(target.supports(qupy::ResultMode::Expectation), "CUDA target lacks expectation result");
+    require(target.supports(qupy::ResultMode::Variance), "CUDA target lacks variance result");
     require(!target.supports(qupy::ResultMode::Sample), "CUDA target exposed sampling");
 
     const auto plan = qupy::plan(program, qupy::ResultMode::StateVector, "native-cuda");
@@ -960,6 +962,18 @@ void test_cuda_statevector_backend() {
     for (std::size_t index = 0U; index < cpu.values.size(); ++index) {
         require_close(gpu.values[index], cpu.values[index], "CUDA statevector diverged from CPU");
     }
+
+    const qupy::PauliZ observable{2U};
+    const auto expectation_plan = qupy::expectation_plan(program, observable, "native-cuda");
+    const auto variance_plan = qupy::variance_plan(program, observable, "native-cuda");
+    require(expectation_plan.method == "cuda-pauli-reduction", "CUDA expectation plan is wrong");
+    require(variance_plan.method == "cuda-pauli-reduction", "CUDA variance plan is wrong");
+    const auto cpu_expectation = qupy::expectation(program, observable, "native-cpu");
+    const auto gpu_expectation = qupy::expectation(program, observable, "native-cuda");
+    const auto cpu_variance = qupy::variance(program, observable, "native-cpu");
+    const auto gpu_variance = qupy::variance(program, observable, "native-cuda");
+    require_close(gpu_expectation.value, cpu_expectation.value, "CUDA expectation diverged from CPU");
+    require_close(gpu_variance.value, cpu_variance.value, "CUDA variance diverged from CPU");
 
     bool rejected = false;
     try {

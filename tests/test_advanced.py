@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import math
 import shutil
 import subprocess
@@ -415,3 +416,90 @@ def test_custom_kraus_channels_are_validated_and_executable() -> None:
     bad = np.array([[1.0, 0.0], [0.0, 0.5]], dtype=np.complex128)
     with pytest.raises(ValueError, match="trace-preserving"):
         qp.kraus_channel(0, [bad])
+
+
+def test_cuda_pauli_reduction_matches_cpu_for_rich_observables() -> None:
+    if not qp.cuda_available():
+        pytest.skip(qp.cuda_unavailable_reason())
+    program = qp.h(qp.Program(3), 0)
+    program = qp.ry(program, 0.371, 1)
+    program = qp.cx(program, 0, 1)
+    program = qp.rz(program, -0.29, 2)
+    program = qp.cx(program, 1, 2)
+    left = _observable(
+        _term(0.41, (0, qp.Pauli.X), (1, qp.Pauli.Y)),
+        _term(-0.27, (1, qp.Pauli.Z), (2, qp.Pauli.X)),
+        _term(0.13),
+    )
+    right = _observable(
+        _term(0.36, (0, qp.Pauli.Y), (2, qp.Pauli.Y)),
+        _term(0.22, (1, qp.Pauli.X)),
+    )
+
+    plan = qp.observable_plan(program, [left, right], backend="native-cuda")
+    assert plan.backend == "native-cuda"
+    assert plan.method == "cuda-pauli-reduction"
+
+    cpu_expect = qp.expect_observable(program, left, backend="native-cpu")
+    gpu_expect = qp.expect_observable(program, left, backend="native-cuda")
+    cpu_variance = qp.variance_observable(program, left, backend="native-cpu")
+    gpu_variance = qp.variance_observable(program, left, backend="native-cuda")
+    cpu_covariance = qp.covariance(program, left, right, backend="native-cpu")
+    gpu_covariance = qp.covariance(program, left, right, backend="native-cuda")
+    assert gpu_expect.backend == "native-cuda"
+    assert gpu_variance.backend == "native-cuda"
+    assert gpu_covariance.backend == "native-cuda"
+    assert gpu_expect.value == pytest.approx(cpu_expect.value, abs=2e-12)
+    assert gpu_variance.value == pytest.approx(cpu_variance.value, abs=2e-12)
+    assert gpu_covariance.value == pytest.approx(cpu_covariance.value, abs=2e-12)
+
+    cpu_batch = qp.expect_observables(program, [left, right], backend="native-cpu")
+    gpu_batch = qp.expect_observables(program, [left, right], backend="native-cuda")
+    assert gpu_batch.backend == "native-cuda"
+    np.testing.assert_allclose(gpu_batch.values, cpu_batch.values, atol=2e-12, rtol=2e-12)
+
+
+def test_cuda_pauli_reduction_covers_every_four_qubit_pauli_string() -> None:
+    if not qp.cuda_available():
+        pytest.skip(qp.cuda_unavailable_reason())
+    program = qp.Program(4)
+    program = qp.ry(program, 0.31, 0)
+    program = qp.rx(program, -0.47, 1)
+    program = qp.rz(program, 0.29, 2)
+    program = qp.h(program, 3)
+    program = qp.cx(program, 0, 2)
+    program = qp.cz(program, 1, 3)
+    program = qp.ry(program, 0.19, 3)
+
+    paulis = (qp.Pauli.I, qp.Pauli.X, qp.Pauli.Y, qp.Pauli.Z)
+    observables = []
+    for operators in itertools.product(paulis, repeat=4):
+        factors = tuple(
+            (qubit, pauli)
+            for qubit, pauli in enumerate(operators)
+            if pauli is not qp.Pauli.I
+        )
+        observables.append(_observable(_term(1.0, *factors)))
+
+    cpu = qp.expect_observables(program, observables, backend="native-cpu")
+    gpu = qp.expect_observables(program, observables, backend="native-cuda")
+    assert gpu.backend == "native-cuda"
+    np.testing.assert_allclose(gpu.values, cpu.values, atol=2e-12, rtol=2e-12)
+
+
+def test_cuda_pauli_reduction_recursively_reduces_multiple_blocks() -> None:
+    if not qp.cuda_available():
+        pytest.skip(qp.cuda_unavailable_reason())
+    program = qp.Program(10)
+    for qubit in range(10):
+        program = qp.ry(program, 0.037 * (qubit + 1), qubit)
+    for qubit in range(9):
+        program = qp.cx(program, qubit, qubit + 1)
+    observable = _observable(
+        _term(0.61, (0, qp.Pauli.X), (4, qp.Pauli.Y), (9, qp.Pauli.Z)),
+        _term(-0.23, (2, qp.Pauli.Y), (7, qp.Pauli.X)),
+    )
+    cpu = qp.expect_observable(program, observable, backend="native-cpu")
+    gpu = qp.expect_observable(program, observable, backend="native-cuda")
+    assert gpu.backend == "native-cuda"
+    assert gpu.value == pytest.approx(cpu.value, abs=2e-12)

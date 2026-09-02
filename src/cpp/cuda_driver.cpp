@@ -31,6 +31,8 @@ using CUmodule = void*;
 using CUfunction = void*;
 using CUstream = void*;
 constexpr CUresult kCudaSuccess = 0;
+constexpr int kCudaJitErrorLogBuffer = 5;
+constexpr int kCudaJitErrorLogBufferSizeBytes = 6;
 [[maybe_unused]] constexpr std::string_view kSanitizerCudaDisabled =
     "CUDA driver execution is disabled in sanitizer builds";
 using CuInit = CUresult (*)(unsigned int);
@@ -302,6 +304,369 @@ SWAP_GATE:
 DONE:
     ret;
 }
+
+.visible .entry pauli_term(
+    .param .u64 p_state,
+    .param .u64 p_dimension,
+    .param .u64 p_flip_mask,
+    .param .u64 p_sign_mask,
+    .param .u32 p_y_phase,
+    .param .u64 p_output
+) {
+    .reg .pred %p<16>;
+    .reg .b32 %r<16>;
+    .reg .b64 %rd<32>;
+    .reg .f64 %fd<24>;
+    .shared .align 8 .b8 s_pauli[4096];
+    ld.param.u64 %rd1, [p_state];
+    ld.param.u64 %rd2, [p_dimension];
+    ld.param.u64 %rd3, [p_flip_mask];
+    ld.param.u64 %rd4, [p_sign_mask];
+    ld.param.u32 %r4, [p_y_phase];
+    ld.param.u64 %rd5, [p_output];
+    mov.u32 %r1, %tid.x;
+    mov.u32 %r2, %ctaid.x;
+    mov.u32 %r3, %ntid.x;
+    mul.wide.u32 %rd6, %r2, %r3;
+    cvt.u64.u32 %rd7, %r1;
+    add.u64 %rd6, %rd6, %rd7;
+    mov.f64 %fd0, 0d0000000000000000;
+    mov.f64 %fd1, 0d0000000000000000;
+    setp.ge.u64 %p1, %rd6, %rd2;
+    @%p1 bra PAULI_STORE_SHARED;
+    xor.b64 %rd7, %rd6, %rd3;
+    shl.b64 %rd8, %rd6, 4;
+    shl.b64 %rd9, %rd7, 4;
+    add.u64 %rd10, %rd1, %rd8;
+    add.u64 %rd11, %rd1, %rd9;
+    ld.global.f64 %fd2, [%rd10];
+    ld.global.f64 %fd3, [%rd10+8];
+    ld.global.f64 %fd4, [%rd11];
+    ld.global.f64 %fd5, [%rd11+8];
+    mul.rn.f64 %fd0, %fd4, %fd2;
+    mul.rn.f64 %fd6, %fd5, %fd3;
+    add.rn.f64 %fd0, %fd0, %fd6;
+    mul.rn.f64 %fd1, %fd4, %fd3;
+    mul.rn.f64 %fd6, %fd5, %fd2;
+    sub.rn.f64 %fd1, %fd1, %fd6;
+    and.b64 %rd12, %rd6, %rd4;
+    popc.b64 %r5, %rd12;
+    and.b32 %r6, %r5, 1;
+    shl.b32 %r6, %r6, 1;
+    add.u32 %r7, %r4, %r6;
+    and.b32 %r7, %r7, 3;
+    setp.eq.u32 %p2, %r7, 0;
+    @%p2 bra PAULI_STORE_SHARED;
+    setp.eq.u32 %p2, %r7, 1;
+    @!%p2 bra PAULI_PHASE_TWO;
+    mov.f64 %fd7, %fd0;
+    neg.f64 %fd0, %fd1;
+    mov.f64 %fd1, %fd7;
+    bra PAULI_STORE_SHARED;
+PAULI_PHASE_TWO:
+    setp.eq.u32 %p2, %r7, 2;
+    @!%p2 bra PAULI_PHASE_THREE;
+    neg.f64 %fd0, %fd0;
+    neg.f64 %fd1, %fd1;
+    bra PAULI_STORE_SHARED;
+PAULI_PHASE_THREE:
+    mov.f64 %fd7, %fd0;
+    mov.f64 %fd0, %fd1;
+    neg.f64 %fd1, %fd7;
+PAULI_STORE_SHARED:
+    mov.u64 %rd13, s_pauli;
+    cvta.to.shared.u64 %rd13, %rd13;
+    mul.wide.u32 %rd14, %r1, 8;
+    add.u64 %rd14, %rd13, %rd14;
+    add.u64 %rd15, %rd14, 2048;
+    st.shared.f64 [%rd14], %fd0;
+    st.shared.f64 [%rd15], %fd1;
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 128;
+    @!%p3 bra PAULI_R128_DONE;
+    add.u64 %rd16, %rd14, 1024;
+    add.u64 %rd17, %rd15, 1024;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_R128_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 64;
+    @!%p3 bra PAULI_R64_DONE;
+    add.u64 %rd16, %rd14, 512;
+    add.u64 %rd17, %rd15, 512;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_R64_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 32;
+    @!%p3 bra PAULI_R32_DONE;
+    add.u64 %rd16, %rd14, 256;
+    add.u64 %rd17, %rd15, 256;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_R32_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 16;
+    @!%p3 bra PAULI_R16_DONE;
+    add.u64 %rd16, %rd14, 128;
+    add.u64 %rd17, %rd15, 128;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_R16_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 8;
+    @!%p3 bra PAULI_R8_DONE;
+    add.u64 %rd16, %rd14, 64;
+    add.u64 %rd17, %rd15, 64;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_R8_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 4;
+    @!%p3 bra PAULI_R4_DONE;
+    add.u64 %rd16, %rd14, 32;
+    add.u64 %rd17, %rd15, 32;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_R4_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 2;
+    @!%p3 bra PAULI_R2_DONE;
+    add.u64 %rd16, %rd14, 16;
+    add.u64 %rd17, %rd15, 16;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_R2_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p3, %r1, 1;
+    @!%p3 bra PAULI_DONE;
+    add.u64 %rd16, %rd14, 8;
+    add.u64 %rd17, %rd15, 8;
+    ld.shared.f64 %fd8, [%rd14];
+    ld.shared.f64 %fd9, [%rd16];
+    add.rn.f64 %fd8, %fd8, %fd9;
+    st.shared.f64 [%rd14], %fd8;
+    ld.shared.f64 %fd10, [%rd15];
+    ld.shared.f64 %fd11, [%rd17];
+    add.rn.f64 %fd10, %fd10, %fd11;
+    st.shared.f64 [%rd15], %fd10;
+PAULI_DONE:
+    bar.sync 0;
+    setp.ne.u32 %p4, %r1, 0;
+    @%p4 bra PAULI_RETURN;
+    ld.shared.f64 %fd12, [%rd13];
+    add.u64 %rd18, %rd13, 2048;
+    ld.shared.f64 %fd13, [%rd18];
+    mul.wide.u32 %rd19, %r2, 16;
+    add.u64 %rd19, %rd5, %rd19;
+    st.global.f64 [%rd19], %fd12;
+    st.global.f64 [%rd19+8], %fd13;
+PAULI_RETURN:
+    ret;
+}
+
+.visible .entry reduce_complex(
+    .param .u64 p_input,
+    .param .u64 p_count,
+    .param .u64 p_output
+) {
+    .reg .pred %p<8>;
+    .reg .b32 %r<12>;
+    .reg .b64 %rd<24>;
+    .reg .f64 %fd<16>;
+    .shared .align 8 .b8 s_reduce[4096];
+    ld.param.u64 %rd1, [p_input];
+    ld.param.u64 %rd2, [p_count];
+    ld.param.u64 %rd3, [p_output];
+    mov.u32 %r1, %tid.x;
+    mov.u32 %r2, %ctaid.x;
+    mov.u32 %r3, %ntid.x;
+    mul.wide.u32 %rd4, %r2, %r3;
+    cvt.u64.u32 %rd5, %r1;
+    add.u64 %rd4, %rd4, %rd5;
+    mov.f64 %fd0, 0d0000000000000000;
+    mov.f64 %fd1, 0d0000000000000000;
+    setp.ge.u64 %p1, %rd4, %rd2;
+    @%p1 bra REDUCE_STORE_SHARED;
+    shl.b64 %rd6, %rd4, 4;
+    add.u64 %rd6, %rd1, %rd6;
+    ld.global.f64 %fd0, [%rd6];
+    ld.global.f64 %fd1, [%rd6+8];
+REDUCE_STORE_SHARED:
+    mov.u64 %rd7, s_reduce;
+    cvta.to.shared.u64 %rd7, %rd7;
+    mul.wide.u32 %rd8, %r1, 8;
+    add.u64 %rd8, %rd7, %rd8;
+    add.u64 %rd9, %rd8, 2048;
+    st.shared.f64 [%rd8], %fd0;
+    st.shared.f64 [%rd9], %fd1;
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 128;
+    @!%p2 bra REDUCE_R128_DONE;
+    add.u64 %rd10, %rd8, 1024;
+    add.u64 %rd11, %rd9, 1024;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_R128_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 64;
+    @!%p2 bra REDUCE_R64_DONE;
+    add.u64 %rd10, %rd8, 512;
+    add.u64 %rd11, %rd9, 512;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_R64_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 32;
+    @!%p2 bra REDUCE_R32_DONE;
+    add.u64 %rd10, %rd8, 256;
+    add.u64 %rd11, %rd9, 256;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_R32_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 16;
+    @!%p2 bra REDUCE_R16_DONE;
+    add.u64 %rd10, %rd8, 128;
+    add.u64 %rd11, %rd9, 128;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_R16_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 8;
+    @!%p2 bra REDUCE_R8_DONE;
+    add.u64 %rd10, %rd8, 64;
+    add.u64 %rd11, %rd9, 64;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_R8_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 4;
+    @!%p2 bra REDUCE_R4_DONE;
+    add.u64 %rd10, %rd8, 32;
+    add.u64 %rd11, %rd9, 32;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_R4_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 2;
+    @!%p2 bra REDUCE_R2_DONE;
+    add.u64 %rd10, %rd8, 16;
+    add.u64 %rd11, %rd9, 16;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_R2_DONE:
+    bar.sync 0;
+    setp.lt.u32 %p2, %r1, 1;
+    @!%p2 bra REDUCE_DONE;
+    add.u64 %rd10, %rd8, 8;
+    add.u64 %rd11, %rd9, 8;
+    ld.shared.f64 %fd2, [%rd8];
+    ld.shared.f64 %fd3, [%rd10];
+    add.rn.f64 %fd2, %fd2, %fd3;
+    st.shared.f64 [%rd8], %fd2;
+    ld.shared.f64 %fd4, [%rd9];
+    ld.shared.f64 %fd5, [%rd11];
+    add.rn.f64 %fd4, %fd4, %fd5;
+    st.shared.f64 [%rd9], %fd4;
+REDUCE_DONE:
+    bar.sync 0;
+    setp.ne.u32 %p3, %r1, 0;
+    @%p3 bra REDUCE_RETURN;
+    ld.shared.f64 %fd6, [%rd7];
+    add.u64 %rd12, %rd7, 2048;
+    ld.shared.f64 %fd7, [%rd12];
+    mul.wide.u32 %rd13, %r2, 16;
+    add.u64 %rd13, %rd3, %rd13;
+    st.global.f64 [%rd13], %fd6;
+    st.global.f64 [%rd13+8], %fd7;
+REDUCE_RETURN:
+    ret;
+}
 )ptx";
 
 [[nodiscard]] std::uint32_t checked_u32(std::size_t value, const char* label) {
@@ -336,11 +701,26 @@ public:
         std::size_t num_qubits,
         const std::vector<CudaStep>& steps
     );
+    [[nodiscard, maybe_unused]] std::vector<Complex> pauli_expectations(
+        std::size_t num_qubits,
+        const std::vector<CudaStep>& steps,
+        const std::vector<CudaPauliMask>& terms
+    );
 
 private:
     void check(CUresult result, std::string_view operation) const;
     void set_current() const;
+    [[nodiscard]] std::uint64_t prepare_state(
+        std::size_t num_qubits, const std::vector<CudaStep>& steps
+    );
     void launch(CUdeviceptr state, std::uint64_t dimension, const CudaStep& step) const;
+    [[nodiscard]] std::uint64_t launch_pauli(
+        std::uint64_t dimension, const CudaPauliMask& term, CUdeviceptr output
+    ) const;
+    [[nodiscard]] std::uint64_t launch_reduce(
+        CUdeviceptr input, std::uint64_t count, CUdeviceptr output
+    ) const;
+    void ensure_reduction_workspace(std::size_t bytes, bool need_second);
 
     DynamicLibrary library_;
     CuInit cu_init_;
@@ -368,12 +748,17 @@ private:
     CUcontext context_ = nullptr;
     CUmodule module_ = nullptr;
     CUfunction apply_gate_ = nullptr;
+    CUfunction pauli_term_ = nullptr;
+    CUfunction reduce_complex_ = nullptr;
     std::string device_name_;
     int driver_version_ = 0;
     std::size_t total_memory_ = 0U;
     std::mutex execution_mutex_;
     CUdeviceptr workspace_ = 0U;
     std::size_t workspace_bytes_ = 0U;
+    CUdeviceptr reduction_first_ = 0U;
+    CUdeviceptr reduction_second_ = 0U;
+    std::size_t reduction_workspace_bytes_ = 0U;
 };
 
 CudaRuntime::CudaRuntime()
@@ -411,8 +796,26 @@ CudaRuntime::CudaRuntime()
     check(cu_primary_retain_(&context_, device_), "cuDevicePrimaryCtxRetain");
     try {
         set_current();
-        check(cu_module_load_(&module_, kCudaPtx.data(), 0U, nullptr, nullptr), "cuModuleLoadDataEx");
+        std::array<char, 4096> error_log{};
+        unsigned int error_log_size = static_cast<unsigned int>(error_log.size());
+        int jit_options[] = {kCudaJitErrorLogBuffer, kCudaJitErrorLogBufferSizeBytes};
+        void* jit_values[] = {error_log.data(), &error_log_size};
+        const CUresult load_result = cu_module_load_(
+            &module_, kCudaPtx.data(), 2U, jit_options, jit_values
+        );
+        if (load_result != kCudaSuccess) {
+            try {
+                check(load_result, "cuModuleLoadDataEx");
+            } catch (const std::runtime_error& error) {
+                const std::string detail = error_log.data();
+                throw std::runtime_error(
+                    detail.empty() ? error.what() : std::string(error.what()) + ": " + detail
+                );
+            }
+        }
         check(cu_module_get_function_(&apply_gate_, module_, "apply_gate"), "cuModuleGetFunction");
+        check(cu_module_get_function_(&pauli_term_, module_, "pauli_term"), "cuModuleGetFunction");
+        check(cu_module_get_function_(&reduce_complex_, module_, "reduce_complex"), "cuModuleGetFunction");
     } catch (...) {
         (void)cu_primary_release_(device_);
         context_ = nullptr;
@@ -424,6 +827,8 @@ CudaRuntime::~CudaRuntime() {
     if (context_ != nullptr) {
         (void)cu_ctx_set_current_(context_);
         if (workspace_ != 0U) (void)cu_mem_free_(workspace_);
+        if (reduction_second_ != 0U) (void)cu_mem_free_(reduction_second_);
+        if (reduction_first_ != 0U) (void)cu_mem_free_(reduction_first_);
         if (module_ != nullptr) (void)cu_module_unload_(module_);
         (void)cu_primary_release_(device_);
     }
@@ -482,7 +887,7 @@ void CudaRuntime::launch(
     );
 }
 
-[[maybe_unused]] std::vector<Complex> CudaRuntime::statevector(
+std::uint64_t CudaRuntime::prepare_state(
     std::size_t num_qubits,
     const std::vector<CudaStep>& steps
 ) {
@@ -492,7 +897,6 @@ void CudaRuntime::launch(
         throw std::length_error("CUDA state vector exceeds device memory");
     }
     const std::uint64_t dimension = static_cast<std::uint64_t>(bytes / sizeof(Complex));
-    std::scoped_lock lock(execution_mutex_);
     set_current();
     if (workspace_bytes_ < bytes) {
         if (workspace_ != 0U) {
@@ -507,9 +911,161 @@ void CudaRuntime::launch(
     const Complex zero_state{1.0, 0.0};
     check(cu_memcpy_htod_(workspace_, &zero_state, sizeof(zero_state)), "cuMemcpyHtoD");
     for (const CudaStep& step : steps) launch(workspace_, dimension, step);
-    check(cu_ctx_synchronize_(), "cuCtxSynchronize");
+    return dimension;
+}
+
+std::uint64_t CudaRuntime::launch_pauli(
+    std::uint64_t dimension,
+    const CudaPauliMask& term,
+    CUdeviceptr output
+) const {
+    constexpr std::uint32_t block_size = 256U;
+    const std::uint64_t grid64 = (dimension + block_size - 1U) / block_size;
+    if (grid64 == 0U || grid64 > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("CUDA Pauli reduction grid exceeds driver range");
+    }
+    CUdeviceptr state = workspace_;
+    std::uint64_t flip_mask = term.flip_mask;
+    std::uint64_t sign_mask = term.sign_mask;
+    std::uint32_t y_phase = term.y_phase & 3U;
+    void* arguments[] = {
+        &state, &dimension, &flip_mask, &sign_mask, &y_phase, &output,
+    };
+    check(
+        cu_launch_kernel_(
+            pauli_term_, static_cast<std::uint32_t>(grid64), 1U, 1U,
+            block_size, 1U, 1U, 0U, nullptr, arguments, nullptr
+        ),
+        "cuLaunchKernel(pauli_term)"
+    );
+    return grid64;
+}
+
+std::uint64_t CudaRuntime::launch_reduce(
+    CUdeviceptr input,
+    std::uint64_t count,
+    CUdeviceptr output
+) const {
+    constexpr std::uint32_t block_size = 256U;
+    const std::uint64_t grid64 = (count + block_size - 1U) / block_size;
+    if (grid64 == 0U || grid64 > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("CUDA complex reduction grid exceeds driver range");
+    }
+    void* arguments[] = {&input, &count, &output};
+    check(
+        cu_launch_kernel_(
+            reduce_complex_, static_cast<std::uint32_t>(grid64), 1U, 1U,
+            block_size, 1U, 1U, 0U, nullptr, arguments, nullptr
+        ),
+        "cuLaunchKernel(reduce_complex)"
+    );
+    return grid64;
+}
+
+void CudaRuntime::ensure_reduction_workspace(std::size_t bytes, bool need_second) {
+    if (bytes == 0U) {
+        throw std::invalid_argument("CUDA reduction workspace cannot be empty");
+    }
+    if (reduction_workspace_bytes_ >= bytes &&
+        reduction_first_ != 0U && (!need_second || reduction_second_ != 0U)) {
+        return;
+    }
+    if (reduction_second_ != 0U) {
+        check(cu_mem_free_(reduction_second_), "cuMemFree(reduction)");
+        reduction_second_ = 0U;
+    }
+    if (reduction_first_ != 0U) {
+        check(cu_mem_free_(reduction_first_), "cuMemFree(reduction)");
+        reduction_first_ = 0U;
+    }
+    reduction_workspace_bytes_ = 0U;
+    check(cu_mem_alloc_(&reduction_first_, bytes), "cuMemAlloc(reduction)");
+    try {
+        if (need_second) {
+            check(cu_mem_alloc_(&reduction_second_, bytes), "cuMemAlloc(reduction)");
+        }
+        reduction_workspace_bytes_ = bytes;
+    } catch (...) {
+        if (reduction_second_ != 0U) (void)cu_mem_free_(reduction_second_);
+        if (reduction_first_ != 0U) (void)cu_mem_free_(reduction_first_);
+        reduction_second_ = 0U;
+        reduction_first_ = 0U;
+        throw;
+    }
+}
+
+[[maybe_unused]] std::vector<Complex> CudaRuntime::statevector(
+    std::size_t num_qubits,
+    const std::vector<CudaStep>& steps
+) {
+    std::scoped_lock lock(execution_mutex_);
+    const std::uint64_t dimension = prepare_state(num_qubits, steps);
+    const std::size_t bytes = static_cast<std::size_t>(dimension) * sizeof(Complex);
     std::vector<Complex> result(static_cast<std::size_t>(dimension));
+    check(cu_ctx_synchronize_(), "cuCtxSynchronize");
     check(cu_memcpy_dtoh_(result.data(), workspace_, bytes), "cuMemcpyDtoH");
+    return result;
+}
+
+[[maybe_unused]] std::vector<Complex> CudaRuntime::pauli_expectations(
+    std::size_t num_qubits,
+    const std::vector<CudaStep>& steps,
+    const std::vector<CudaPauliMask>& terms
+) {
+    if (terms.empty()) {
+        return {};
+    }
+    const auto is_identity = [](const CudaPauliMask& term) {
+        return term.flip_mask == 0U && term.sign_mask == 0U && (term.y_phase & 3U) == 0U;
+    };
+    if (std::all_of(terms.begin(), terms.end(), is_identity)) {
+        return std::vector<Complex>(terms.size(), Complex{1.0, 0.0});
+    }
+    const std::size_t state_bytes = checked_state_bytes(num_qubits);
+    const std::uint64_t dimension = static_cast<std::uint64_t>(state_bytes / sizeof(Complex));
+    constexpr std::uint64_t block_size = 256U;
+    const std::uint64_t partial_count = (dimension + block_size - 1U) / block_size;
+    if (partial_count > std::numeric_limits<std::size_t>::max() / sizeof(Complex)) {
+        throw std::length_error("CUDA Pauli reduction exceeds native address space");
+    }
+    const std::size_t partial_bytes = static_cast<std::size_t>(partial_count) * sizeof(Complex);
+    const std::size_t buffer_count = partial_count > 1U ? 2U : 1U;
+    if (state_bytes > total_memory_ || partial_bytes > (total_memory_ - state_bytes) / buffer_count) {
+        throw std::length_error("CUDA Pauli reduction exceeds device memory");
+    }
+
+    std::scoped_lock lock(execution_mutex_);
+    if (workspace_bytes_ > state_bytes &&
+        partial_bytes > (total_memory_ - workspace_bytes_) / buffer_count) {
+        check(cu_mem_free_(workspace_), "cuMemFree");
+        workspace_ = 0U;
+        workspace_bytes_ = 0U;
+    }
+    const std::uint64_t prepared_dimension = prepare_state(num_qubits, steps);
+    if (prepared_dimension != dimension) {
+        throw std::logic_error("CUDA state dimension changed during observable execution");
+    }
+
+    ensure_reduction_workspace(partial_bytes, partial_count > 1U);
+    std::vector<Complex> result;
+    result.reserve(terms.size());
+    for (const CudaPauliMask& term : terms) {
+        if (is_identity(term)) {
+            result.emplace_back(1.0, 0.0);
+            continue;
+        }
+        std::uint64_t count = launch_pauli(dimension, term, reduction_first_);
+        CUdeviceptr input = reduction_first_;
+        CUdeviceptr output = reduction_second_;
+        while (count > 1U) {
+            count = launch_reduce(input, count, output);
+            std::swap(input, output);
+        }
+        check(cu_ctx_synchronize_(), "cuCtxSynchronize");
+        Complex value{0.0, 0.0};
+        check(cu_memcpy_dtoh_(&value, input, sizeof(value)), "cuMemcpyDtoH(reduction)");
+        result.push_back(value);
+    }
     return result;
 }
 
@@ -594,6 +1150,21 @@ std::vector<Complex> cuda_statevector(
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
     return runtime().statevector(num_qubits, steps);
+#endif
+}
+
+std::vector<Complex> cuda_pauli_expectations(
+    std::size_t num_qubits,
+    const std::vector<CudaStep>& steps,
+    const std::vector<CudaPauliMask>& terms
+) {
+#ifdef QUPY_SANITIZER_BUILD
+    static_cast<void>(num_qubits);
+    static_cast<void>(steps);
+    static_cast<void>(terms);
+    throw std::runtime_error(std::string(kSanitizerCudaDisabled));
+#else
+    return runtime().pauli_expectations(num_qubits, steps, terms);
 #endif
 }
 
