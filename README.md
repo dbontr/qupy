@@ -66,6 +66,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - explicit target capabilities and result-aware execution plans with versioned structural workload fingerprints
 - versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation on CPU and explicit CUDA targets
+- exact adaptive MPS/dense observable execution behind validated host-scoped planner evidence
 - exact bit-packed stabilizer sampling for large Clifford programs with polynomial state memory
 - exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones
 - probabilities, Pauli-Z expectations, and Pauli-Z variances
@@ -159,7 +160,11 @@ print(plan.tensor_network_routed_swaps)     # 0
 print(plan.tensor_network_contraction_work)
 ```
 
-`ExecutionPlan` reports the structural MPS bond, routing, memory, and contraction-work estimates needed for measured planner calibration. `backend="auto"` does not select MPS yet. `python -m benchmarks.mps_cost` collects paired CPU/MPS exact expectation evidence across low-bond, routing-heavy, and locally entangled workload families for that promotion gate.
+`ExecutionPlan` reports structural MPS bond, routing, memory, and contraction-work estimates for measured planner validation. Explicit `native-mps` execution remains available without a planner artifact.
+
+A validated schema-v3 planner artifact can enable exact MPS-aware selection for expectation and variance requests with `backend="auto"`. The current policy uses direct MPS when the structural estimate proves the bond remains small, selects dense state-vector execution for deterministic routing-heavy cases, and otherwise uses an adaptive exact path. The adaptive path can checkpoint an MPS calculation and continue from the exact checkpoint as a dense state vector when bond growth makes dense execution preferable. It never truncates retained singular values to satisfy the policy.
+
+Schema-v3 promotion is evidence-gated. `benchmarks.mps_cost --profile policy` records two counterbalanced timing pairs for each workload: CPU versus adaptive execution and MPS versus adaptive execution. `benchmarks.mps_calibrate` recomputes regret from the raw pairs, requires at least three matching reports and 16 distinct workloads, rejects numerical disagreement above `2e-11`, and permits no workload with more than 10% median runtime regret. The resulting artifact remains bound to the QuPy core, workload schema, and native host fingerprint.
 
 ### Stabilizer sampling
 
@@ -180,7 +185,7 @@ The 24-qubit threshold keeps the established small-circuit seeded state-vector s
 
 ### Validated planner cost evidence
 
-Validated benchmark calibration can be promoted into a compact native planner artifact. Schema-v1 artifacts bind CPU cost evidence to the QuPy core version, workload schema, and native host fingerprint. Schema-v2 artifacts additionally bind a CUDA host fingerprint and validated CPU/CUDA state-vector return-cost evidence. Invalid, stale, unvalidated, or wrong-host artifacts fail closed.
+Validated benchmark calibration can be promoted into a compact native planner artifact. Schema-v1 artifacts bind CPU cost evidence to the QuPy core version, workload schema, and native host fingerprint. Schema-v2 artifacts additionally bind a CUDA host fingerprint and validated CPU/CUDA state-vector return-cost evidence. Schema-v3 artifacts can preserve that CUDA evidence and add the validated adaptive-MPS observable policy. Invalid, stale, unvalidated, incomplete, or wrong-host artifacts fail closed.
 
 ```python
 model = qp.load_planner_cost_model("planner.qpcost")
@@ -191,7 +196,7 @@ print(plan.cost_model_class)
 print(plan.cost_model_fingerprint)
 ```
 
-Schema-v1 models remain evidence-only: they do not change `backend`, `method`, or `cache_key`. A schema-v2 CUDA model can affect only `ResultMode.STATEVECTOR` with `backend="auto"` when that model is explicitly supplied. The planner compares native CPU and CUDA return-cost predictions using qubit count, compiled-step count, two-qubit operation fraction, and planned CPU thread count, then selects the lower predicted runtime. The chosen plan retains its normal cache identity; cost-model fingerprints remain separate provenance. Execution without a supplied model is unchanged.
+Schema-v1 models remain evidence-only: they do not change `backend`, `method`, or `cache_key`. A schema-v2 or schema-v3 artifact with validated CUDA evidence can affect only `ResultMode.STATEVECTOR` with `backend="auto"`. A schema-v3 artifact with validated MPS policy evidence can additionally select `native-adaptive-mps` for eligible expectation and variance requests. Pauli-propagation-eligible observables keep their specialized CPU method. The chosen plan retains its normal cache identity; cost-model fingerprints remain separate provenance. Execution without a supplied model is unchanged.
 
 ### Result-aware expectation planning
 
@@ -255,7 +260,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. The explicit MPS target provides exact tensor-network expectation, variance, and state-vector execution with inspectable bond, routing, and contraction-cost features. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped predicted-runtime evidence with explicit provenance. Schema-v2 evidence can select CPU or CUDA for exact state-vector return when explicitly supplied; automatic MPS selection, noise, richer observables, and physical-QPU targets remain gated on their own conformance and planner evidence.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when explicitly supplied. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. Noise, richer observables, and physical-QPU targets remain gated on their own semantic, conformance, and planner evidence.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

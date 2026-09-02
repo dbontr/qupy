@@ -78,9 +78,15 @@ constexpr int kMaximumOpenMpTeam = 16;
 constexpr std::uint32_t kIrVersion = 1U;
 constexpr std::uint32_t kWorkloadVersion = 1U;
 constexpr std::size_t kStabilizerSamplingMinQubits = 24U;
-constexpr std::uint32_t kPlannerCostSchemaVersion = 2U;
+constexpr std::uint32_t kPlannerCostSchemaVersion = 3U;
 constexpr double kCudaDecisionMaxRegret = 1.10;
 constexpr std::size_t kCudaDecisionMinimumSamples = 8U;
+constexpr std::uint32_t kAdaptiveMpsPolicyVersion = 1U;
+constexpr double kMpsDecisionMaxRegret = 1.10;
+constexpr std::size_t kMpsDecisionMinimumSamples = 16U;
+constexpr std::size_t kAdaptiveMpsMinQubits = 14U;
+constexpr std::size_t kAdaptiveMpsBondLimit = 16U;
+constexpr std::size_t kAdaptiveMpsRoutingMultiplier = 4U;
 constexpr double kPlannerPromotionMaxHoldoutMedianFactor = 1.5;
 constexpr double kPlannerPromotionMaxHoldoutFactor = 2.0;
 constexpr std::string_view kCoreVersion = "0.3.0a0";
@@ -365,6 +371,17 @@ struct OperationSpec {
     return dimension * sizeof(Complex);
 }
 
+[[nodiscard]] std::size_t saturated_state_memory_bytes(std::size_t num_qubits) noexcept {
+    if (num_qubits >= std::numeric_limits<std::size_t>::digits) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    const std::size_t dimension = std::size_t{1} << num_qubits;
+    if (dimension > std::numeric_limits<std::size_t>::max() / sizeof(Complex)) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return dimension * sizeof(Complex);
+}
+
 using Matrix2 = std::array<Complex, 4>;
 
 enum class CompiledKind : std::uint8_t {
@@ -598,6 +615,10 @@ template <typename ParameterResolver>
     return compile_operations(program.num_qubits(), program.operations());
 }
 
+[[nodiscard]] std::size_t compiled_routed_swaps(
+    const std::vector<CompiledStep>& steps
+) noexcept;
+
 [[nodiscard]] std::vector<detail::MpsStep> mps_steps(
     const std::vector<CompiledStep>& steps
 );
@@ -808,9 +829,14 @@ void materialize_parameterized_steps(
     return backend == "mps" || backend == "native-mps";
 }
 
+[[nodiscard]] bool is_adaptive_mps_backend(const std::string& backend) {
+    return backend == "adaptive-mps" || backend == "native-adaptive-mps";
+}
+
 void validate_backend(const std::string& backend) {
     if (backend != "auto" && backend != "native" && backend != "native-cpu" &&
-        !is_cuda_backend(backend) && !is_mps_backend(backend)) {
+        !is_cuda_backend(backend) && !is_mps_backend(backend) &&
+        !is_adaptive_mps_backend(backend)) {
         throw std::invalid_argument("unknown backend: " + backend);
     }
 }
@@ -1197,7 +1223,11 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     }
     const bool cuda_backend = is_cuda_backend(backend);
     const bool mps_backend = is_mps_backend(backend);
-    const Target target = cuda_backend ? cuda_target() : (mps_backend ? mps_target() : native_target());
+    const bool adaptive_mps_backend = is_adaptive_mps_backend(backend);
+    const Target target = cuda_backend
+        ? cuda_target()
+        : (mps_backend ? mps_target()
+                       : (adaptive_mps_backend ? adaptive_mps_target() : native_target()));
     target.validate(program, result_mode);
     if (mps_backend) {
         std::vector<CompiledStep> steps = compile_program(program);
@@ -1349,13 +1379,19 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         throw std::invalid_argument("observable plan requires expectation or variance mode");
     }
     validate_backend(backend);
-    const bool mps_backend = is_mps_backend(backend);
-    const Target target = is_cuda_backend(backend)
-        ? cuda_target() : (mps_backend ? mps_target() : native_target());
-    target.validate(program, result_mode);
-
     ReducedExpectation reduced = reduce_expectation(program, observable);
     const bool pauli_propagation = supports_pauli_propagation(reduced.operations);
+    const bool mps_backend = is_mps_backend(backend);
+    const bool adaptive_backend = is_adaptive_mps_backend(backend);
+    const bool auto_adaptive = backend == "auto" && !pauli_propagation &&
+        reduced.active_qubits >= kAdaptiveMpsMinQubits && cost_model != nullptr &&
+        cost_model->mps_auto_validated();
+    const Target target = is_cuda_backend(backend)
+        ? cuda_target()
+        : (mps_backend ? mps_target()
+                       : ((adaptive_backend || auto_adaptive) ? adaptive_mps_target()
+                                                             : native_target()));
+    target.validate(program, result_mode);
     std::vector<CompiledStep> steps;
     std::vector<Operation> pauli_operations;
     std::string method;
@@ -1368,15 +1404,46 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     } else {
         steps = compile_operations(reduced.active_qubits, reduced.operations);
         if (mps_backend) {
-            tensor_estimate = detail::mps_estimate(
-                reduced.active_qubits, mps_steps(steps)
-            );
+            tensor_estimate = detail::mps_estimate(reduced.active_qubits, mps_steps(steps));
             method = reduced.active_qubits < program.num_qubits() ? "mps-lightcone" : "mps";
             estimated_state_bytes = tensor_estimate.state_bytes;
+        } else if (adaptive_backend || auto_adaptive) {
+            const std::size_t dense_bytes = saturated_state_memory_bytes(reduced.active_qubits);
+            const bool dense_addressable = dense_bytes != std::numeric_limits<std::size_t>::max();
+            const std::size_t routed_swaps = compiled_routed_swaps(steps);
+            const std::size_t non_clifford_operations = static_cast<std::size_t>(std::count_if(
+                reduced.operations.begin(), reduced.operations.end(),
+                [](const Operation& operation) { return is_non_clifford(operation.code); }
+            ));
+            const bool heavy_routing =
+                reduced.active_qubits <=
+                    std::numeric_limits<std::size_t>::max() / kAdaptiveMpsRoutingMultiplier &&
+                routed_swaps >= reduced.active_qubits * kAdaptiveMpsRoutingMultiplier;
+            const bool parallel_dense = dense_addressable && planned_threads(dense_bytes) > 1U;
+            const bool deterministic_dense = dense_addressable &&
+                (reduced.active_qubits < kAdaptiveMpsMinQubits ||
+                 (heavy_routing &&
+                  (non_clifford_operations > reduced.active_qubits / 4U ||
+                   (parallel_dense && non_clifford_operations > 2U))));
+            tensor_estimate.routed_swaps = routed_swaps;
+            if (deterministic_dense) {
+                method = reduced.active_qubits < program.num_qubits()
+                    ? "statevector-lightcone" : "statevector";
+                estimated_state_bytes = dense_bytes;
+            } else {
+                tensor_estimate = detail::mps_estimate(reduced.active_qubits, mps_steps(steps));
+                if (tensor_estimate.max_bond <= kAdaptiveMpsBondLimit) {
+                    method = reduced.active_qubits < program.num_qubits()
+                        ? "mps-lightcone" : "mps";
+                    estimated_state_bytes = tensor_estimate.state_bytes;
+                } else {
+                    method = "adaptive-mps";
+                    estimated_state_bytes = dense_bytes;
+                }
+            }
         } else {
             method = reduced.active_qubits < program.num_qubits()
-                ? "statevector-lightcone"
-                : "statevector";
+                ? "statevector-lightcone" : "statevector";
             estimated_state_bytes = state_memory_bytes(reduced.active_qubits);
         }
         compiled_steps = steps.size();
@@ -1384,34 +1451,47 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
 
     const std::string qualifier = "z:" + std::to_string(observable.qubit);
     ExecutionPlan execution_plan = make_plan(
-        program,
-        target,
-        result_mode,
-        program.operations().size(),
-        reduced.operations,
-        compiled_steps,
-        reduced.active_qubits,
-        estimated_state_bytes,
-        method,
-        qualifier,
-        collect_workload_fingerprint,
-        cost_model
+        program, target, result_mode, program.operations().size(), reduced.operations,
+        compiled_steps, reduced.active_qubits, estimated_state_bytes, method, qualifier,
+        collect_workload_fingerprint, cost_model
     );
-    if (mps_backend && !pauli_propagation) {
+    if ((mps_backend || adaptive_backend || auto_adaptive) && !pauli_propagation) {
         execution_plan.tensor_network_max_bond = tensor_estimate.max_bond;
         execution_plan.tensor_network_routed_swaps = tensor_estimate.routed_swaps;
         execution_plan.tensor_network_contraction_work = tensor_estimate.contraction_work;
+    }
+    if (auto_adaptive) {
+        execution_plan.cost_model_class = "adaptive-mps-policy";
+        execution_plan.cost_model_fingerprint = cost_model->artifact_fingerprint();
+        execution_plan.cost_model_host_fingerprint = cost_model->host_fingerprint();
+        execution_plan.cost_model_cuda_host_fingerprint = cost_model->cuda_host_fingerprint();
     }
     if (pauli_propagation) {
         pauli_operations = std::move(reduced.operations);
     }
     return {
-        reduced.observable_qubit,
-        std::move(execution_plan),
-        std::move(steps),
-        std::move(pauli_operations),
-        pauli_propagation,
+        reduced.observable_qubit, std::move(execution_plan), std::move(steps),
+        std::move(pauli_operations), pauli_propagation,
     };
+}
+
+void apply_compiled_steps(
+    std::vector<Complex>& state,
+    const std::vector<CompiledStep>& steps,
+    std::size_t start_step = 0U
+) {
+    if (start_step > steps.size()) {
+        throw std::out_of_range("compiled step resume index is outside the program");
+    }
+    for (std::size_t index = start_step; index < steps.size(); ++index) {
+        const CompiledStep& step = steps[index];
+        switch (step.kind) {
+        case CompiledKind::Single: apply_single(state, step.matrix, step.first); break;
+        case CompiledKind::CX: apply_cx(state, step.first, step.second); break;
+        case CompiledKind::CZ: apply_cz(state, step.first, step.second); break;
+        case CompiledKind::SWAP: apply_swap(state, step.first, step.second); break;
+        }
+    }
 }
 
 void evolve_statevector(
@@ -1469,6 +1549,33 @@ void evolve_statevector(
         result.push_back({kind, step.matrix, step.first, step.second});
     }
     return result;
+}
+
+[[nodiscard]] std::size_t compiled_routed_swaps(
+    const std::vector<CompiledStep>& steps
+) noexcept {
+    std::size_t total = 0U;
+    for (const CompiledStep& step : steps) {
+        if (step.kind == CompiledKind::Single) {
+            continue;
+        }
+        const std::size_t low = std::min(step.first, step.second);
+        const std::size_t high = std::max(step.first, step.second);
+        const std::size_t distance = high - low;
+        if (distance <= 1U) {
+            continue;
+        }
+        const std::size_t one_way = distance - 1U;
+        if (one_way > std::numeric_limits<std::size_t>::max() / 2U) {
+            return std::numeric_limits<std::size_t>::max();
+        }
+        const std::size_t routed = one_way * 2U;
+        if (total > std::numeric_limits<std::size_t>::max() - routed) {
+            return std::numeric_limits<std::size_t>::max();
+        }
+        total += routed;
+    }
+    return total;
 }
 
 [[nodiscard]] std::vector<detail::MpsStep> mps_steps(
@@ -1538,6 +1645,65 @@ void evolve_statevector(
         value += sign * std::norm(state[index]);
     }
     return value;
+}
+
+[[nodiscard]] double adaptive_mps_expectation_value(
+    const PreparedExpectation& prepared
+) {
+    const std::size_t qubits = prepared.execution_plan.active_qubits;
+    const auto mps_program = mps_steps(prepared.steps);
+    const std::size_t dense_bytes = saturated_state_memory_bytes(qubits);
+    const bool dense_addressable = dense_bytes != std::numeric_limits<std::size_t>::max();
+    if (!dense_addressable) {
+        const auto attempt = detail::mps_pauli_z_expectation_bounded(
+            qubits, mps_program, prepared.observable_qubit, kAdaptiveMpsBondLimit
+        );
+        if (attempt.completed) {
+            return attempt.value;
+        }
+        return detail::mps_pauli_z_expectation(
+            qubits, mps_program, prepared.observable_qubit
+        ).value;
+    }
+    const auto dense_value = [&]() {
+        const std::vector<Complex>& state = run_statevector_workspace(qubits, prepared.steps);
+        return pauli_z_value(state, prepared.observable_qubit);
+    };
+    if (qubits < kAdaptiveMpsMinQubits) {
+        return dense_value();
+    }
+    const bool heavy_routing =
+        qubits <= std::numeric_limits<std::size_t>::max() / kAdaptiveMpsRoutingMultiplier &&
+        prepared.execution_plan.tensor_network_routed_swaps >=
+            qubits * kAdaptiveMpsRoutingMultiplier;
+    const bool parallel_dense = planned_threads(dense_bytes) > 1U;
+    if (
+        heavy_routing &&
+        (prepared.execution_plan.non_clifford_operations > qubits / 4U ||
+         (parallel_dense && prepared.execution_plan.non_clifford_operations > 2U))
+    ) {
+        return dense_value();
+    }
+    if (prepared.execution_plan.tensor_network_max_bond <= kAdaptiveMpsBondLimit) {
+        return detail::mps_pauli_z_expectation(
+            qubits, mps_program, prepared.observable_qubit
+        ).value;
+    }
+    if (!parallel_dense) {
+        auto attempt = detail::mps_pauli_z_expectation_checkpointed(
+            qubits, mps_program, prepared.observable_qubit, kAdaptiveMpsBondLimit
+        );
+        if (attempt.completed) {
+            return attempt.value;
+        }
+        std::vector<Complex> state = std::move(attempt.fallback_state);
+        apply_compiled_steps(state, prepared.steps, attempt.next_step);
+        return pauli_z_value(state, prepared.observable_qubit);
+    }
+    const auto attempt = detail::mps_pauli_z_expectation_bounded(
+        qubits, mps_program, prepared.observable_qubit, kAdaptiveMpsBondLimit
+    );
+    return attempt.completed ? attempt.value : dense_value();
 }
 
 [[nodiscard]] std::uint64_t unbiased_index(
@@ -1864,6 +2030,17 @@ bool PlannerCostModel::cuda_auto_validated() const noexcept {
            cuda_decision_max_regret_ <= kCudaDecisionMaxRegret;
 }
 
+bool PlannerCostModel::mps_auto_validated() const noexcept {
+    return schema_version_ >= 3U && mps_policy_version_ == kAdaptiveMpsPolicyVersion &&
+           mps_decision_samples_ >= kMpsDecisionMinimumSamples &&
+           mps_decision_mistakes_ == 0U &&
+           mps_decision_max_regret_ <= kMpsDecisionMaxRegret;
+}
+
+std::uint32_t PlannerCostModel::mps_policy_version() const noexcept {
+    return mps_policy_version_;
+}
+
 double PlannerCostModel::predict_ns(const ExecutionPlan& execution_plan) const {
     if (execution_plan.workload_version != workload_version_) {
         throw std::invalid_argument("execution plan workload version does not match cost model");
@@ -1937,6 +2114,8 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     if (line == "qupy-planner-cost 1") {
         schema_version = 1U;
     } else if (line == "qupy-planner-cost 2") {
+        schema_version = 2U;
+    } else if (line == "qupy-planner-cost 3") {
         schema_version = kPlannerCostSchemaVersion;
     } else {
         throw std::invalid_argument("planner cost artifact has an unsupported schema");
@@ -1949,6 +2128,8 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     bool has_host = false;
     bool has_cuda_host = false;
     bool has_cuda_decision = false;
+    bool has_mps_policy = false;
+    bool has_mps_decision = false;
     bool validated = false;
     std::set<std::string> classes;
     while (std::getline(lines, line)) {
@@ -1979,20 +2160,47 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                 throw std::invalid_argument("planner cost artifact has invalid CUDA host metadata");
             }
             has_cuda_host = true;
+        } else if (key == "policy") {
+            std::string policy_class;
+            if (schema_version < 3U || has_mps_policy ||
+                !(fields >> policy_class >> model.mps_policy_version_) ||
+                policy_class != "adaptive-mps" ||
+                model.mps_policy_version_ != kAdaptiveMpsPolicyVersion) {
+                throw std::invalid_argument("planner cost artifact has invalid MPS policy metadata");
+            }
+            has_mps_policy = true;
         } else if (key == "decision") {
             std::string decision_class;
-            if (schema_version < 2U || has_cuda_decision ||
-                !(fields >> decision_class >> model.cuda_decision_samples_ >>
-                  model.cuda_decision_mistakes_ >> model.cuda_decision_max_regret_) ||
-                decision_class != "statevector-auto" ||
-                model.cuda_decision_samples_ < kCudaDecisionMinimumSamples ||
-                model.cuda_decision_mistakes_ != 0U ||
-                !std::isfinite(model.cuda_decision_max_regret_) ||
-                model.cuda_decision_max_regret_ < 1.0 ||
-                model.cuda_decision_max_regret_ > kCudaDecisionMaxRegret) {
-                throw std::invalid_argument("planner cost artifact has invalid CUDA decision evidence");
+            if (!(fields >> decision_class)) {
+                throw std::invalid_argument("planner cost artifact has malformed decision evidence");
             }
-            has_cuda_decision = true;
+            if (decision_class == "statevector-auto") {
+                if (schema_version < 2U || has_cuda_decision ||
+                    !(fields >> model.cuda_decision_samples_ >> model.cuda_decision_mistakes_ >>
+                      model.cuda_decision_max_regret_) ||
+                    model.cuda_decision_samples_ < kCudaDecisionMinimumSamples ||
+                    model.cuda_decision_mistakes_ != 0U ||
+                    !std::isfinite(model.cuda_decision_max_regret_) ||
+                    model.cuda_decision_max_regret_ < 1.0 ||
+                    model.cuda_decision_max_regret_ > kCudaDecisionMaxRegret) {
+                    throw std::invalid_argument("planner cost artifact has invalid CUDA decision evidence");
+                }
+                has_cuda_decision = true;
+            } else if (decision_class == "observable-auto") {
+                if (schema_version < 3U || has_mps_decision ||
+                    !(fields >> model.mps_decision_samples_ >> model.mps_decision_mistakes_ >>
+                      model.mps_decision_max_regret_) ||
+                    model.mps_decision_samples_ < kMpsDecisionMinimumSamples ||
+                    model.mps_decision_mistakes_ != 0U ||
+                    !std::isfinite(model.mps_decision_max_regret_) ||
+                    model.mps_decision_max_regret_ < 1.0 ||
+                    model.mps_decision_max_regret_ > kMpsDecisionMaxRegret) {
+                    throw std::invalid_argument("planner cost artifact has invalid MPS decision evidence");
+                }
+                has_mps_decision = true;
+            } else {
+                throw std::invalid_argument("planner cost artifact has an unknown decision class");
+            }
         } else if (key == "validated") {
             int value = 0;
             if (!(fields >> value) || value != 1) {
@@ -2018,7 +2226,10 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
             } else if (curve.cost_class == "statevector-return-cuda") {
                 expected = 4U;
             }
-            if (expected == 0U || coefficient_count != expected || !classes.insert(curve.cost_class).second) {
+            if (
+                expected == 0U || coefficient_count != expected ||
+                !classes.insert(curve.cost_class).second
+            ) {
                 throw std::invalid_argument("planner cost artifact has an invalid model class");
             }
             curve.coefficients.resize(coefficient_count);
@@ -2047,13 +2258,25 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     std::set<std::string> expected_classes = {
         "pauli-propagation", "statevector-parallel", "statevector-serial"
     };
-    if (schema_version >= 2U) {
+    const bool has_cuda_curves =
+        classes.contains("statevector-return-cpu") ||
+        classes.contains("statevector-return-cuda");
+    const bool cuda_extension = has_cuda_host || has_cuda_decision || has_cuda_curves;
+    if (schema_version == 2U || cuda_extension) {
         expected_classes.insert("statevector-return-cpu");
         expected_classes.insert("statevector-return-cuda");
     }
-    if (!has_engine || !has_workload || !has_host || !validated || classes != expected_classes ||
-        (schema_version >= 2U && (!has_cuda_host || !has_cuda_decision)) ||
-        (schema_version == 1U && (has_cuda_host || has_cuda_decision))) {
+    const bool base_complete = has_engine && has_workload && has_host && validated &&
+        classes == expected_classes;
+    const bool cuda_complete = schema_version == 1U
+        ? !cuda_extension
+        : (schema_version == 2U
+            ? has_cuda_host && has_cuda_decision
+            : (!cuda_extension || (has_cuda_host && has_cuda_decision)));
+    const bool mps_complete = schema_version < 3U
+        ? !has_mps_policy && !has_mps_decision
+        : has_mps_policy && has_mps_decision;
+    if (!base_complete || !cuda_complete || !mps_complete) {
         throw std::invalid_argument("planner cost artifact is incomplete");
     }
     if (model.engine_version_ != kCoreVersion) {
@@ -2065,7 +2288,7 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     if (model.host_fingerprint_ != planner_host_fingerprint()) {
         throw std::invalid_argument("planner cost artifact host does not match this runtime");
     }
-    if (schema_version >= 2U) {
+    if (cuda_extension) {
         if (!detail::cuda_available()) {
             throw std::invalid_argument("planner cost artifact requires CUDA on this runtime");
         }
@@ -2076,7 +2299,6 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     model.artifact_fingerprint_ = fingerprint_text(text);
     return model;
 }
-
 
 bool cuda_available() noexcept { return detail::cuda_available(); }
 std::string cuda_unavailable_reason() { return detail::cuda_unavailable_reason(); }
@@ -2108,6 +2330,25 @@ Target mps_target() {
         std::nullopt,
         true,
         true,
+        false,
+        false,
+        false,
+        false,
+    };
+}
+
+Target adaptive_mps_target() {
+    return {
+        "native-adaptive-mps",
+        {
+            OperationCode::H, OperationCode::X, OperationCode::Y, OperationCode::Z,
+            OperationCode::RX, OperationCode::RY, OperationCode::RZ, OperationCode::CX,
+            OperationCode::CZ, OperationCode::SWAP,
+        },
+        {ResultMode::Expectation, ResultMode::Variance},
+        std::nullopt,
+        true,
+        false,
         false,
         false,
         false,
@@ -2311,7 +2552,10 @@ SamplesBatch sample_batch(
     }
     validate_backend(backend);
     const Target target = is_cuda_backend(backend)
-        ? cuda_target() : (is_mps_backend(backend) ? mps_target() : native_target());
+        ? cuda_target()
+        : (is_mps_backend(backend) ? mps_target()
+                                   : (is_adaptive_mps_backend(backend)
+                                       ? adaptive_mps_target() : native_target()));
     target.validate(program, ResultMode::Sample);
     if (!target.parameter_batches) {
         throw std::invalid_argument("target does not support parameter batches");
@@ -2391,10 +2635,11 @@ SamplesBatch sample_batch(
 Expectation expectation(
     const Program& program,
     PauliZ observable,
-    const std::string& backend
+    const std::string& backend,
+    const PlannerCostModel* cost_model
 ) {
     PreparedExpectation prepared = prepare_expectation(
-        program, observable, ResultMode::Expectation, backend
+        program, observable, ResultMode::Expectation, backend, false, cost_model
     );
     double value = 0.0;
     if (prepared.pauli_propagation) {
@@ -2412,6 +2657,8 @@ Expectation expectation(
             mps_steps(prepared.steps),
             prepared.observable_qubit
         ).value;
+    } else if (prepared.execution_plan.method == "adaptive-mps") {
+        value = adaptive_mps_expectation_value(prepared);
     } else {
         const std::vector<Complex>& state = run_statevector_workspace(
             prepared.execution_plan.active_qubits, prepared.steps
@@ -2438,7 +2685,10 @@ ExpectationBatch expectation_batch(
 ) {
     validate_backend(backend);
     const Target target = is_cuda_backend(backend)
-        ? cuda_target() : (is_mps_backend(backend) ? mps_target() : native_target());
+        ? cuda_target()
+        : (is_mps_backend(backend) ? mps_target()
+                                   : (is_adaptive_mps_backend(backend)
+                                       ? adaptive_mps_target() : native_target()));
     target.validate(program, ResultMode::Expectation);
     if (!target.parameter_batches) {
         throw std::invalid_argument("target does not support parameter batches");
@@ -2496,10 +2746,11 @@ ExpectationBatch expectation_batch(
 Variance variance(
     const Program& program,
     PauliZ observable,
-    const std::string& backend
+    const std::string& backend,
+    const PlannerCostModel* cost_model
 ) {
     PreparedExpectation prepared = prepare_expectation(
-        program, observable, ResultMode::Variance, backend
+        program, observable, ResultMode::Variance, backend, false, cost_model
     );
     double expectation_value = 0.0;
     if (prepared.pauli_propagation) {
@@ -2517,6 +2768,8 @@ Variance variance(
             mps_steps(prepared.steps),
             prepared.observable_qubit
         ).value;
+    } else if (prepared.execution_plan.method == "adaptive-mps") {
+        expectation_value = adaptive_mps_expectation_value(prepared);
     } else {
         const std::vector<Complex>& state = run_statevector_workspace(
             prepared.execution_plan.active_qubits, prepared.steps

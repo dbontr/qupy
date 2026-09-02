@@ -301,6 +301,118 @@ void test_cuda_planner_cost_artifact() {
 }
 
 
+void test_adaptive_mps_planner_artifact() {
+    const std::filesystem::path artifact = std::filesystem::temp_directory_path() /
+        "qupy-adaptive-mps-policy.qpcost";
+    {
+        std::ofstream output(artifact);
+        require(static_cast<bool>(output), "adaptive MPS policy fixture could not be created");
+        output << "qupy-planner-cost 3\n";
+        output << "engine " << qupy::core_version() << "\n";
+        output << "workload 1\n";
+        output << "host " << qupy::planner_host_fingerprint() << "\n";
+        output << "validated 1\n";
+        output << "model pauli-propagation 2 5 0.85 1.1 1.2\n";
+        output << "model statevector-parallel 3 4.5 0.55 0.012 1.1 1.2\n";
+        output << "model statevector-serial 3 4.5 0.55 0.012 1.1 1.2\n";
+        output << "policy adaptive-mps 1\n";
+        output << "decision observable-auto 29 0 1.0\n";
+    }
+
+    const auto model = qupy::load_planner_cost_model(artifact.string());
+    require(model.schema_version() == 3U, "adaptive MPS policy schema version is wrong");
+    require(model.mps_auto_validated(), "adaptive MPS policy evidence was not accepted");
+    require(model.mps_policy_version() == 1U, "adaptive MPS policy version is wrong");
+    require(!model.cuda_auto_validated(), "MPS-only artifact unexpectedly enabled CUDA selection");
+
+    const auto target = qupy::adaptive_mps_target();
+    require(target.name == "native-adaptive-mps", "adaptive MPS target name is wrong");
+    require(target.supports(qupy::ResultMode::Expectation), "adaptive MPS target lacks expectation");
+    require(target.supports(qupy::ResultMode::Variance), "adaptive MPS target lacks variance");
+    require(!target.supports(qupy::ResultMode::StateVector), "adaptive MPS target exposes statevector");
+    require(!target.parameter_batches, "adaptive MPS target exposes parameter batches");
+
+    qupy::Program program(15U);
+    program = qupy::ry(program, 0.371, 0U);
+    for (std::size_t qubit = 0U; qubit + 1U < 15U; ++qubit) {
+        program = qupy::cx(program, qubit, qubit + 1U);
+    }
+    const auto observable = qupy::pauli_z(14U);
+    const auto baseline = qupy::expectation_plan(program, observable);
+    const auto selected = qupy::expectation_plan(program, observable, "auto", &model);
+    require(baseline.backend == "native-cpu", "default observable backend changed");
+    require(selected.backend == "native-adaptive-mps", "validated policy did not select adaptive MPS");
+    require(selected.method == "mps", "safe adaptive MPS plan did not resolve directly to MPS");
+    require(selected.cost_model_class == "adaptive-mps-policy", "adaptive MPS policy provenance is wrong");
+    require(!selected.predicted_ns.has_value(), "adaptive MPS policy reported a static prediction");
+    const auto cpu = qupy::expectation(program, observable, "native-cpu");
+    const auto automatic = qupy::expectation(program, observable, "auto", &model);
+    require(automatic.backend == "native-adaptive-mps", "adaptive MPS execution ignored policy");
+    require(
+        std::abs(automatic.value - cpu.value) <= 5e-12,
+        "adaptive MPS expectation diverged from dense CPU"
+    );
+    const auto cpu_variance = qupy::variance(program, observable, "native-cpu");
+    const auto automatic_variance = qupy::variance(program, observable, "auto", &model);
+    require(
+        automatic_variance.backend == "native-adaptive-mps",
+        "adaptive MPS variance execution ignored policy"
+    );
+    require(
+        std::abs(automatic_variance.value - cpu_variance.value) <= 5e-12,
+        "adaptive MPS variance diverged from dense CPU"
+    );
+
+    qupy::Program fallback_program(15U);
+    for (std::size_t qubit = 0U; qubit < 15U; ++qubit) {
+        fallback_program = qupy::ry(fallback_program, 0.019 * static_cast<double>(qubit + 1U), qubit);
+    }
+    for (std::size_t layer = 0U; layer < 7U; ++layer) {
+        const std::size_t parity = layer % 2U;
+        for (std::size_t qubit = parity; qubit + 1U < 15U; qubit += 2U) {
+            fallback_program = qupy::cz(fallback_program, qubit, qubit + 1U);
+        }
+        for (std::size_t qubit = 0U; qubit < 15U; ++qubit) {
+            fallback_program = qupy::rz(
+                fallback_program,
+                0.007 * static_cast<double>(layer + qubit + 1U),
+                qubit
+            );
+        }
+    }
+    for (std::size_t qubit = 0U; qubit + 1U < 15U; ++qubit) {
+        fallback_program = qupy::cx(fallback_program, qubit, qubit + 1U);
+    }
+    const auto fallback_observable = qupy::pauli_z(14U);
+    const auto fallback_plan = qupy::expectation_plan(
+        fallback_program, fallback_observable, "native-adaptive-mps"
+    );
+    require(fallback_plan.method == "adaptive-mps", "bond-growth plan did not use adaptive MPS");
+    require(
+        fallback_plan.tensor_network_max_bond > 16U,
+        "bond-growth plan did not cross the adaptive checkpoint limit"
+    );
+    const auto fallback_cpu = qupy::expectation(
+        fallback_program, fallback_observable, "native-cpu"
+    );
+    const auto fallback_adaptive = qupy::expectation(
+        fallback_program, fallback_observable, "native-adaptive-mps"
+    );
+    require(
+        std::abs(fallback_adaptive.value - fallback_cpu.value) <= 5e-12,
+        "adaptive MPS checkpoint continuation diverged from dense CPU"
+    );
+
+    bool rejected = false;
+    try {
+        static_cast<void>(qupy::statevector(program, "native-adaptive-mps"));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "adaptive MPS target did not reject statevector return");
+    require(std::filesystem::remove(artifact), "adaptive MPS policy fixture was not removed");
+}
+
 void test_parameter_binding_and_batches() {
     const double pi = std::acos(-1.0);
     qupy::Program templated(1);
@@ -1016,6 +1128,7 @@ int main() {
         test_results_and_planner();
         test_native_planner_cost_artifact();
         test_cuda_planner_cost_artifact();
+        test_adaptive_mps_planner_artifact();
         test_parameter_binding_and_batches();
         test_stabilizer_support_matches_dense_statevector();
         test_stabilizer_sampling_planner_and_execution();

@@ -132,6 +132,8 @@ public:
     [[nodiscard]] std::vector<std::string> cost_classes() const;
     [[nodiscard]] bool has_cost_class(const std::string& cost_class) const;
     [[nodiscard]] bool cuda_auto_validated() const noexcept;
+    [[nodiscard]] bool mps_auto_validated() const noexcept;
+    [[nodiscard]] std::uint32_t mps_policy_version() const noexcept;
     [[nodiscard]] double predict_ns(const ExecutionPlan& plan) const;
 
 private:
@@ -153,6 +155,10 @@ private:
     std::size_t cuda_decision_samples_ = 0U;
     std::size_t cuda_decision_mistakes_ = 0U;
     double cuda_decision_max_regret_ = 0.0;
+    std::uint32_t mps_policy_version_ = 0U;
+    std::size_t mps_decision_samples_ = 0U;
+    std::size_t mps_decision_mistakes_ = 0U;
+    double mps_decision_max_regret_ = 0.0;
     std::vector<Curve> curves_;
 };
 
@@ -220,6 +226,7 @@ struct Variance {
 [[nodiscard]] std::string cuda_device_name();
 [[nodiscard]] Target cuda_target();
 [[nodiscard]] Target mps_target();
+[[nodiscard]] Target adaptive_mps_target();
 [[nodiscard]] std::string planner_host_fingerprint();
 [[nodiscard]] std::string planner_cuda_host_fingerprint();
 [[nodiscard]] PlannerCostModel load_planner_cost_model(const std::string& path);
@@ -281,7 +288,8 @@ struct Variance {
 [[nodiscard]] Expectation expectation(
     const Program& program,
     PauliZ observable,
-    const std::string& backend = "auto"
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
 );
 [[nodiscard]] ExpectationBatch expectation_batch(
     const Program& program,
@@ -294,7 +302,8 @@ struct Variance {
 [[nodiscard]] Variance variance(
     const Program& program,
     PauliZ observable,
-    const std::string& backend = "auto"
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
 );
 
 [[nodiscard]] const char* core_language() noexcept;

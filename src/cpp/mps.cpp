@@ -265,11 +265,26 @@ struct SiteTensor {
     }
 };
 
+class MpsBondLimitExceeded final : public std::exception {
+public:
+    explicit MpsBondLimitExceeded(std::size_t rank) : rank_(rank) {}
+    [[nodiscard]] const char* what() const noexcept override { return "MPS bond limit exceeded"; }
+    [[nodiscard]] std::size_t rank() const noexcept { return rank_; }
+private:
+    std::size_t rank_;
+};
+
 class MpsState {
 public:
-    explicit MpsState(std::size_t num_qubits) : sites_(num_qubits, SiteTensor(1U, 1U)) {
+    explicit MpsState(
+        std::size_t num_qubits,
+        std::optional<std::size_t> bond_limit = std::nullopt
+    ) : sites_(num_qubits, SiteTensor(1U, 1U)), bond_limit_(bond_limit) {
         if (num_qubits == 0U) {
             throw std::invalid_argument("MPS execution requires at least one qubit");
+        }
+        if (bond_limit_.has_value() && *bond_limit_ == 0U) {
+            throw std::invalid_argument("MPS bond limit must be at least one");
         }
         for (SiteTensor& site : sites_) {
             site.at(0U, 0U, 0U) = Complex{1.0, 0.0};
@@ -309,32 +324,43 @@ public:
         if (sites_.size() >= std::numeric_limits<std::size_t>::digits) {
             throw std::length_error("MPS state vector exceeds native address space");
         }
-        const std::size_t dimension = std::size_t{1} << sites_.size();
-        std::vector<Complex> result(dimension);
         std::vector<Complex> current(1U, Complex{1.0, 0.0});
         std::vector<Complex> next;
-        for (std::size_t basis = 0U; basis < dimension; ++basis) {
-            current.assign(1U, Complex{1.0, 0.0});
-            for (std::size_t qubit = 0U; qubit < sites_.size(); ++qubit) {
-                const SiteTensor& site = sites_[qubit];
-                if (current.size() != site.left) {
-                    throw std::logic_error("MPS bond dimensions are inconsistent");
-                }
-                next.assign(site.right, Complex{0.0, 0.0});
-                const std::size_t physical = (basis >> qubit) & std::size_t{1};
+        std::size_t amplitudes = 1U;
+        std::size_t current_bond = 1U;
+        for (std::size_t qubit = 0U; qubit < sites_.size(); ++qubit) {
+            const SiteTensor& site = sites_[qubit];
+            if (site.left != current_bond) {
+                throw std::logic_error("MPS bond dimensions are inconsistent");
+            }
+            const std::size_t next_amplitudes = checked_product(
+                amplitudes, 2U, "MPS state vector exceeds native address space"
+            );
+            const std::size_t next_values = checked_product(
+                next_amplitudes, site.right, "MPS state vector exceeds native address space"
+            );
+            next.assign(next_values, Complex{0.0, 0.0});
+            for (std::size_t basis = 0U; basis < amplitudes; ++basis) {
                 for (std::size_t left = 0U; left < site.left; ++left) {
-                    for (std::size_t right = 0U; right < site.right; ++right) {
-                        next[right] += current[left] * site.at(left, physical, right);
+                    const Complex coefficient = current[basis * site.left + left];
+                    for (std::size_t physical = 0U; physical < 2U; ++physical) {
+                        const std::size_t next_basis = basis + physical * amplitudes;
+                        const std::size_t base = next_basis * site.right;
+                        for (std::size_t right = 0U; right < site.right; ++right) {
+                            next[base + right] +=
+                                coefficient * site.at(left, physical, right);
+                        }
                     }
                 }
-                current.swap(next);
             }
-            if (current.size() != 1U) {
-                throw std::logic_error("MPS terminal bond is not one-dimensional");
-            }
-            result[basis] = current.front();
+            current.swap(next);
+            amplitudes = next_amplitudes;
+            current_bond = site.right;
         }
-        return result;
+        if (current_bond != 1U || current.size() != amplitudes) {
+            throw std::logic_error("MPS final bond dimension is inconsistent");
+        }
+        return current;
     }
 
     [[nodiscard]] std::size_t state_bytes() const noexcept { return state_bytes_; }
@@ -436,6 +462,9 @@ private:
 
         SvdResult svd = jacobi_svd(transformed);
         const std::size_t rank = svd.singular_values.size();
+        if (bond_limit_.has_value() && rank > *bond_limit_) {
+            throw MpsBondLimitExceeded(rank);
+        }
         SiteTensor next_left(outer_left, rank);
         SiteTensor next_right(rank, outer_right);
         for (std::size_t l = 0U; l < outer_left; ++l) {
@@ -514,6 +543,7 @@ private:
     }
 
     std::vector<SiteTensor> sites_;
+    std::optional<std::size_t> bond_limit_;
     std::size_t state_bytes_ = 0U;
     std::size_t max_bond_ = 1U;
     double discarded_weight_ = 0.0;
@@ -615,9 +645,10 @@ void estimate_two_qubit(
 
 [[nodiscard]] MpsState execute_mps(
     std::size_t num_qubits,
-    const std::vector<MpsStep>& steps
+    const std::vector<MpsStep>& steps,
+    std::optional<std::size_t> bond_limit = std::nullopt
 ) {
-    MpsState state(num_qubits);
+    MpsState state(num_qubits, bond_limit);
     for (const MpsStep& step : steps) {
         state.apply(step);
     }
@@ -683,6 +714,39 @@ MpsExpectationResult mps_pauli_z_expectation(
         state.max_bond(),
         state.discarded_weight(),
     };
+}
+
+MpsBoundedExpectationResult mps_pauli_z_expectation_bounded(
+    std::size_t num_qubits,
+    const std::vector<MpsStep>& steps,
+    std::size_t observable_qubit,
+    std::size_t max_bond
+) {
+    try {
+        MpsState state = execute_mps(num_qubits, steps, max_bond);
+        return {true, state.expectation_z(observable_qubit), state.max_bond(), 0U};
+    } catch (const MpsBondLimitExceeded& error) {
+        return {false, 0.0, max_bond, error.rank()};
+    }
+}
+
+MpsCheckpointExpectationResult mps_pauli_z_expectation_checkpointed(
+    std::size_t num_qubits,
+    const std::vector<MpsStep>& steps,
+    std::size_t observable_qubit,
+    std::size_t max_bond
+) {
+    if (max_bond == 0U) {
+        throw std::invalid_argument("MPS checkpoint bond limit must be at least one");
+    }
+    MpsState state(num_qubits);
+    for (std::size_t index = 0U; index < steps.size(); ++index) {
+        state.apply(steps[index]);
+        if (state.max_bond() > max_bond) {
+            return {false, 0.0, state.statevector(), index + 1U, state.max_bond()};
+        }
+    }
+    return {true, state.expectation_z(observable_qubit), {}, steps.size(), state.max_bond()};
 }
 
 }  // namespace qupy::detail
