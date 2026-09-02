@@ -11,7 +11,7 @@ option(QUPY_BUILD_TESTS "Build native C++ tests" OFF)
 option(QUPY_WARNINGS_AS_ERRORS "Treat native compiler warnings as errors" OFF)
 option(QUPY_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
-add_library(qupy_core STATIC src/cpp/core.cpp src/cpp/stabilizer.cpp)
+add_library(qupy_core STATIC src/cpp/core.cpp src/cpp/cuda_driver.cpp src/cpp/stabilizer.cpp)
 target_compile_features(qupy_core PUBLIC cxx_std_20)
 target_include_directories(
     qupy_core
@@ -19,6 +19,7 @@ target_include_directories(
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 set_target_properties(qupy_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(qupy_core PRIVATE ${CMAKE_DL_LIBS})
 
 if(MSVC)
     target_compile_options(qupy_core PRIVATE /W4 /permissive-)
@@ -32,6 +33,7 @@ else()
     endif()
     if(QUPY_ENABLE_SANITIZERS)
         target_compile_options(qupy_core PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_compile_definitions(qupy_core PUBLIC QUPY_SANITIZER_BUILD=1)
     endif()
 endif()
 

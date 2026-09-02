@@ -1,5 +1,6 @@
 #include "qupy/core.hpp"
 
+#include "cuda_driver.hpp"
 #include "stabilizer.hpp"
 
 #include <algorithm>
@@ -792,10 +793,20 @@ void materialize_parameterized_steps(
     }
     return indices;
 }
+[[nodiscard]] bool is_cuda_backend(const std::string& backend) {
+    return backend == "cuda" || backend == "native-cuda";
+}
+
 void validate_backend(const std::string& backend) {
-    if (backend != "auto" && backend != "native" && backend != "native-cpu") {
+    if (backend != "auto" && backend != "native" && backend != "native-cpu" &&
+        !is_cuda_backend(backend)) {
         throw std::invalid_argument("unknown backend: " + backend);
     }
+}
+
+[[nodiscard]] bool cost_model_supports_method(std::string_view method) {
+    return method == "pauli-propagation" || method == "statevector" ||
+           method == "statevector-lightcone";
 }
 
 [[nodiscard]] std::string plan_cost_class(const ExecutionPlan& plan) {
@@ -834,7 +845,8 @@ void validate_backend(const std::string& backend) {
     bool collect_workload_fingerprint,
     const PlannerCostModel* cost_model
 ) {
-    const WorkloadFeatures features = (collect_workload_fingerprint || cost_model != nullptr)
+    const bool use_cost_model = cost_model != nullptr && cost_model_supports_method(method);
+    const WorkloadFeatures features = (collect_workload_fingerprint || use_cost_model)
         ? workload_features(source_program, result_mode, active_qubits, workload_operations)
         : WorkloadFeatures{workload_operations.size(), 0U, 0U, 0U, 0U, {}};
     const std::string program_fingerprint = source_program.fingerprint();
@@ -849,7 +861,8 @@ void validate_backend(const std::string& backend) {
 
     ExecutionPlan execution_plan{
         target.name, method, true,
-        method == "stabilizer" ? 1U : planned_threads(estimated_state_bytes),
+        (method == "stabilizer" || method == "cuda-statevector")
+            ? 1U : planned_threads(estimated_state_bytes),
         source_program.num_qubits(), original_operations, active_qubits,
         features.active_operations, features.single_qubit_operations,
         features.two_qubit_operations, features.parameterized_operations,
@@ -857,7 +870,7 @@ void validate_backend(const std::string& backend) {
         result_mode, kWorkloadVersion, features.fingerprint, program_fingerprint,
         target_fingerprint, cache_key.str(), std::nullopt, {}, {}, {},
     };
-    if (cost_model != nullptr && method != "stabilizer") {
+    if (use_cost_model) {
         execution_plan.predicted_ns = cost_model->predict_ns(execution_plan);
         execution_plan.cost_model_class = plan_cost_class(execution_plan);
         execution_plan.cost_model_fingerprint = cost_model->artifact_fingerprint();
@@ -1117,8 +1130,18 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     const PlannerCostModel* cost_model = nullptr
 ) {
     validate_backend(backend);
-    const Target target = native_target();
+    const bool cuda_backend = is_cuda_backend(backend);
+    const Target target = cuda_backend ? cuda_target() : native_target();
     target.validate(program, result_mode);
+    if (cuda_backend) {
+        std::vector<CompiledStep> steps = compile_program(program);
+        ExecutionPlan execution_plan = make_plan(
+            program, target, result_mode, program.operations().size(), program.operations(),
+            steps.size(), program.num_qubits(), state_memory_bytes(program.num_qubits()),
+            "cuda-statevector", {}, collect_workload_fingerprint, cost_model
+        );
+        return {std::move(execution_plan), std::move(steps)};
+    }
     if (
         result_mode == ResultMode::Sample &&
         program.num_qubits() >= kStabilizerSamplingMinQubits &&
@@ -1237,7 +1260,7 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         throw std::invalid_argument("observable plan requires expectation or variance mode");
     }
     validate_backend(backend);
-    const Target target = native_target();
+    const Target target = is_cuda_backend(backend) ? cuda_target() : native_target();
     target.validate(program, result_mode);
 
     ReducedExpectation reduced = reduce_expectation(program, observable);
@@ -1323,6 +1346,24 @@ void evolve_statevector(
             break;
         }
     }
+}
+
+[[nodiscard]] std::vector<detail::CudaStep> cuda_steps(
+    const std::vector<CompiledStep>& steps
+) {
+    std::vector<detail::CudaStep> result;
+    result.reserve(steps.size());
+    for (const CompiledStep& step : steps) {
+        detail::CudaStepKind kind = detail::CudaStepKind::Single;
+        switch (step.kind) {
+        case CompiledKind::Single: kind = detail::CudaStepKind::Single; break;
+        case CompiledKind::CX: kind = detail::CudaStepKind::CX; break;
+        case CompiledKind::CZ: kind = detail::CudaStepKind::CZ; break;
+        case CompiledKind::SWAP: kind = detail::CudaStepKind::SWAP; break;
+        }
+        result.push_back({kind, step.matrix, step.first, step.second});
+    }
+    return result;
 }
 
 [[nodiscard]] StateVector run_statevector(
@@ -1828,6 +1869,25 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     return model;
 }
 
+
+bool cuda_available() noexcept { return detail::cuda_available(); }
+std::string cuda_unavailable_reason() { return detail::cuda_unavailable_reason(); }
+std::string cuda_device_name() { return detail::cuda_device_name(); }
+
+Target cuda_target() {
+    if (!detail::cuda_available()) {
+        throw std::runtime_error(detail::cuda_unavailable_reason());
+    }
+    std::size_t max_qubits = 0U;
+    std::size_t bytes = sizeof(Complex);
+    const std::size_t memory = detail::cuda_total_memory_bytes();
+    while (bytes <= memory / 2U) { bytes *= 2U; ++max_qubits; }
+    return {"native-cuda", {OperationCode::H, OperationCode::X, OperationCode::Y, OperationCode::Z,
+        OperationCode::RX, OperationCode::RY, OperationCode::RZ, OperationCode::CX,
+        OperationCode::CZ, OperationCode::SWAP}, {ResultMode::StateVector}, max_qubits,
+        true, true, false, false, false, false};
+}
+
 Target native_target() {
     return {
         "native-cpu",
@@ -1942,6 +2002,12 @@ PauliZ pauli_z(std::size_t qubit) {
 
 StateVector statevector(const Program& program, const std::string& backend) {
     PreparedProgram prepared = prepare_program(program, ResultMode::StateVector, backend);
+    if (prepared.execution_plan.method == "cuda-statevector") {
+        return {
+            detail::cuda_statevector(program.num_qubits(), cuda_steps(prepared.steps)),
+            prepared.execution_plan.backend,
+        };
+    }
     return run_statevector(program.num_qubits(), prepared.steps, prepared.execution_plan);
 }
 
