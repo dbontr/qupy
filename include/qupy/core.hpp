@@ -116,6 +116,9 @@ struct ExecutionPlan {
     std::string cost_model_fingerprint;
     std::string cost_model_host_fingerprint;
     std::string cost_model_cuda_host_fingerprint;
+    std::size_t tensor_network_max_bond = 0U;
+    std::size_t tensor_network_routed_swaps = 0U;
+    double tensor_network_contraction_work = 0.0;
 };
 
 class PlannerCostModel {
@@ -216,6 +219,7 @@ struct Variance {
 [[nodiscard]] std::string cuda_unavailable_reason();
 [[nodiscard]] std::string cuda_device_name();
 [[nodiscard]] Target cuda_target();
+[[nodiscard]] Target mps_target();
 [[nodiscard]] std::string planner_host_fingerprint();
 [[nodiscard]] std::string planner_cuda_host_fingerprint();
 [[nodiscard]] PlannerCostModel load_planner_cost_model(const std::string& path);

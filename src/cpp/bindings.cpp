@@ -207,7 +207,13 @@ NB_MODULE(_native, module) {
         .def_ro("cost_model_class", &qupy::ExecutionPlan::cost_model_class)
         .def_ro("cost_model_fingerprint", &qupy::ExecutionPlan::cost_model_fingerprint)
         .def_ro("cost_model_host_fingerprint", &qupy::ExecutionPlan::cost_model_host_fingerprint)
-        .def_ro("cost_model_cuda_host_fingerprint", &qupy::ExecutionPlan::cost_model_cuda_host_fingerprint);
+        .def_ro("cost_model_cuda_host_fingerprint", &qupy::ExecutionPlan::cost_model_cuda_host_fingerprint)
+        .def_ro("tensor_network_max_bond", &qupy::ExecutionPlan::tensor_network_max_bond)
+        .def_ro("tensor_network_routed_swaps", &qupy::ExecutionPlan::tensor_network_routed_swaps)
+        .def_ro(
+            "tensor_network_contraction_work",
+            &qupy::ExecutionPlan::tensor_network_contraction_work
+        );
 
     nb::class_<qupy::StateVector>(module, "StateVector")
         .def_prop_ro("values", &state_values)
@@ -274,6 +280,7 @@ NB_MODULE(_native, module) {
     module.def("cuda_unavailable_reason", &qupy::cuda_unavailable_reason);
     module.def("cuda_device_name", &qupy::cuda_device_name);
     module.def("cuda_target", &qupy::cuda_target);
+    module.def("mps_target", &qupy::mps_target);
     module.def("planner_host_fingerprint", &qupy::planner_host_fingerprint);
     module.def("planner_cuda_host_fingerprint", &qupy::planner_cuda_host_fingerprint);
     module.def("load_planner_cost_model", &qupy::load_planner_cost_model, "path"_a);
