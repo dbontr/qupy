@@ -141,6 +141,26 @@ The CUDA target currently exposes exact state-vector results for the same H, X, 
 
 `backend="auto"` remains CPU-only when no planner cost model is supplied. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Schema-v2 promotion requires validated CPU and CUDA return-cost curves plus at least eight held-out backend decisions with no decision exceeding 10% runtime regret. Other result modes keep the established planner policy. Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
 
+### Exact MPS execution
+
+QuPy exposes an explicit `native-mps` target for exact Pauli-Z expectation, variance, and state-vector results. It reuses the native compiled gate sequence, represents the state as a one-dimensional matrix product state, routes nonadjacent two-qubit gates with reversible SWAPs, and refactors each two-site update with an SVD.
+
+The engine does not apply a user-visible bond cap or truncation tolerance. It removes only numerically null singular directions within a backward-error bound and fails instead of discarding larger state weight. A full state-vector request still requires exponential output storage; expectation and variance can remain compact when the circuit has limited entanglement.
+
+```python
+program = qp.ry(qp.Program(128), 0.371, 0)
+for qubit in range(127):
+    program = qp.cx(program, qubit, qubit + 1)
+
+plan = qp.expectation_plan(program, qp.Z(127), backend="native-mps")
+result = qp.expect(program, qp.Z(127), backend="native-mps")
+print(plan.tensor_network_max_bond)          # 2
+print(plan.tensor_network_routed_swaps)     # 0
+print(plan.tensor_network_contraction_work)
+```
+
+`ExecutionPlan` reports the structural MPS bond, routing, memory, and contraction-work estimates needed for measured planner calibration. `backend="auto"` does not select MPS yet. `python -m benchmarks.mps_cost` collects paired CPU/MPS exact expectation evidence across low-bond, routing-heavy, and locally entangled workload families for that promotion gate.
+
 ### Stabilizer sampling
 
 For sampling-only Clifford programs at 24 qubits or larger, the native planner selects `stabilizer`. The engine conjugates a bit-packed stabilizer tableau through H, X, Y, Z, CX, CZ, and SWAP gates, reduces its computational-basis support to an affine GF(2) subspace, and samples that support without allocating a dense state vector. RX, RY, and RZ currently remain on the state-vector path even when a particular angle could represent a Clifford operation.
@@ -235,7 +255,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped predicted-runtime evidence with explicit provenance. Schema-v2 evidence can select CPU or CUDA for exact state-vector return when explicitly supplied; tensor-network execution, noise, richer observables, and physical-QPU targets remain gated on their own conformance and planner evidence.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. The explicit MPS target provides exact tensor-network expectation, variance, and state-vector execution with inspectable bond, routing, and contraction-cost features. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped predicted-runtime evidence with explicit provenance. Schema-v2 evidence can select CPU or CUDA for exact state-vector return when explicitly supplied; automatic MPS selection, noise, richer observables, and physical-QPU targets remain gated on their own conformance and planner evidence.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

@@ -146,6 +146,13 @@ jobs:
           --iterations 1
           --require-engines
           --output build/benchmark-smoke.json
+      - name: Run MPS benchmark smoke
+        run: >-
+          uv run --no-sync python -m benchmarks.mps_cost
+          --profile smoke
+          --warmups 0
+          --iterations 1
+          --output build/mps-smoke.json
       - name: Validate benchmark report
         run: >-
           uv run --no-sync python -c

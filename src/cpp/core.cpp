@@ -1,6 +1,7 @@
 #include "qupy/core.hpp"
 
 #include "cuda_driver.hpp"
+#include "mps.hpp"
 #include "stabilizer.hpp"
 
 #include <algorithm>
@@ -597,6 +598,10 @@ template <typename ParameterResolver>
     return compile_operations(program.num_qubits(), program.operations());
 }
 
+[[nodiscard]] std::vector<detail::MpsStep> mps_steps(
+    const std::vector<CompiledStep>& steps
+);
+
 struct PreparedProgram {
     ExecutionPlan execution_plan;
     std::vector<CompiledStep> steps;
@@ -799,9 +804,13 @@ void materialize_parameterized_steps(
     return backend == "cuda" || backend == "native-cuda";
 }
 
+[[nodiscard]] bool is_mps_backend(const std::string& backend) {
+    return backend == "mps" || backend == "native-mps";
+}
+
 void validate_backend(const std::string& backend) {
     if (backend != "auto" && backend != "native" && backend != "native-cpu" &&
-        !is_cuda_backend(backend)) {
+        !is_cuda_backend(backend) && !is_mps_backend(backend)) {
         throw std::invalid_argument("unknown backend: " + backend);
     }
 }
@@ -885,7 +894,8 @@ void validate_backend(const std::string& backend) {
 
     ExecutionPlan execution_plan{
         target.name, method, true,
-        (method == "stabilizer" || method == "cuda-statevector")
+        (method == "stabilizer" || method == "cuda-statevector" ||
+         method == "mps" || method == "mps-lightcone" || method == "mps-statevector")
             ? 1U : planned_threads(estimated_state_bytes),
         source_program.num_qubits(), original_operations, active_qubits,
         features.active_operations, features.single_qubit_operations,
@@ -1186,8 +1196,32 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         return {std::move(cpu_plan), std::move(steps)};
     }
     const bool cuda_backend = is_cuda_backend(backend);
-    const Target target = cuda_backend ? cuda_target() : native_target();
+    const bool mps_backend = is_mps_backend(backend);
+    const Target target = cuda_backend ? cuda_target() : (mps_backend ? mps_target() : native_target());
     target.validate(program, result_mode);
+    if (mps_backend) {
+        std::vector<CompiledStep> steps = compile_program(program);
+        const detail::MpsEstimate estimate = detail::mps_estimate(
+            program.num_qubits(), mps_steps(steps)
+        );
+        std::size_t estimated_state_bytes = estimate.state_bytes;
+        if (result_mode == ResultMode::StateVector) {
+            const std::size_t output_bytes = state_memory_bytes(program.num_qubits());
+            if (estimated_state_bytes > std::numeric_limits<std::size_t>::max() - output_bytes) {
+                throw std::length_error("MPS state-vector result exceeds native address space");
+            }
+            estimated_state_bytes += output_bytes;
+        }
+        ExecutionPlan execution_plan = make_plan(
+            program, target, result_mode, program.operations().size(), program.operations(),
+            steps.size(), program.num_qubits(), estimated_state_bytes,
+            "mps-statevector", {}, collect_workload_fingerprint, cost_model
+        );
+        execution_plan.tensor_network_max_bond = estimate.max_bond;
+        execution_plan.tensor_network_routed_swaps = estimate.routed_swaps;
+        execution_plan.tensor_network_contraction_work = estimate.contraction_work;
+        return {std::move(execution_plan), std::move(steps)};
+    }
     if (cuda_backend) {
         std::vector<CompiledStep> steps = compile_program(program);
         ExecutionPlan execution_plan = make_plan(
@@ -1315,7 +1349,9 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         throw std::invalid_argument("observable plan requires expectation or variance mode");
     }
     validate_backend(backend);
-    const Target target = is_cuda_backend(backend) ? cuda_target() : native_target();
+    const bool mps_backend = is_mps_backend(backend);
+    const Target target = is_cuda_backend(backend)
+        ? cuda_target() : (mps_backend ? mps_target() : native_target());
     target.validate(program, result_mode);
 
     ReducedExpectation reduced = reduce_expectation(program, observable);
@@ -1325,16 +1361,25 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     std::string method;
     std::size_t compiled_steps = 0U;
     std::size_t estimated_state_bytes = 0U;
+    detail::MpsEstimate tensor_estimate{0U, 0U, 0U, 0.0};
     if (pauli_propagation) {
         method = "pauli-propagation";
         compiled_steps = reduced.operations.size();
     } else {
         steps = compile_operations(reduced.active_qubits, reduced.operations);
-        method = reduced.active_qubits < program.num_qubits()
-            ? "statevector-lightcone"
-            : "statevector";
+        if (mps_backend) {
+            tensor_estimate = detail::mps_estimate(
+                reduced.active_qubits, mps_steps(steps)
+            );
+            method = reduced.active_qubits < program.num_qubits() ? "mps-lightcone" : "mps";
+            estimated_state_bytes = tensor_estimate.state_bytes;
+        } else {
+            method = reduced.active_qubits < program.num_qubits()
+                ? "statevector-lightcone"
+                : "statevector";
+            estimated_state_bytes = state_memory_bytes(reduced.active_qubits);
+        }
         compiled_steps = steps.size();
-        estimated_state_bytes = state_memory_bytes(reduced.active_qubits);
     }
 
     const std::string qualifier = "z:" + std::to_string(observable.qubit);
@@ -1352,6 +1397,11 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         collect_workload_fingerprint,
         cost_model
     );
+    if (mps_backend && !pauli_propagation) {
+        execution_plan.tensor_network_max_bond = tensor_estimate.max_bond;
+        execution_plan.tensor_network_routed_swaps = tensor_estimate.routed_swaps;
+        execution_plan.tensor_network_contraction_work = tensor_estimate.contraction_work;
+    }
     if (pauli_propagation) {
         pauli_operations = std::move(reduced.operations);
     }
@@ -1415,6 +1465,24 @@ void evolve_statevector(
         case CompiledKind::CX: kind = detail::CudaStepKind::CX; break;
         case CompiledKind::CZ: kind = detail::CudaStepKind::CZ; break;
         case CompiledKind::SWAP: kind = detail::CudaStepKind::SWAP; break;
+        }
+        result.push_back({kind, step.matrix, step.first, step.second});
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<detail::MpsStep> mps_steps(
+    const std::vector<CompiledStep>& steps
+) {
+    std::vector<detail::MpsStep> result;
+    result.reserve(steps.size());
+    for (const CompiledStep& step : steps) {
+        detail::MpsStepKind kind = detail::MpsStepKind::Single;
+        switch (step.kind) {
+        case CompiledKind::Single: kind = detail::MpsStepKind::Single; break;
+        case CompiledKind::CX: kind = detail::MpsStepKind::CX; break;
+        case CompiledKind::CZ: kind = detail::MpsStepKind::CZ; break;
+        case CompiledKind::SWAP: kind = detail::MpsStepKind::SWAP; break;
         }
         result.push_back({kind, step.matrix, step.first, step.second});
     }
@@ -2028,6 +2096,25 @@ Target cuda_target() {
         true, true, false, false, false, false};
 }
 
+Target mps_target() {
+    return {
+        "native-mps",
+        {
+            OperationCode::H, OperationCode::X, OperationCode::Y, OperationCode::Z,
+            OperationCode::RX, OperationCode::RY, OperationCode::RZ, OperationCode::CX,
+            OperationCode::CZ, OperationCode::SWAP,
+        },
+        {ResultMode::Expectation, ResultMode::Variance, ResultMode::StateVector},
+        std::nullopt,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+    };
+}
+
 Target native_target() {
     return {
         "native-cpu",
@@ -2154,6 +2241,12 @@ StateVector statevector(
             prepared.execution_plan.backend,
         };
     }
+    if (prepared.execution_plan.method == "mps-statevector") {
+        detail::MpsStateResult result = detail::mps_statevector(
+            program.num_qubits(), mps_steps(prepared.steps)
+        );
+        return {std::move(result.values), prepared.execution_plan.backend};
+    }
     return run_statevector(program.num_qubits(), prepared.steps, prepared.execution_plan);
 }
 
@@ -2217,7 +2310,8 @@ SamplesBatch sample_batch(
         throw std::invalid_argument("shots must be at least 1");
     }
     validate_backend(backend);
-    const Target target = native_target();
+    const Target target = is_cuda_backend(backend)
+        ? cuda_target() : (is_mps_backend(backend) ? mps_target() : native_target());
     target.validate(program, ResultMode::Sample);
     if (!target.parameter_batches) {
         throw std::invalid_argument("target does not support parameter batches");
@@ -2309,6 +2403,15 @@ Expectation expectation(
             prepared.pauli_operations,
             prepared.observable_qubit
         );
+    } else if (
+        prepared.execution_plan.method == "mps" ||
+        prepared.execution_plan.method == "mps-lightcone"
+    ) {
+        value = detail::mps_pauli_z_expectation(
+            prepared.execution_plan.active_qubits,
+            mps_steps(prepared.steps),
+            prepared.observable_qubit
+        ).value;
     } else {
         const std::vector<Complex>& state = run_statevector_workspace(
             prepared.execution_plan.active_qubits, prepared.steps
@@ -2334,7 +2437,8 @@ ExpectationBatch expectation_batch(
     const std::string& backend
 ) {
     validate_backend(backend);
-    const Target target = native_target();
+    const Target target = is_cuda_backend(backend)
+        ? cuda_target() : (is_mps_backend(backend) ? mps_target() : native_target());
     target.validate(program, ResultMode::Expectation);
     if (!target.parameter_batches) {
         throw std::invalid_argument("target does not support parameter batches");
@@ -2404,6 +2508,15 @@ Variance variance(
             prepared.pauli_operations,
             prepared.observable_qubit
         );
+    } else if (
+        prepared.execution_plan.method == "mps" ||
+        prepared.execution_plan.method == "mps-lightcone"
+    ) {
+        expectation_value = detail::mps_pauli_z_expectation(
+            prepared.execution_plan.active_qubits,
+            mps_steps(prepared.steps),
+            prepared.observable_qubit
+        ).value;
     } else {
         const std::vector<Complex>& state = run_statevector_workspace(
             prepared.execution_plan.active_qubits, prepared.steps

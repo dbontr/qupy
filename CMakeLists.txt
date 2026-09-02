@@ -11,7 +11,7 @@ option(QUPY_BUILD_TESTS "Build native C++ tests" OFF)
 option(QUPY_WARNINGS_AS_ERRORS "Treat native compiler warnings as errors" OFF)
 option(QUPY_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
-add_library(qupy_core STATIC src/cpp/core.cpp src/cpp/cuda_driver.cpp src/cpp/stabilizer.cpp)
+add_library(qupy_core STATIC src/cpp/core.cpp src/cpp/cuda_driver.cpp src/cpp/mps.cpp src/cpp/stabilizer.cpp)
 target_compile_features(qupy_core PUBLIC cxx_std_20)
 target_include_directories(
     qupy_core

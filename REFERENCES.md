@@ -16,6 +16,11 @@
 ## Program identity
 - [FIPS 180-4 Secure Hash Standard](https://doi.org/10.6028/NIST.FIPS.180-4) — NIST. Used for: portable SHA-256 program and target fingerprints for execution-plan cache identity.
 
+## Tensor-network and MPS execution
+- [Efficient Classical Simulation of Slightly Entangled Quantum Computations](https://doi.org/10.1103/PhysRevLett.91.147902) — Guifre Vidal, Physical Review Letters 91, 147902 (2003). Used for: exact MPS simulation scaling with restricted entanglement and bond-dimension structure.
+- [The density-matrix renormalization group in the age of matrix product states](https://doi.org/10.1016/j.aop.2010.09.012) — Ulrich Schollwock, Annals of Physics 326 (2011). Used for: MPS canonical forms, local tensor updates, and SVD-based bond factorization.
+- [cuTensorNet overview](https://docs.nvidia.com/cuda/cuquantum/latest/cutensornet/overview.html) — NVIDIA cuQuantum. Used for: gate-split tensor-network execution and MPS contraction/decomposition architecture comparison.
+
 ## Stabilizer and Pauli methods
 - [Improved Simulation of Stabilizer Circuits](https://doi.org/10.1103/PhysRevA.70.052328) — Scott Aaronson and Daniel Gottesman, Physical Review A 70, 052328 (2004), arXiv:quant-ph/0406196. Used for: Clifford tableau conjugation, stabilizer-state simulation principles, and exact backward Pauli propagation.
 

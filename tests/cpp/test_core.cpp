@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -857,6 +858,125 @@ void test_cuda_statevector_backend() {
     require(rejected, "CUDA backend silently accepted unsupported sampling");
 }
 
+void test_mps_backend() {
+    qupy::Program program(3U);
+    program = qupy::h(program, 0U);
+    program = qupy::ry(program, 0.37, 1U);
+    program = qupy::cx(program, 0U, 2U);
+    program = qupy::cz(program, 1U, 2U);
+    program = qupy::swap(program, 0U, 1U);
+
+    const qupy::Target target = qupy::mps_target();
+    require(target.name == "native-mps", "MPS target name is wrong");
+    require(target.supports(qupy::ResultMode::StateVector), "MPS target lacks state-vector support");
+    require(target.supports(qupy::ResultMode::Expectation), "MPS target lacks expectation support");
+    require(target.supports(qupy::ResultMode::Variance), "MPS target lacks variance support");
+    require(!target.supports(qupy::ResultMode::Sample), "MPS target unexpectedly supports sampling");
+
+    const auto plan = qupy::plan(program, qupy::ResultMode::StateVector, "native-mps");
+    require(plan.backend == "native-mps", "MPS plan backend is wrong");
+    require(plan.method == "mps-statevector", "MPS plan method is wrong");
+    require(plan.threads == 1U, "MPS plan reported worker threads");
+    require(plan.tensor_network_max_bond >= 2U, "MPS plan bond estimate is missing");
+    require(plan.tensor_network_routed_swaps >= 2U, "MPS plan routing estimate is missing");
+    require(plan.tensor_network_contraction_work > 0.0, "MPS contraction estimate is missing");
+
+    const auto cpu = qupy::statevector(program, "native-cpu");
+    const auto mps = qupy::statevector(program, "native-mps");
+    require(cpu.values.size() == mps.values.size(), "MPS state dimension is wrong");
+    for (std::size_t index = 0U; index < cpu.values.size(); ++index) {
+        require_close(mps.values[index], cpu.values[index], "MPS statevector diverged from CPU");
+    }
+
+    const auto cpu_expectation = qupy::expectation(program, qupy::pauli_z(2U), "native-cpu");
+    const auto mps_expectation = qupy::expectation(program, qupy::pauli_z(2U), "native-mps");
+    require(
+        std::abs(cpu_expectation.value - mps_expectation.value) <= kTolerance,
+        "MPS expectation diverged from CPU"
+    );
+    const auto cpu_variance = qupy::variance(program, qupy::pauli_z(2U), "native-cpu");
+    const auto mps_variance = qupy::variance(program, qupy::pauli_z(2U), "native-mps");
+    require(
+        std::abs(cpu_variance.value - mps_variance.value) <= kTolerance,
+        "MPS variance diverged from CPU"
+    );
+
+    const auto automatic = qupy::plan(program, qupy::ResultMode::StateVector);
+    require(automatic.backend != "native-mps", "default planner selected uncalibrated MPS execution");
+
+    bool rejected = false;
+    try {
+        static_cast<void>(qupy::sample(program, 8U, 7U, "native-mps"));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "MPS backend silently accepted unsupported sampling");
+}
+
+void test_mps_randomized_conformance() {
+    std::mt19937_64 generator(0x51A7E5ULL);
+    std::uniform_real_distribution<double> angle(-3.0, 3.0);
+    constexpr double tolerance = 5e-10;
+    for (std::size_t trial = 0U; trial < 48U; ++trial) {
+        const std::size_t qubits = 1U + static_cast<std::size_t>(generator() % 7U);
+        qupy::Program program(qubits);
+        const std::size_t gates = 16U + static_cast<std::size_t>(generator() % 25U);
+        for (std::size_t gate = 0U; gate < gates; ++gate) {
+            const std::size_t first = static_cast<std::size_t>(generator() % qubits);
+            const std::size_t kind = static_cast<std::size_t>(
+                generator() % (qubits > 1U ? 10U : 7U)
+            );
+            switch (kind) {
+            case 0U: program = qupy::h(program, first); break;
+            case 1U: program = qupy::x(program, first); break;
+            case 2U: program = qupy::y(program, first); break;
+            case 3U: program = qupy::z(program, first); break;
+            case 4U: program = qupy::rx(program, angle(generator), first); break;
+            case 5U: program = qupy::ry(program, angle(generator), first); break;
+            case 6U: program = qupy::rz(program, angle(generator), first); break;
+            default: {
+                std::size_t second = static_cast<std::size_t>(generator() % (qubits - 1U));
+                if (second >= first) {
+                    ++second;
+                }
+                if (kind == 7U) {
+                    program = qupy::cx(program, first, second);
+                } else if (kind == 8U) {
+                    program = qupy::cz(program, first, second);
+                } else {
+                    program = qupy::swap(program, first, second);
+                }
+                break;
+            }
+            }
+        }
+
+        const qupy::StateVector cpu = qupy::statevector(program, "native-cpu");
+        const qupy::StateVector mps = qupy::statevector(program, "native-mps");
+        require(cpu.values.size() == mps.values.size(), "MPS randomized state dimension is wrong");
+        for (std::size_t index = 0U; index < cpu.values.size(); ++index) {
+            require(
+                std::abs(cpu.values[index] - mps.values[index]) <= tolerance,
+                "MPS randomized statevector diverged from CPU"
+            );
+        }
+        const std::size_t observable = static_cast<std::size_t>(generator() % qubits);
+        const qupy::PauliZ z = qupy::pauli_z(observable);
+        const qupy::Expectation cpu_expectation = qupy::expectation(program, z, "native-cpu");
+        const qupy::Expectation mps_expectation = qupy::expectation(program, z, "native-mps");
+        require(
+            std::abs(cpu_expectation.value - mps_expectation.value) <= tolerance,
+            "MPS randomized expectation diverged from CPU"
+        );
+        const qupy::Variance cpu_variance = qupy::variance(program, z, "native-cpu");
+        const qupy::Variance mps_variance = qupy::variance(program, z, "native-mps");
+        require(
+            std::abs(cpu_variance.value - mps_variance.value) <= tolerance,
+            "MPS randomized variance diverged from CPU"
+        );
+    }
+}
+
 void test_validation() {
     bool rejected = false;
     try {
@@ -908,6 +1028,8 @@ int main() {
         test_large_clifford_cone_avoids_statevector_allocation();
         test_probabilities_and_variance();
         test_cuda_statevector_backend();
+        test_mps_backend();
+        test_mps_randomized_conformance();
         test_validation();
         std::cout << "QuPy native core tests: PASS\n";
         return 0;
