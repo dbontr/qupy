@@ -43,6 +43,21 @@ struct MpsExpectationResult {
     double discarded_weight;
 };
 
+struct MpsBoundedExpectationResult {
+    bool completed;
+    double value;
+    std::size_t max_bond;
+    std::size_t exceeded_bond;
+};
+
+struct MpsCheckpointExpectationResult {
+    bool completed;
+    double value;
+    std::vector<Complex> fallback_state;
+    std::size_t next_step;
+    std::size_t max_bond;
+};
+
 [[nodiscard]] MpsEstimate mps_estimate(
     std::size_t num_qubits,
     const std::vector<MpsStep>& steps
@@ -57,6 +72,20 @@ struct MpsExpectationResult {
     std::size_t num_qubits,
     const std::vector<MpsStep>& steps,
     std::size_t observable_qubit
+);
+
+[[nodiscard]] MpsBoundedExpectationResult mps_pauli_z_expectation_bounded(
+    std::size_t num_qubits,
+    const std::vector<MpsStep>& steps,
+    std::size_t observable_qubit,
+    std::size_t max_bond
+);
+
+[[nodiscard]] MpsCheckpointExpectationResult mps_pauli_z_expectation_checkpointed(
+    std::size_t num_qubits,
+    const std::vector<MpsStep>& steps,
+    std::size_t observable_qubit,
+    std::size_t max_bond
 );
 
 }  // namespace qupy::detail

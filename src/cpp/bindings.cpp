@@ -180,6 +180,8 @@ NB_MODULE(_native, module) {
         .def_prop_ro("artifact_fingerprint", &qupy::PlannerCostModel::artifact_fingerprint)
         .def_prop_ro("cost_classes", &qupy::PlannerCostModel::cost_classes)
         .def_prop_ro("cuda_auto_validated", &qupy::PlannerCostModel::cuda_auto_validated)
+        .def_prop_ro("mps_auto_validated", &qupy::PlannerCostModel::mps_auto_validated)
+        .def_prop_ro("mps_policy_version", &qupy::PlannerCostModel::mps_policy_version)
         .def("predict_ns", &qupy::PlannerCostModel::predict_ns, "plan"_a);
 
     nb::class_<qupy::ExecutionPlan>(module, "ExecutionPlan")
@@ -281,6 +283,7 @@ NB_MODULE(_native, module) {
     module.def("cuda_device_name", &qupy::cuda_device_name);
     module.def("cuda_target", &qupy::cuda_target);
     module.def("mps_target", &qupy::mps_target);
+    module.def("adaptive_mps_target", &qupy::adaptive_mps_target);
     module.def("planner_host_fingerprint", &qupy::planner_host_fingerprint);
     module.def("planner_cuda_host_fingerprint", &qupy::planner_cuda_host_fingerprint);
     module.def("load_planner_cost_model", &qupy::load_planner_cost_model, "path"_a);
@@ -368,11 +371,14 @@ NB_MODULE(_native, module) {
     );
     module.def(
         "expect",
-        &qupy::expectation,
-        "program"_a,
-        "observable"_a,
-        "backend"_a = "auto",
-        nb::call_guard<nb::gil_scoped_release>()
+        [](const qupy::Program& program, qupy::PauliZ observable,
+           const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            nb::gil_scoped_release release;
+            return qupy::expectation(program, observable, backend, model);
+        },
+        "program"_a, "observable"_a, "backend"_a = "auto", "cost_model"_a = nb::none()
     );
     module.def(
         "expect_batch",
@@ -400,11 +406,14 @@ NB_MODULE(_native, module) {
     );
     module.def(
         "variance",
-        &qupy::variance,
-        "program"_a,
-        "observable"_a,
-        "backend"_a = "auto",
-        nb::call_guard<nb::gil_scoped_release>()
+        [](const qupy::Program& program, qupy::PauliZ observable,
+           const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            nb::gil_scoped_release release;
+            return qupy::variance(program, observable, backend, model);
+        },
+        "program"_a, "observable"_a, "backend"_a = "auto", "cost_model"_a = nb::none()
     );
 
     module.def("core_language", &qupy::core_language);

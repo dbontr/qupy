@@ -52,6 +52,17 @@ python -m benchmarks.calibrate calibration.json --output cost-model.json --plann
 
 The calibration command requires every fitted cost class to pass its held-out error thresholds before it emits `planner.qpcost`. The native artifact is scoped to the QuPy core version, workload schema, and planner host fingerprint recorded by the benchmark process.
 
+Validate the exact adaptive MPS observable policy with repeated paired reports:
+
+```text
+python -m benchmarks.mps_cost --profile policy --warmups 2 --iterations 20 --output mps-policy-1.json
+python -m benchmarks.mps_cost --profile policy --warmups 2 --iterations 20 --output mps-policy-2.json
+python -m benchmarks.mps_cost --profile policy --warmups 2 --iterations 20 --output mps-policy-3.json
+python -m benchmarks.mps_calibrate mps-policy-1.json mps-policy-2.json mps-policy-3.json --base-artifact planner.qpcost --output mps-calibration.json --planner-output planner-v3.qpcost
+```
+
+The policy profile requires an even iteration count. For each workload, CPU and adaptive execution are counterbalanced as one pair, and MPS and adaptive execution are counterbalanced as a second pair. This prevents a slow baseline from contaminating the timing of the other decision candidate. Promotion recomputes medians and regret from raw samples, requires at least three reports and 16 distinct workloads, requires exact agreement within `2e-11`, and allows no workload above 10% median regret. A schema-v1 or schema-v2 base artifact can be promoted; existing validated CUDA evidence is preserved.
+
 Run all compatibility adapters after installing their optional packages:
 
 ```text
