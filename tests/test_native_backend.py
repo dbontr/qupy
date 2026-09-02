@@ -398,6 +398,8 @@ def test_cuda_statevector_backend_is_explicit_and_fail_closed() -> None:
     assert target.simulator and target.state_access
     assert not target.parameter_batches
     assert target.supports_result(qp.ResultMode.STATEVECTOR)
+    assert target.supports_result(qp.ResultMode.EXPECTATION)
+    assert target.supports_result(qp.ResultMode.VARIANCE)
     assert not target.supports_result(qp.ResultMode.SAMPLE)
     assert target.max_qubits is not None and target.max_qubits >= 3
     assert qp.cuda_device_name()
@@ -412,6 +414,20 @@ def test_cuda_statevector_backend_is_explicit_and_fail_closed() -> None:
     gpu = qp.statevector(program, backend="native-cuda")
     np.testing.assert_allclose(gpu.values, cpu.values, atol=2e-12, rtol=2e-12)
     assert gpu.backend == "native-cuda"
+
+    observable = qp.Z(2)
+    expectation_plan = qp.expectation_plan(program, observable, backend="native-cuda")
+    variance_plan = qp.variance_plan(program, observable, backend="native-cuda")
+    assert expectation_plan.method == "cuda-pauli-reduction"
+    assert variance_plan.method == "cuda-pauli-reduction"
+    cpu_expectation = qp.expect(program, observable, backend="native-cpu")
+    gpu_expectation = qp.expect(program, observable, backend="native-cuda")
+    cpu_variance = qp.variance(program, observable, backend="native-cpu")
+    gpu_variance = qp.variance(program, observable, backend="native-cuda")
+    assert gpu_expectation.backend == "native-cuda"
+    assert gpu_variance.backend == "native-cuda"
+    assert gpu_expectation.value == pytest.approx(cpu_expectation.value, abs=2e-12)
+    assert gpu_variance.value == pytest.approx(cpu_variance.value, abs=2e-12)
 
     with pytest.raises(ValueError, match="requested result mode"):
         qp.sample(program, backend="native-cuda")

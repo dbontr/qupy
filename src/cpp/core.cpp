@@ -1380,7 +1380,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     }
     validate_backend(backend);
     ReducedExpectation reduced = reduce_expectation(program, observable);
-    const bool pauli_propagation = supports_pauli_propagation(reduced.operations);
+    const bool pauli_propagation = !is_cuda_backend(backend) &&
+        supports_pauli_propagation(reduced.operations);
     const bool mps_backend = is_mps_backend(backend);
     const bool adaptive_backend = is_adaptive_mps_backend(backend);
     const bool auto_adaptive = backend == "auto" && !pauli_propagation &&
@@ -1403,7 +1404,10 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         compiled_steps = reduced.operations.size();
     } else {
         steps = compile_operations(reduced.active_qubits, reduced.operations);
-        if (mps_backend) {
+        if (is_cuda_backend(backend)) {
+            method = "cuda-pauli-reduction";
+            estimated_state_bytes = state_memory_bytes(reduced.active_qubits);
+        } else if (mps_backend) {
             tensor_estimate = detail::mps_estimate(reduced.active_qubits, mps_steps(steps));
             method = reduced.active_qubits < program.num_qubits() ? "mps-lightcone" : "mps";
             estimated_state_bytes = tensor_estimate.state_bytes;
@@ -1827,6 +1831,18 @@ void draw_samples(
 }
 
 }  // namespace
+
+namespace detail {
+
+std::vector<Complex> cuda_pauli_expectations(
+    const Program& program,
+    const std::vector<CudaPauliMask>& terms
+) {
+    const std::vector<CompiledStep> steps = compile_program(program);
+    return cuda_pauli_expectations(program.num_qubits(), cuda_steps(steps), terms);
+}
+
+}  // namespace detail
 
 std::string Operation::name() const {
     return operation_name(code);
@@ -2314,7 +2330,8 @@ Target cuda_target() {
     while (bytes <= memory / 2U) { bytes *= 2U; ++max_qubits; }
     return {"native-cuda", {OperationCode::H, OperationCode::X, OperationCode::Y, OperationCode::Z,
         OperationCode::RX, OperationCode::RY, OperationCode::RZ, OperationCode::CX,
-        OperationCode::CZ, OperationCode::SWAP}, {ResultMode::StateVector}, max_qubits,
+        OperationCode::CZ, OperationCode::SWAP},
+        {ResultMode::StateVector, ResultMode::Expectation, ResultMode::Variance}, max_qubits,
         true, true, false, false, false, false};
 }
 
@@ -2659,6 +2676,20 @@ Expectation expectation(
         ).value;
     } else if (prepared.execution_plan.method == "adaptive-mps") {
         value = adaptive_mps_expectation_value(prepared);
+    } else if (prepared.execution_plan.method == "cuda-pauli-reduction") {
+        if (prepared.observable_qubit >= std::numeric_limits<std::uint64_t>::digits) {
+            throw std::length_error("CUDA Pauli mask exceeds native mask width");
+        }
+        const detail::CudaPauliMask mask{
+            0U, std::uint64_t{1} << prepared.observable_qubit, 0U,
+        };
+        const std::vector<Complex> values = detail::cuda_pauli_expectations(
+            prepared.execution_plan.active_qubits, cuda_steps(prepared.steps), {mask}
+        );
+        if (values.empty() || std::abs(values.front().imag()) > 1e-12) {
+            throw std::domain_error("CUDA Pauli expectation acquired an invalid imaginary part");
+        }
+        value = values.front().real();
     } else {
         const std::vector<Complex>& state = run_statevector_workspace(
             prepared.execution_plan.active_qubits, prepared.steps
@@ -2770,6 +2801,20 @@ Variance variance(
         ).value;
     } else if (prepared.execution_plan.method == "adaptive-mps") {
         expectation_value = adaptive_mps_expectation_value(prepared);
+    } else if (prepared.execution_plan.method == "cuda-pauli-reduction") {
+        if (prepared.observable_qubit >= std::numeric_limits<std::uint64_t>::digits) {
+            throw std::length_error("CUDA Pauli mask exceeds native mask width");
+        }
+        const detail::CudaPauliMask mask{
+            0U, std::uint64_t{1} << prepared.observable_qubit, 0U,
+        };
+        const std::vector<Complex> values = detail::cuda_pauli_expectations(
+            prepared.execution_plan.active_qubits, cuda_steps(prepared.steps), {mask}
+        );
+        if (values.empty() || std::abs(values.front().imag()) > 1e-12) {
+            throw std::domain_error("CUDA Pauli expectation acquired an invalid imaginary part");
+        }
+        expectation_value = values.front().real();
     } else {
         const std::vector<Complex>& state = run_statevector_workspace(
             prepared.execution_plan.active_qubits, prepared.steps
