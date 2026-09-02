@@ -1022,13 +1022,35 @@ void restore_density_invariants(std::vector<Complex>& rho, std::size_t dimension
     }
     throw std::invalid_argument("unsupported operation for QIR export");
 }
-[[nodiscard]] std::optional<std::size_t> environment_size(const char* name) {
+[[nodiscard]] std::optional<std::string> environment_value(const char* name) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t length = 0U;
+    if (_dupenv_s(&value, &length, name) != 0 || value == nullptr) {
+        return std::nullopt;
+    }
+    std::string result(value);
+    std::free(value);
+    if (result.empty()) {
+        return std::nullopt;
+    }
+    return result;
+#else
     const char* value = std::getenv(name);
     if (value == nullptr || *value == '\0') {
         return std::nullopt;
     }
+    return std::string(value);
+#endif
+}
+
+[[nodiscard]] std::optional<std::size_t> environment_size(const char* name) {
+    const auto value = environment_value(name);
+    if (!value.has_value()) {
+        return std::nullopt;
+    }
     try {
-        const unsigned long long parsed = std::stoull(value);
+        const unsigned long long parsed = std::stoull(*value);
         if (parsed > std::numeric_limits<std::size_t>::max()) {
             return std::nullopt;
         }
@@ -2158,10 +2180,10 @@ DistributedInfo distributed_info() {
         {"OMPI_COMM_WORLD_LOCAL_RANK", "MPI_LOCALRANKID", "LOCAL_RANK"}, 0U
     );
     std::string runtime = "none";
-    if (std::getenv("OMPI_COMM_WORLD_SIZE") != nullptr) runtime = "openmpi";
-    else if (std::getenv("MV2_COMM_WORLD_SIZE") != nullptr) runtime = "mvapich";
-    else if (std::getenv("PMI_SIZE") != nullptr) runtime = "pmi";
-    else if (std::getenv("WORLD_SIZE") != nullptr) runtime = "launcher";
+    if (environment_value("OMPI_COMM_WORLD_SIZE").has_value()) runtime = "openmpi";
+    else if (environment_value("MV2_COMM_WORLD_SIZE").has_value()) runtime = "mvapich";
+    else if (environment_value("PMI_SIZE").has_value()) runtime = "pmi";
+    else if (environment_value("WORLD_SIZE").has_value()) runtime = "launcher";
     return {world_size > 1U, world_size, rank, local_rank, std::move(runtime)};
 }
 
