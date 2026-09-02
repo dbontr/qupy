@@ -176,8 +176,10 @@ NB_MODULE(_native, module) {
         .def_prop_ro("workload_version", &qupy::PlannerCostModel::workload_version)
         .def_prop_ro("engine_version", &qupy::PlannerCostModel::engine_version)
         .def_prop_ro("host_fingerprint", &qupy::PlannerCostModel::host_fingerprint)
+        .def_prop_ro("cuda_host_fingerprint", &qupy::PlannerCostModel::cuda_host_fingerprint)
         .def_prop_ro("artifact_fingerprint", &qupy::PlannerCostModel::artifact_fingerprint)
         .def_prop_ro("cost_classes", &qupy::PlannerCostModel::cost_classes)
+        .def_prop_ro("cuda_auto_validated", &qupy::PlannerCostModel::cuda_auto_validated)
         .def("predict_ns", &qupy::PlannerCostModel::predict_ns, "plan"_a);
 
     nb::class_<qupy::ExecutionPlan>(module, "ExecutionPlan")
@@ -204,7 +206,8 @@ NB_MODULE(_native, module) {
         .def_ro("predicted_ns", &qupy::ExecutionPlan::predicted_ns)
         .def_ro("cost_model_class", &qupy::ExecutionPlan::cost_model_class)
         .def_ro("cost_model_fingerprint", &qupy::ExecutionPlan::cost_model_fingerprint)
-        .def_ro("cost_model_host_fingerprint", &qupy::ExecutionPlan::cost_model_host_fingerprint);
+        .def_ro("cost_model_host_fingerprint", &qupy::ExecutionPlan::cost_model_host_fingerprint)
+        .def_ro("cost_model_cuda_host_fingerprint", &qupy::ExecutionPlan::cost_model_cuda_host_fingerprint);
 
     nb::class_<qupy::StateVector>(module, "StateVector")
         .def_prop_ro("values", &state_values)
@@ -272,6 +275,7 @@ NB_MODULE(_native, module) {
     module.def("cuda_device_name", &qupy::cuda_device_name);
     module.def("cuda_target", &qupy::cuda_target);
     module.def("planner_host_fingerprint", &qupy::planner_host_fingerprint);
+    module.def("planner_cuda_host_fingerprint", &qupy::planner_cuda_host_fingerprint);
     module.def("load_planner_cost_model", &qupy::load_planner_cost_model, "path"_a);
     module.def(
         "plan",
@@ -305,10 +309,13 @@ NB_MODULE(_native, module) {
     );
     module.def(
         "statevector",
-        &qupy::statevector,
-        "program"_a,
-        "backend"_a = "auto",
-        nb::call_guard<nb::gil_scoped_release>()
+        [](const qupy::Program& program, const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            nb::gil_scoped_release release;
+            return qupy::statevector(program, backend, model);
+        },
+        "program"_a, "backend"_a = "auto", "cost_model"_a = nb::none()
     );
     module.def(
         "probabilities",

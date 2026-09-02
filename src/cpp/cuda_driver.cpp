@@ -34,6 +34,7 @@ constexpr CUresult kCudaSuccess = 0;
 [[maybe_unused]] constexpr std::string_view kSanitizerCudaDisabled =
     "CUDA driver execution is disabled in sanitizer builds";
 using CuInit = CUresult (*)(unsigned int);
+using CuDriverGetVersion = CUresult (*)(int*);
 using CuDeviceGet = CUresult (*)(CUdevice*, int);
 using CuDeviceGetCount = CUresult (*)(int*);
 using CuDeviceGetName = CUresult (*)(char*, int, CUdevice);
@@ -329,6 +330,7 @@ public:
     CudaRuntime& operator=(const CudaRuntime&) = delete;
 
     [[nodiscard]] const std::string& device_name() const noexcept { return device_name_; }
+    [[nodiscard]] int driver_version() const noexcept { return driver_version_; }
     [[nodiscard]] std::size_t total_memory() const noexcept { return total_memory_; }
     [[nodiscard]] std::vector<Complex> statevector(
         std::size_t num_qubits,
@@ -342,6 +344,7 @@ private:
 
     DynamicLibrary library_;
     CuInit cu_init_;
+    CuDriverGetVersion cu_driver_get_version_;
     CuDeviceGet cu_device_get_;
     CuDeviceGetCount cu_device_get_count_;
     CuDeviceGetName cu_device_get_name_;
@@ -366,6 +369,7 @@ private:
     CUmodule module_ = nullptr;
     CUfunction apply_gate_ = nullptr;
     std::string device_name_;
+    int driver_version_ = 0;
     std::size_t total_memory_ = 0U;
     std::mutex execution_mutex_;
     CUdeviceptr workspace_ = 0U;
@@ -374,6 +378,7 @@ private:
 
 CudaRuntime::CudaRuntime()
     : cu_init_(load_symbol<CuInit>(library_, "cuInit")),
+      cu_driver_get_version_(load_symbol<CuDriverGetVersion>(library_, "cuDriverGetVersion")),
       cu_device_get_(load_symbol<CuDeviceGet>(library_, "cuDeviceGet")),
       cu_device_get_count_(load_symbol<CuDeviceGetCount>(library_, "cuDeviceGetCount")),
       cu_device_get_name_(load_symbol<CuDeviceGetName>(library_, "cuDeviceGetName")),
@@ -394,6 +399,7 @@ CudaRuntime::CudaRuntime()
       cu_get_error_name_(load_symbol<CuGetErrorName>(library_, "cuGetErrorName")),
       cu_get_error_string_(load_symbol<CuGetErrorString>(library_, "cuGetErrorString")) {
     check(cu_init_(0U), "cuInit");
+    check(cu_driver_get_version_(&driver_version_), "cuDriverGetVersion");
     int device_count = 0;
     check(cu_device_get_count_(&device_count), "cuDeviceGetCount");
     if (device_count < 1) throw std::runtime_error("CUDA driver reports no devices");
@@ -559,6 +565,14 @@ std::string cuda_device_name() {
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
     return runtime().device_name();
+#endif
+}
+
+int cuda_driver_version() {
+#ifdef QUPY_SANITIZER_BUILD
+    throw std::runtime_error(std::string(kSanitizerCudaDisabled));
+#else
+    return runtime().driver_version();
 #endif
 }
 

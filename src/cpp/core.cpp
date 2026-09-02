@@ -77,7 +77,9 @@ constexpr int kMaximumOpenMpTeam = 16;
 constexpr std::uint32_t kIrVersion = 1U;
 constexpr std::uint32_t kWorkloadVersion = 1U;
 constexpr std::size_t kStabilizerSamplingMinQubits = 24U;
-constexpr std::uint32_t kPlannerCostSchemaVersion = 1U;
+constexpr std::uint32_t kPlannerCostSchemaVersion = 2U;
+constexpr double kCudaDecisionMaxRegret = 1.10;
+constexpr std::size_t kCudaDecisionMinimumSamples = 8U;
 constexpr double kPlannerPromotionMaxHoldoutMedianFactor = 1.5;
 constexpr double kPlannerPromotionMaxHoldoutFactor = 2.0;
 constexpr std::string_view kCoreVersion = "0.3.0a0";
@@ -804,19 +806,22 @@ void validate_backend(const std::string& backend) {
     }
 }
 
-[[nodiscard]] bool cost_model_supports_method(std::string_view method) {
-    return method == "pauli-propagation" || method == "statevector" ||
-           method == "statevector-lightcone";
-}
-
 [[nodiscard]] std::string plan_cost_class(const ExecutionPlan& plan) {
+    if (plan.result_mode == ResultMode::StateVector) {
+        if (plan.method == "statevector") {
+            return "statevector-return-cpu";
+        }
+        if (plan.method == "cuda-statevector") {
+            return "statevector-return-cuda";
+        }
+    }
     if (plan.method == "pauli-propagation") {
         return "pauli-propagation";
     }
     if (plan.method == "statevector" || plan.method == "statevector-lightcone") {
         return plan.threads == 1U ? "statevector-serial" : "statevector-parallel";
     }
-    throw std::invalid_argument("planner cost model does not support method " + plan.method);
+    return {};
 }
 
 [[nodiscard]] std::vector<double> plan_cost_features(const ExecutionPlan& plan) {
@@ -824,11 +829,31 @@ void validate_backend(const std::string& backend) {
     if (cost_class == "pauli-propagation") {
         return {1.0, std::log(static_cast<double>(std::max<std::size_t>(plan.active_operations, 1U)))};
     }
-    const double log_work =
-        std::log(static_cast<double>(std::max<std::size_t>(plan.compiled_steps, 1U))) +
-        static_cast<double>(plan.active_qubits) * std::log(2.0) -
-        std::log(static_cast<double>(std::max<std::size_t>(plan.threads, 1U)));
-    return {1.0, log_work, log_work * log_work};
+    if (cost_class == "statevector-return-cpu" || cost_class == "statevector-return-cuda") {
+        const std::size_t operations = std::max<std::size_t>(
+            plan.single_qubit_operations + plan.two_qubit_operations, 1U
+        );
+        std::vector<double> features{
+            1.0,
+            static_cast<double>(plan.active_qubits),
+            std::log(static_cast<double>(std::max<std::size_t>(plan.compiled_steps, 1U))),
+            static_cast<double>(plan.two_qubit_operations) / static_cast<double>(operations),
+        };
+        if (cost_class == "statevector-return-cpu") {
+            features.push_back(
+                std::log(static_cast<double>(std::max<std::size_t>(plan.threads, 1U)))
+            );
+        }
+        return features;
+    }
+    if (cost_class == "statevector-serial" || cost_class == "statevector-parallel") {
+        const double log_work =
+            std::log(static_cast<double>(std::max<std::size_t>(plan.compiled_steps, 1U))) +
+            static_cast<double>(plan.active_qubits) * std::log(2.0) -
+            std::log(static_cast<double>(std::max<std::size_t>(plan.threads, 1U)));
+        return {1.0, log_work, log_work * log_work};
+    }
+    throw std::invalid_argument("planner cost features do not support class " + cost_class);
 }
 
 [[nodiscard]] ExecutionPlan make_plan(
@@ -845,8 +870,7 @@ void validate_backend(const std::string& backend) {
     bool collect_workload_fingerprint,
     const PlannerCostModel* cost_model
 ) {
-    const bool use_cost_model = cost_model != nullptr && cost_model_supports_method(method);
-    const WorkloadFeatures features = (collect_workload_fingerprint || use_cost_model)
+    const WorkloadFeatures features = (collect_workload_fingerprint || cost_model != nullptr)
         ? workload_features(source_program, result_mode, active_qubits, workload_operations)
         : WorkloadFeatures{workload_operations.size(), 0U, 0U, 0U, 0U, {}};
     const std::string program_fingerprint = source_program.fingerprint();
@@ -868,13 +892,17 @@ void validate_backend(const std::string& backend) {
         features.two_qubit_operations, features.parameterized_operations,
         features.non_clifford_operations, compiled_steps, estimated_state_bytes,
         result_mode, kWorkloadVersion, features.fingerprint, program_fingerprint,
-        target_fingerprint, cache_key.str(), std::nullopt, {}, {}, {},
+        target_fingerprint, cache_key.str(), std::nullopt, {}, {}, {}, {},
     };
-    if (use_cost_model) {
-        execution_plan.predicted_ns = cost_model->predict_ns(execution_plan);
-        execution_plan.cost_model_class = plan_cost_class(execution_plan);
-        execution_plan.cost_model_fingerprint = cost_model->artifact_fingerprint();
-        execution_plan.cost_model_host_fingerprint = cost_model->host_fingerprint();
+    if (cost_model != nullptr) {
+        const std::string cost_class = plan_cost_class(execution_plan);
+        if (!cost_class.empty() && cost_model->has_cost_class(cost_class)) {
+            execution_plan.predicted_ns = cost_model->predict_ns(execution_plan);
+            execution_plan.cost_model_class = cost_class;
+            execution_plan.cost_model_fingerprint = cost_model->artifact_fingerprint();
+            execution_plan.cost_model_host_fingerprint = cost_model->host_fingerprint();
+            execution_plan.cost_model_cuda_host_fingerprint = cost_model->cuda_host_fingerprint();
+        }
     }
     return execution_plan;
 }
@@ -1130,6 +1158,33 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     const PlannerCostModel* cost_model = nullptr
 ) {
     validate_backend(backend);
+    if (backend == "auto" && result_mode == ResultMode::StateVector && cost_model != nullptr &&
+        cost_model->cuda_auto_validated()) {
+        const Target cpu_target = native_target();
+        cpu_target.validate(program, result_mode);
+        std::vector<CompiledStep> steps = compile_program(program);
+        ExecutionPlan cpu_plan = make_plan(
+            program, cpu_target, result_mode, program.operations().size(), program.operations(),
+            steps.size(), program.num_qubits(), state_memory_bytes(program.num_qubits()),
+            "statevector", {}, collect_workload_fingerprint, cost_model
+        );
+        const Target gpu_target = cuda_target();
+        if (!gpu_target.max_qubits.has_value() || program.num_qubits() <= *gpu_target.max_qubits) {
+            gpu_target.validate(program, result_mode);
+            ExecutionPlan gpu_plan = make_plan(
+                program, gpu_target, result_mode, program.operations().size(), program.operations(),
+                steps.size(), program.num_qubits(), state_memory_bytes(program.num_qubits()),
+                "cuda-statevector", {}, collect_workload_fingerprint, cost_model
+            );
+            if (!cpu_plan.predicted_ns.has_value() || !gpu_plan.predicted_ns.has_value()) {
+                throw std::logic_error("validated CUDA planner model is missing state-vector costs");
+            }
+            if (*gpu_plan.predicted_ns < *cpu_plan.predicted_ns) {
+                return {std::move(gpu_plan), std::move(steps)};
+            }
+        }
+        return {std::move(cpu_plan), std::move(steps)};
+    }
     const bool cuda_backend = is_cuda_backend(backend);
     const Target target = cuda_backend ? cuda_target() : native_target();
     target.validate(program, result_mode);
@@ -1710,6 +1765,9 @@ std::uint32_t PlannerCostModel::schema_version() const noexcept { return schema_
 std::uint32_t PlannerCostModel::workload_version() const noexcept { return workload_version_; }
 const std::string& PlannerCostModel::engine_version() const noexcept { return engine_version_; }
 const std::string& PlannerCostModel::host_fingerprint() const noexcept { return host_fingerprint_; }
+const std::string& PlannerCostModel::cuda_host_fingerprint() const noexcept {
+    return cuda_host_fingerprint_;
+}
 const std::string& PlannerCostModel::artifact_fingerprint() const noexcept {
     return artifact_fingerprint_;
 }
@@ -1724,11 +1782,30 @@ std::vector<std::string> PlannerCostModel::cost_classes() const {
     return result;
 }
 
+bool PlannerCostModel::has_cost_class(const std::string& cost_class) const {
+    return std::any_of(
+        curves_.begin(), curves_.end(),
+        [&](const Curve& curve) { return curve.cost_class == cost_class; }
+    );
+}
+
+bool PlannerCostModel::cuda_auto_validated() const noexcept {
+    return schema_version_ >= 2U && !cuda_host_fingerprint_.empty() &&
+           cuda_decision_samples_ >= kCudaDecisionMinimumSamples &&
+           cuda_decision_mistakes_ == 0U &&
+           cuda_decision_max_regret_ <= kCudaDecisionMaxRegret;
+}
+
 double PlannerCostModel::predict_ns(const ExecutionPlan& execution_plan) const {
     if (execution_plan.workload_version != workload_version_) {
         throw std::invalid_argument("execution plan workload version does not match cost model");
     }
     const std::string cost_class = plan_cost_class(execution_plan);
+    if (cost_class.empty()) {
+        throw std::invalid_argument(
+            "planner cost model does not support method " + execution_plan.method
+        );
+    }
     const auto curve = std::find_if(
         curves_.begin(), curves_.end(),
         [&](const Curve& item) { return item.cost_class == cost_class; }
@@ -1755,6 +1832,19 @@ std::string planner_host_fingerprint() {
     return fingerprint_text(planner_host_text());
 }
 
+std::string planner_cuda_host_fingerprint() {
+    if (!detail::cuda_available()) {
+        throw std::runtime_error(detail::cuda_unavailable_reason());
+    }
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << "qupy-cuda-planner-host 1\n";
+    output << "device " << detail::cuda_device_name() << '\n';
+    output << "memory " << detail::cuda_total_memory_bytes() << '\n';
+    output << "driver " << detail::cuda_driver_version() << '\n';
+    return fingerprint_text(output.str());
+}
+
 void strip_trailing_carriage_return(std::string& line) {
     if (!line.empty() && line.back() == '\r') {
         line.pop_back();
@@ -1775,15 +1865,22 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
         throw std::invalid_argument("planner cost artifact has an unsupported schema");
     }
     strip_trailing_carriage_return(line);
-    if (line != "qupy-planner-cost 1") {
+    std::uint32_t schema_version = 0U;
+    if (line == "qupy-planner-cost 1") {
+        schema_version = 1U;
+    } else if (line == "qupy-planner-cost 2") {
+        schema_version = kPlannerCostSchemaVersion;
+    } else {
         throw std::invalid_argument("planner cost artifact has an unsupported schema");
     }
 
     PlannerCostModel model;
-    model.schema_version_ = kPlannerCostSchemaVersion;
+    model.schema_version_ = schema_version;
     bool has_engine = false;
     bool has_workload = false;
     bool has_host = false;
+    bool has_cuda_host = false;
+    bool has_cuda_decision = false;
     bool validated = false;
     std::set<std::string> classes;
     while (std::getline(lines, line)) {
@@ -1809,6 +1906,25 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                 throw std::invalid_argument("planner cost artifact has invalid host metadata");
             }
             has_host = true;
+        } else if (key == "cuda-host") {
+            if (schema_version < 2U || has_cuda_host || !(fields >> model.cuda_host_fingerprint_)) {
+                throw std::invalid_argument("planner cost artifact has invalid CUDA host metadata");
+            }
+            has_cuda_host = true;
+        } else if (key == "decision") {
+            std::string decision_class;
+            if (schema_version < 2U || has_cuda_decision ||
+                !(fields >> decision_class >> model.cuda_decision_samples_ >>
+                  model.cuda_decision_mistakes_ >> model.cuda_decision_max_regret_) ||
+                decision_class != "statevector-auto" ||
+                model.cuda_decision_samples_ < kCudaDecisionMinimumSamples ||
+                model.cuda_decision_mistakes_ != 0U ||
+                !std::isfinite(model.cuda_decision_max_regret_) ||
+                model.cuda_decision_max_regret_ < 1.0 ||
+                model.cuda_decision_max_regret_ > kCudaDecisionMaxRegret) {
+                throw std::invalid_argument("planner cost artifact has invalid CUDA decision evidence");
+            }
+            has_cuda_decision = true;
         } else if (key == "validated") {
             int value = 0;
             if (!(fields >> value) || value != 1) {
@@ -1821,9 +1937,19 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
             if (!(fields >> curve.cost_class >> coefficient_count)) {
                 throw std::invalid_argument("planner cost artifact has a malformed model row");
             }
-            const std::size_t expected = curve.cost_class == "pauli-propagation" ? 2U :
-                ((curve.cost_class == "statevector-serial" ||
-                  curve.cost_class == "statevector-parallel") ? 3U : 0U);
+            std::size_t expected = 0U;
+            if (curve.cost_class == "pauli-propagation") {
+                expected = 2U;
+            } else if (
+                curve.cost_class == "statevector-serial" ||
+                curve.cost_class == "statevector-parallel"
+            ) {
+                expected = 3U;
+            } else if (curve.cost_class == "statevector-return-cpu") {
+                expected = 5U;
+            } else if (curve.cost_class == "statevector-return-cuda") {
+                expected = 4U;
+            }
             if (expected == 0U || coefficient_count != expected || !classes.insert(curve.cost_class).second) {
                 throw std::invalid_argument("planner cost artifact has an invalid model class");
             }
@@ -1850,10 +1976,16 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
             throw std::invalid_argument("planner cost artifact row contains unexpected data");
         }
     }
-    const std::set<std::string> expected_classes = {
+    std::set<std::string> expected_classes = {
         "pauli-propagation", "statevector-parallel", "statevector-serial"
     };
-    if (!has_engine || !has_workload || !has_host || !validated || classes != expected_classes) {
+    if (schema_version >= 2U) {
+        expected_classes.insert("statevector-return-cpu");
+        expected_classes.insert("statevector-return-cuda");
+    }
+    if (!has_engine || !has_workload || !has_host || !validated || classes != expected_classes ||
+        (schema_version >= 2U && (!has_cuda_host || !has_cuda_decision)) ||
+        (schema_version == 1U && (has_cuda_host || has_cuda_decision))) {
         throw std::invalid_argument("planner cost artifact is incomplete");
     }
     if (model.engine_version_ != kCoreVersion) {
@@ -1864,6 +1996,14 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     }
     if (model.host_fingerprint_ != planner_host_fingerprint()) {
         throw std::invalid_argument("planner cost artifact host does not match this runtime");
+    }
+    if (schema_version >= 2U) {
+        if (!detail::cuda_available()) {
+            throw std::invalid_argument("planner cost artifact requires CUDA on this runtime");
+        }
+        if (model.cuda_host_fingerprint_ != planner_cuda_host_fingerprint()) {
+            throw std::invalid_argument("planner cost artifact CUDA host does not match this runtime");
+        }
     }
     model.artifact_fingerprint_ = fingerprint_text(text);
     return model;
@@ -2000,8 +2140,14 @@ PauliZ pauli_z(std::size_t qubit) {
     return {qubit};
 }
 
-StateVector statevector(const Program& program, const std::string& backend) {
-    PreparedProgram prepared = prepare_program(program, ResultMode::StateVector, backend);
+StateVector statevector(
+    const Program& program,
+    const std::string& backend,
+    const PlannerCostModel* cost_model
+) {
+    PreparedProgram prepared = prepare_program(
+        program, ResultMode::StateVector, backend, false, cost_model
+    );
     if (prepared.execution_plan.method == "cuda-statevector") {
         return {
             detail::cuda_statevector(program.num_qubits(), cuda_steps(prepared.steps)),

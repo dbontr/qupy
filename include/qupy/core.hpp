@@ -115,6 +115,7 @@ struct ExecutionPlan {
     std::string cost_model_class;
     std::string cost_model_fingerprint;
     std::string cost_model_host_fingerprint;
+    std::string cost_model_cuda_host_fingerprint;
 };
 
 class PlannerCostModel {
@@ -123,8 +124,11 @@ public:
     [[nodiscard]] std::uint32_t workload_version() const noexcept;
     [[nodiscard]] const std::string& engine_version() const noexcept;
     [[nodiscard]] const std::string& host_fingerprint() const noexcept;
+    [[nodiscard]] const std::string& cuda_host_fingerprint() const noexcept;
     [[nodiscard]] const std::string& artifact_fingerprint() const noexcept;
     [[nodiscard]] std::vector<std::string> cost_classes() const;
+    [[nodiscard]] bool has_cost_class(const std::string& cost_class) const;
+    [[nodiscard]] bool cuda_auto_validated() const noexcept;
     [[nodiscard]] double predict_ns(const ExecutionPlan& plan) const;
 
 private:
@@ -141,7 +145,11 @@ private:
     std::uint32_t workload_version_ = 0U;
     std::string engine_version_;
     std::string host_fingerprint_;
+    std::string cuda_host_fingerprint_;
     std::string artifact_fingerprint_;
+    std::size_t cuda_decision_samples_ = 0U;
+    std::size_t cuda_decision_mistakes_ = 0U;
+    double cuda_decision_max_regret_ = 0.0;
     std::vector<Curve> curves_;
 };
 
@@ -209,6 +217,7 @@ struct Variance {
 [[nodiscard]] std::string cuda_device_name();
 [[nodiscard]] Target cuda_target();
 [[nodiscard]] std::string planner_host_fingerprint();
+[[nodiscard]] std::string planner_cuda_host_fingerprint();
 [[nodiscard]] PlannerCostModel load_planner_cost_model(const std::string& path);
 [[nodiscard]] ExecutionPlan plan(
     const Program& program,
@@ -243,7 +252,8 @@ struct Variance {
 
 [[nodiscard]] StateVector statevector(
     const Program& program,
-    const std::string& backend = "auto"
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
 );
 [[nodiscard]] Probabilities probabilities(
     const Program& program,
