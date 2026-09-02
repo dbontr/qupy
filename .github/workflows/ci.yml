@@ -165,18 +165,22 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - run: uv sync --frozen --python 3.12
       - name: Collect planner calibration evidence
-        run: >-
-          uv run python -m benchmarks.run
-          --profile calibration
-          --engines qupy
-          --warmups 1
-          --iterations 3
-          --require-engines
-          --output build/planner-calibration.json
+        run: |
+          for run in 1 2 3; do
+            uv run python -m benchmarks.run \
+              --profile calibration \
+              --engines qupy \
+              --warmups 1 \
+              --iterations 3 \
+              --require-engines \
+              --output "build/planner-calibration-${run}.json"
+          done
       - name: Validate and promote planner evidence
         run: >-
           uv run python -m benchmarks.calibrate
-          build/planner-calibration.json
+          build/planner-calibration-1.json
+          build/planner-calibration-2.json
+          build/planner-calibration-3.json
           --output build/planner-cost.json
           --planner-output build/planner.qpcost
       - name: Verify native planner artifact

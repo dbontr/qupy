@@ -21,6 +21,7 @@ struct CudaStep {
 [[nodiscard]] bool cuda_available() noexcept;
 [[nodiscard]] std::string cuda_unavailable_reason();
 [[nodiscard]] std::string cuda_device_name();
+[[nodiscard]] int cuda_driver_version();
 [[nodiscard]] std::size_t cuda_total_memory_bytes();
 [[nodiscard]] std::vector<Complex> cuda_statevector(
     std::size_t num_qubits,

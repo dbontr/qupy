@@ -139,7 +139,7 @@ if qp.cuda_available():
 
 The CUDA target currently exposes exact state-vector results for the same H, X, Y, Z, RX, RY, RZ, CX, CZ, and SWAP program operations as the CPU state-vector path. Unsupported CUDA result modes fail during target validation; QuPy does not silently execute them on the CPU. Device memory is reused between calls, and the public `StateVector` remains native host-owned storage after one device-to-host transfer.
 
-`backend="auto"` does not select CUDA yet. Automatic GPU selection remains gated on validated crossover evidence and planner cost classes for the CUDA method. Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
+`backend="auto"` remains CPU-only when no planner cost model is supplied. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Schema-v2 promotion requires validated CPU and CUDA return-cost curves plus at least eight held-out backend decisions with no decision exceeding 10% runtime regret. Other result modes keep the established planner policy. Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
 
 ### Stabilizer sampling
 
@@ -160,7 +160,7 @@ The 24-qubit threshold keeps the established small-circuit seeded state-vector s
 
 ### Validated planner cost evidence
 
-Validated benchmark calibration can be promoted into a compact native planner artifact. The C++ runtime accepts an artifact only when its schema, QuPy core version, workload schema, and native host fingerprint match the current runtime. Invalid, stale, unvalidated, or wrong-host artifacts fail closed.
+Validated benchmark calibration can be promoted into a compact native planner artifact. Schema-v1 artifacts bind CPU cost evidence to the QuPy core version, workload schema, and native host fingerprint. Schema-v2 artifacts additionally bind a CUDA host fingerprint and validated CPU/CUDA state-vector return-cost evidence. Invalid, stale, unvalidated, or wrong-host artifacts fail closed.
 
 ```python
 model = qp.load_planner_cost_model("planner.qpcost")
@@ -171,7 +171,7 @@ print(plan.cost_model_class)
 print(plan.cost_model_fingerprint)
 ```
 
-The model is evidence, not execution policy. Supplying it does not change `backend`, `method`, or `cache_key`; it only adds an inspectable runtime estimate and provenance to the returned plan. This preserves current `backend="auto"` behavior while allowing calibrated planner decisions to be evaluated before they are enabled.
+Schema-v1 models remain evidence-only: they do not change `backend`, `method`, or `cache_key`. A schema-v2 CUDA model can affect only `ResultMode.STATEVECTOR` with `backend="auto"` when that model is explicitly supplied. The planner compares native CPU and CUDA return-cost predictions using qubit count, compiled-step count, two-qubit operation fraction, and planned CPU thread count, then selects the lower predicted runtime. The chosen plan retains its normal cache identity; cost-model fingerprints remain separate provenance. Execution without a supplied model is unchanged.
 
 ### Result-aware expectation planning
 
@@ -235,7 +235,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. An explicit CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. Workload fingerprint version 1, held-out calibration, and validated native planner cost artifacts provide host-scoped predicted-runtime evidence with explicit provenance for calibrated CPU classes. Automatic CUDA selection, tensor-network execution, noise, richer observables, and physical-QPU targets remain gated on their own conformance and planner evidence.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped predicted-runtime evidence with explicit provenance. Schema-v2 evidence can select CPU or CUDA for exact state-vector return when explicitly supplied; tensor-network execution, noise, richer observables, and physical-QPU targets remain gated on their own conformance and planner evidence.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

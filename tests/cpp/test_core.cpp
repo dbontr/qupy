@@ -210,6 +210,13 @@ void test_native_planner_cost_artifact() {
         stabilizer_plan.cost_model_fingerprint.empty(),
         "unsupported stabilizer plan claimed cost-model provenance"
     );
+    const auto v1_statevector_plan = qupy::plan(
+        program, qupy::ResultMode::StateVector, "auto", &model
+    );
+    require(
+        !v1_statevector_plan.predicted_ns.has_value(),
+        "legacy expectation cost model predicted a full state-vector return"
+    );
     if (qupy::cuda_available()) {
         const auto cuda_plan = qupy::plan(
             program, qupy::ResultMode::StateVector, "native-cuda", &model
@@ -223,6 +230,75 @@ void test_native_planner_cost_artifact() {
     }
     require(std::filesystem::remove(artifact), "planner cost fixture was not removed");
 }
+
+void test_cuda_planner_cost_artifact() {
+    const std::filesystem::path artifact = std::filesystem::temp_directory_path() /
+        "qupy-cuda-planner-cost.qpcost";
+    const std::string cuda_host = qupy::cuda_available()
+        ? qupy::planner_cuda_host_fingerprint() : std::string(64U, '0');
+    {
+        std::ofstream output(artifact);
+        require(static_cast<bool>(output), "CUDA planner fixture could not be created");
+        output << "qupy-planner-cost 2\n";
+        output << "engine " << qupy::core_version() << "\n";
+        output << "workload 1\n";
+        output << "host " << qupy::planner_host_fingerprint() << "\n";
+        output << "cuda-host " << cuda_host << "\n";
+        output << "validated 1\n";
+        output << "model pauli-propagation 2 5 0.85 1.1 1.2\n";
+        output << "model statevector-parallel 3 4.5 0.55 0.012 1.1 1.2\n";
+        output << "model statevector-serial 3 4.5 0.55 0.012 1.1 1.2\n";
+        output << "model statevector-return-cpu 5 10 0 0 0 0 1.1 1.2\n";
+        output << "model statevector-return-cuda 4 0 0 0 0 1.1 1.2\n";
+        output << "decision statevector-auto 8 0 1.0\n";
+    }
+
+    if (!qupy::cuda_available()) {
+        bool rejected = false;
+        try {
+            static_cast<void>(qupy::load_planner_cost_model(artifact.string()));
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected, "CUDA planner artifact did not fail closed without CUDA");
+        require(std::filesystem::remove(artifact), "CUDA planner fixture was not removed");
+        return;
+    }
+
+    const auto model = qupy::load_planner_cost_model(artifact.string());
+    require(model.schema_version() == 2U, "CUDA planner schema version is wrong");
+    require(model.cuda_auto_validated(), "CUDA planner decision evidence was not accepted");
+    require(
+        model.cuda_host_fingerprint() == qupy::planner_cuda_host_fingerprint(),
+        "CUDA planner host fingerprint is wrong"
+    );
+
+    qupy::Program program(3U);
+    program = qupy::h(program, 0U);
+    program = qupy::cx(program, 0U, 1U);
+    program = qupy::ry(program, 0.37, 2U);
+    const auto selected = qupy::plan(
+        program, qupy::ResultMode::StateVector, "auto", &model
+    );
+    require(selected.backend == "native-cuda", "CUDA planner did not select the cheaper target");
+    require(selected.method == "cuda-statevector", "CUDA planner selected the wrong method");
+    require(selected.predicted_ns.has_value(), "CUDA planner omitted its selected prediction");
+    require(
+        selected.cost_model_class == "statevector-return-cuda",
+        "CUDA planner reported the wrong cost class"
+    );
+    const auto automatic = qupy::statevector(program, "auto", &model);
+    const auto explicit_cuda = qupy::statevector(program, "native-cuda");
+    require(automatic.backend == "native-cuda", "CUDA execution ignored planner selection");
+    for (std::size_t index = 0U; index < automatic.values.size(); ++index) {
+        require_close(
+            automatic.values[index], explicit_cuda.values[index],
+            "automatic CUDA statevector diverged from explicit CUDA"
+        );
+    }
+    require(std::filesystem::remove(artifact), "CUDA planner fixture was not removed");
+}
+
 
 void test_parameter_binding_and_batches() {
     const double pi = std::acos(-1.0);
@@ -819,6 +895,7 @@ int main() {
         test_two_qubit_gates();
         test_results_and_planner();
         test_native_planner_cost_artifact();
+        test_cuda_planner_cost_artifact();
         test_parameter_binding_and_batches();
         test_stabilizer_support_matches_dense_statevector();
         test_stabilizer_sampling_planner_and_execution();
