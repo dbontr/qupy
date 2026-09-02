@@ -136,4 +136,35 @@ if(QUPY_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME qupy_advanced_tests COMMAND qupy_advanced_tests)
+
+    if(MPI_CXX_FOUND)
+        add_executable(qupy_mpi_tests tests/cpp/test_mpi.cpp)
+        target_compile_features(qupy_mpi_tests PRIVATE cxx_std_20)
+        target_link_libraries(qupy_mpi_tests PRIVATE qupy_core)
+        if(MSVC)
+            target_compile_options(qupy_mpi_tests PRIVATE /W4 /permissive-)
+            if(QUPY_WARNINGS_AS_ERRORS)
+                target_compile_options(qupy_mpi_tests PRIVATE /WX)
+            endif()
+        else()
+            target_compile_options(qupy_mpi_tests PRIVATE -Wall -Wextra -Wpedantic)
+            if(QUPY_WARNINGS_AS_ERRORS)
+                target_compile_options(qupy_mpi_tests PRIVATE -Werror)
+            endif()
+            if(QUPY_ENABLE_SANITIZERS)
+                target_compile_options(qupy_mpi_tests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+                target_link_options(qupy_mpi_tests PRIVATE -fsanitize=address,undefined)
+            endif()
+        endif()
+        add_test(
+            NAME qupy_mpi_2
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                    ${MPIEXEC_PREFLAGS} $<TARGET_FILE:qupy_mpi_tests> ${MPIEXEC_POSTFLAGS}
+        )
+        add_test(
+            NAME qupy_mpi_4
+            COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4
+                    ${MPIEXEC_PREFLAGS} $<TARGET_FILE:qupy_mpi_tests> ${MPIEXEC_POSTFLAGS}
+        )
+    endif()
 endif()

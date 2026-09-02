@@ -1,12 +1,15 @@
-#include "qupy/advanced.hpp"
+#include "distributed.hpp"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
+#include <tuple>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -437,5 +440,144 @@ DistributedStateVector distributed_statevector(const Program& program) {
     };
 #endif
 }
+
+
+namespace detail {
+
+std::vector<Complex> distributed_pauli_expectations(
+    const Program& program,
+    const std::vector<std::vector<PauliFactor>>& terms
+) {
+#ifndef QUPY_HAS_MPI
+    static_cast<void>(program);
+    static_cast<void>(terms);
+    throw std::runtime_error(
+        "MPI support is not compiled; rebuild QuPy with an MPI C++ implementation available"
+    );
+#else
+    struct Mask {
+        std::uint64_t flip;
+        std::uint64_t sign;
+        std::uint32_t y_phase;
+    };
+    const DistributedStateVector shard = distributed_statevector(program);
+    const std::size_t local_size = shard.local_values.size();
+    if (!is_power_of_two(local_size)) {
+        throw std::logic_error("distributed state shard is not a power of two");
+    }
+    const std::size_t local_qubits = integer_log2(local_size);
+
+    const std::uint64_t local_mask = local_qubits == 64U
+        ? std::numeric_limits<std::uint64_t>::max()
+        : ((std::uint64_t{1} << local_qubits) - 1U);
+    std::map<std::tuple<std::uint64_t, std::uint64_t, std::uint32_t>, std::size_t> indices;
+    std::vector<Mask> masks;
+    std::vector<std::size_t> result_indices;
+    result_indices.reserve(terms.size());
+    for (const auto& factors : terms) {
+        Mask mask{0U, 0U, 0U};
+        for (const PauliFactor& factor : factors) {
+            if (factor.qubit >= program.num_qubits()) {
+                throw std::invalid_argument("observable qubit is outside this program");
+            }
+            if (factor.qubit >= std::numeric_limits<std::uint64_t>::digits) {
+                throw std::length_error("distributed Pauli mask exceeds native mask width");
+            }
+            const std::uint64_t bit = std::uint64_t{1} << factor.qubit;
+            switch (factor.pauli) {
+            case Pauli::I: break;
+            case Pauli::X: mask.flip |= bit; break;
+            case Pauli::Y:
+                mask.flip |= bit;
+                mask.sign |= bit;
+                mask.y_phase = (mask.y_phase + 1U) & 3U;
+                break;
+            case Pauli::Z: mask.sign |= bit; break;
+            }
+        }
+        const auto key = std::make_tuple(mask.flip, mask.sign, mask.y_phase);
+        const auto [found, inserted] = indices.emplace(key, masks.size());
+        if (inserted) {
+            masks.push_back(mask);
+        }
+        result_indices.push_back(found->second);
+    }
+
+    std::map<std::uint64_t, std::vector<std::size_t>> masks_by_rank_flip;
+    for (std::size_t index = 0U; index < masks.size(); ++index) {
+        masks_by_rank_flip[masks[index].flip >> local_qubits].push_back(index);
+    }
+
+    std::vector<Complex> local_values(masks.size(), Complex{0.0, 0.0});
+    for (const auto& [rank_flip, mask_indices] : masks_by_rank_flip) {
+        std::vector<Complex> peer_state;
+        const std::vector<Complex>* mapped_state = &shard.local_values;
+        if (rank_flip != 0U) {
+            const std::size_t partner = shard.rank ^ static_cast<std::size_t>(rank_flip);
+            if (partner >= shard.world_size ||
+                partner > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+                throw std::logic_error("distributed Pauli partner rank is outside the communicator");
+            }
+            peer_state = exchange_shard(shard.local_values, static_cast<int>(partner));
+            mapped_state = &peer_state;
+        }
+        for (const std::size_t mask_index : mask_indices) {
+            const Mask& mask = masks[mask_index];
+            const std::uint64_t local_flip = mask.flip & local_mask;
+            for (std::size_t local_index = 0; local_index < local_size; ++local_index) {
+                const std::uint64_t global_index =
+                    (static_cast<std::uint64_t>(shard.rank) << local_qubits) |
+                    static_cast<std::uint64_t>(local_index);
+                Complex phase{1.0, 0.0};
+                switch (mask.y_phase & 3U) {
+                case 0U: break;
+                case 1U: phase = Complex{0.0, 1.0}; break;
+                case 2U: phase = Complex{-1.0, 0.0}; break;
+                case 3U: phase = Complex{0.0, -1.0}; break;
+                }
+                if ((std::popcount(global_index & mask.sign) & 1U) != 0U) {
+                    phase = -phase;
+                }
+                const std::size_t mapped_local =
+                    local_index ^ static_cast<std::size_t>(local_flip);
+                local_values[mask_index] +=
+                    std::conj((*mapped_state)[mapped_local]) * phase *
+                    shard.local_values[local_index];
+            }
+        }
+    }
+
+    std::vector<Complex> global_values(local_values.size(), Complex{0.0, 0.0});
+    std::size_t offset = 0U;
+    while (offset < local_values.size()) {
+        const std::size_t remaining = local_values.size() - offset;
+        const int count = static_cast<int>(std::min<std::size_t>(
+            remaining,
+            static_cast<std::size_t>(std::numeric_limits<int>::max())
+        ));
+        mpi_check(
+            MPI_Allreduce(
+                local_values.data() + offset,
+                global_values.data() + offset,
+                count,
+                MPI_CXX_DOUBLE_COMPLEX,
+                MPI_SUM,
+                MPI_COMM_WORLD
+            ),
+            "MPI_Allreduce"
+        );
+        offset += static_cast<std::size_t>(count);
+    }
+
+    std::vector<Complex> result;
+    result.reserve(result_indices.size());
+    for (const std::size_t index : result_indices) {
+        result.push_back(global_values[index]);
+    }
+    return result;
+#endif
+}
+
+}  // namespace detail
 
 }  // namespace qupy

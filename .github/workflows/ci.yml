@@ -74,6 +74,33 @@ jobs:
       - name: Run sanitizer tests
         run: ctest --test-dir build/sanitizers --output-on-failure
 
+  mpi-runtime:
+    runs-on: ubuntu-latest
+    env:
+      OMPI_MCA_rmaps_base_oversubscribe: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OpenMPI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin
+      - name: Configure MPI runtime
+        run: >-
+          cmake -S . -B build/mpi
+          -DQUPY_BUILD_PYTHON=OFF
+          -DQUPY_BUILD_TESTS=ON
+          -DQUPY_WARNINGS_AS_ERRORS=ON
+          -DQUPY_ENABLE_MPI=ON
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Build MPI runtime
+        run: cmake --build build/mpi --target qupy_mpi_tests --parallel 4
+      - name: Test 2-rank and 4-rank MPI reductions
+        run: >-
+          ctest --test-dir build/mpi -R '^qupy_mpi_'
+          --output-on-failure --no-tests=error
+
   python-api:
     runs-on: ubuntu-latest
     strategy:
