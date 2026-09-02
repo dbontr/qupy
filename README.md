@@ -78,7 +78,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - semantics-preserving circuit optimization with cancellation, rotation merging, and disjoint-gate commutation
 - exact density-matrix simulation with built-in noise channels and validated custom single-qubit Kraus channels
 - Runge-Kutta integration of the GKSL/Lindblad master equation
-- optional MPI distributed state-vector execution with fail-closed capability detection
+- optional MPI distributed state-vector execution and exact distributed Pauli/Hamiltonian reductions with fail-closed capability detection
 - OpenQASM 3.1 and QIR Base Profile interchange plus a stable provider plug-in C ABI
 - detector error models, deterministic syndrome sampling, and a reference maximum-likelihood decoder
 - probabilities, Pauli-Z expectations, and Pauli-Z variances
@@ -269,7 +269,7 @@ The optimizer preserves program semantics. Level 1 performs local inverse cancel
 
 The CUDA target provides explicit native state-vector and GPU-resident arbitrary-Pauli reduction. Rich non-Clifford observable requests can execute their reduced state on CUDA and return only reduced observable values. Multi-GPU CUDA execution remains outside the current target; the distributed state-vector implementation is MPI-based.
 
-When QuPy is built with MPI C++ support, `distributed_statevector` shards amplitudes across a power-of-two communicator and implements local and cross-rank H/X/Y/Z/RX/RY/RZ/CX/CZ/SWAP execution. Builds without MPI expose the capability state and fail closed rather than silently substituting local execution.
+When QuPy is built with MPI C++ support, `distributed_statevector` shards amplitudes across a power-of-two communicator and implements local and cross-rank H/X/Y/Z/RX/RY/RZ/CX/CZ/SWAP execution. Rich observables accept `backend="native-mpi"` for exact expectation, variance, covariance, and multi-observable reduction. Pauli terms reuse peer-shard exchanges by rank-flip pattern and combine only compact complex reductions with `MPI_Allreduce`; QuPy does not gather the complete distributed state to evaluate these observables. Parameter-shift differentiation can use the same backend. Automatic MPI routing remains disabled until host/topology calibration evidence is available. Builds without MPI expose the capability state and fail closed rather than silently substituting local execution.
 
 ### QPU interchange and provider ABI
 
@@ -296,6 +296,8 @@ cmake -S . -B build/native -DQUPY_BUILD_PYTHON=OFF -DQUPY_BUILD_TESTS=ON -DCMAKE
 cmake --build build/native
 ctest --test-dir build/native --output-on-failure
 ```
+
+If CMake finds an MPI C++ implementation, the native test build also creates `qupy_mpi_2` and `qupy_mpi_4`. These tests run the same exact observable reductions with two and four ranks and compare them with the native CPU results.
 
 The distribution name is `qupy-compute`. The import package is `qupy`.
 

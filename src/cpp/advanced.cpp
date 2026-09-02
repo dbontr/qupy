@@ -1,6 +1,7 @@
 #include "qupy/advanced.hpp"
 
 #include "cuda_driver.hpp"
+#include "distributed.hpp"
 
 #include <algorithm>
 #include <array>
@@ -580,6 +581,100 @@ struct CudaLinearTerm {
         throw std::domain_error(std::string(label) + " acquired an invalid imaginary part");
     }
     return value.real();
+}
+
+class MpiPauliQuery {
+public:
+    [[nodiscard]] std::size_t add(const std::vector<PauliFactor>& factors) {
+        std::vector<std::pair<std::size_t, std::uint8_t>> key;
+        key.reserve(factors.size());
+        for (const PauliFactor& factor : factors) {
+            key.emplace_back(factor.qubit, static_cast<std::uint8_t>(factor.pauli));
+        }
+        const auto found = indices_.find(key);
+        if (found != indices_.end()) {
+            return found->second;
+        }
+        const std::size_t index = factors_.size();
+        indices_.emplace(std::move(key), index);
+        factors_.push_back(factors);
+        return index;
+    }
+
+    [[nodiscard]] std::vector<Complex> evaluate(const Program& program) const {
+        return detail::distributed_pauli_expectations(program, factors_);
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept { return factors_.size(); }
+
+private:
+    std::map<std::vector<std::pair<std::size_t, std::uint8_t>>, std::size_t> indices_;
+    std::vector<std::vector<PauliFactor>> factors_;
+};
+
+struct MpiLinearTerm {
+    std::size_t index;
+    Complex coefficient;
+};
+
+[[nodiscard]] std::vector<MpiLinearTerm> index_mpi_observable(
+    MpiPauliQuery& query,
+    const Observable& value
+) {
+    std::vector<MpiLinearTerm> result;
+    result.reserve(value.terms().size());
+    for (const PauliTerm& term : value.terms()) {
+        result.push_back({query.add(term.factors()), Complex{term.coefficient(), 0.0}});
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<MpiLinearTerm> index_mpi_observable_product(
+    MpiPauliQuery& query,
+    const Observable& left,
+    const Observable& right
+) {
+    std::vector<MpiLinearTerm> result;
+    if (left.terms().size() > 0U &&
+        right.terms().size() > std::numeric_limits<std::size_t>::max() / left.terms().size()) {
+        throw std::length_error("observable product term count exceeds native range");
+    }
+    result.reserve(left.terms().size() * right.terms().size());
+    for (const PauliTerm& left_term : left.terms()) {
+        for (const PauliTerm& right_term : right.terms()) {
+            PauliProduct product = multiply_pauli_terms(left_term, right_term);
+            result.push_back({
+                query.add(product.factors),
+                left_term.coefficient() * right_term.coefficient() * product.phase,
+            });
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] Complex evaluate_mpi_linear(
+    const std::vector<Complex>& values,
+    const std::vector<MpiLinearTerm>& terms
+) {
+    Complex result{0.0, 0.0};
+    for (const MpiLinearTerm& term : terms) {
+        if (term.index >= values.size()) {
+            throw std::logic_error("MPI Pauli query returned an incomplete result");
+        }
+        result += term.coefficient * values[term.index];
+    }
+    return result;
+}
+
+[[nodiscard]] double hermitian_mpi_value(Complex value, std::string_view label) {
+    if (std::abs(value.imag()) > kHermitianTolerance) {
+        throw std::domain_error(std::string(label) + " acquired an invalid imaginary part");
+    }
+    return value.real();
+}
+
+[[nodiscard]] bool explicit_mpi_backend(const std::string& backend) {
+    return backend == "mpi" || backend == "native-mpi";
 }
 
 [[nodiscard]] bool explicit_cuda_backend(const std::string& backend) {
@@ -1368,6 +1463,41 @@ ObservableExecutionPlan observable_plan(
         query_text << "observable " << value.fingerprint() << '\n';
     }
     const std::string query_fingerprint = fingerprint_text(query_text.str());
+    if (explicit_mpi_backend(backend)) {
+        if (!mpi_compiled()) {
+            throw std::runtime_error(
+                "MPI support is not compiled; rebuild QuPy with an MPI C++ implementation available"
+            );
+        }
+        if (reduced.active_qubits >= std::numeric_limits<std::size_t>::digits) {
+            throw std::length_error("distributed statevector exceeds native address space");
+        }
+        const std::size_t dimension = std::size_t{1} << reduced.active_qubits;
+        if (dimension > std::numeric_limits<std::size_t>::max() / sizeof(Complex)) {
+            throw std::length_error("distributed statevector exceeds native address space");
+        }
+        const DistributedInfo topology = distributed_info();
+        if (topology.world_size == 0U ||
+            (topology.world_size & (topology.world_size - 1U)) != 0U) {
+            throw std::invalid_argument("distributed statevector requires a power-of-two MPI world size");
+        }
+        if (topology.world_size > dimension) {
+            throw std::invalid_argument("MPI world size exceeds the state-vector dimension");
+        }
+        const std::size_t state_bytes = dimension * sizeof(Complex);
+        const std::size_t local_state_bytes = state_bytes / topology.world_size;
+        const std::string cache_key = fingerprint_text(
+            "qupy-observable-cache 1\nprogram " + program.fingerprint() +
+            "\nquery " + query_fingerprint +
+            "\nbackend native-mpi\nmethod mpi-pauli-reduction\nworld-size " +
+            std::to_string(topology.world_size) + "\nruntime " + topology.runtime + "\n"
+        );
+        return {
+            "native-mpi", "mpi-pauli-reduction", true, reduced.active_qubits, values.size(),
+            term_count, group_count, local_state_bytes, program.fingerprint(), query_fingerprint,
+            cache_key, std::nullopt, {},
+        };
+    }
     if (use_rich_pauli_propagation(reduced.program, backend)) {
         const std::string cache_key = fingerprint_text(
             "qupy-observable-cache 1\nprogram " + program.fingerprint() +
@@ -1567,6 +1697,19 @@ ObservableResult expect_observable(
             reduced.observables.front().terms().size(),
         };
     }
+    if (explicit_mpi_backend(backend)) {
+        MpiPauliQuery query;
+        const std::vector<MpiLinearTerm> indexed = index_mpi_observable(
+            query, reduced.observables.front()
+        );
+        const std::vector<Complex> values = query.evaluate(reduced.program);
+        return {
+            hermitian_mpi_value(evaluate_mpi_linear(values, indexed), "observable expectation"),
+            "native-mpi",
+            reduced.active_qubits,
+            query.size(),
+        };
+    }
     if (use_cuda_observable(reduced.program, backend, cost_model)) {
         CudaPauliQuery query;
         const std::vector<CudaLinearTerm> indexed = index_observable(
@@ -1608,6 +1751,24 @@ ObservableResult variance_observable(
         double result = second.real() - mean * mean;
         if (result < 0.0 && result > -1e-12) result = 0.0;
         return {result, "native-cpu", reduced.active_qubits, observable_value.terms().size()};
+    }
+    if (explicit_mpi_backend(backend)) {
+        const Observable& observable_value = reduced.observables.front();
+        MpiPauliQuery query;
+        const std::vector<MpiLinearTerm> indexed = index_mpi_observable(query, observable_value);
+        const std::vector<MpiLinearTerm> squared = index_mpi_observable_product(
+            query, observable_value, observable_value
+        );
+        const std::vector<Complex> values = query.evaluate(reduced.program);
+        const double mean = hermitian_mpi_value(
+            evaluate_mpi_linear(values, indexed), "observable expectation"
+        );
+        const double second = hermitian_mpi_value(
+            evaluate_mpi_linear(values, squared), "observable variance"
+        );
+        double result = second - mean * mean;
+        if (result < 0.0 && result > -1e-12) result = 0.0;
+        return {result, "native-mpi", reduced.active_qubits, query.size()};
     }
     if (use_cuda_observable(reduced.program, backend, cost_model)) {
         const Observable& observable_value = reduced.observables.front();
@@ -1659,6 +1820,32 @@ ObservableResult covariance_observable(
             "native-cpu",
             reduced.active_qubits,
             reduced.observables[0].terms().size() + reduced.observables[1].terms().size(),
+        };
+    }
+    if (explicit_mpi_backend(backend)) {
+        MpiPauliQuery query;
+        const std::vector<MpiLinearTerm> left_indexed = index_mpi_observable(
+            query, reduced.observables[0]
+        );
+        const std::vector<MpiLinearTerm> right_indexed = index_mpi_observable(
+            query, reduced.observables[1]
+        );
+        const std::vector<MpiLinearTerm> product_indexed = index_mpi_observable_product(
+            query, reduced.observables[0], reduced.observables[1]
+        );
+        const std::vector<Complex> values = query.evaluate(reduced.program);
+        const double left_mean = hermitian_mpi_value(
+            evaluate_mpi_linear(values, left_indexed), "left observable expectation"
+        );
+        const double right_mean = hermitian_mpi_value(
+            evaluate_mpi_linear(values, right_indexed), "right observable expectation"
+        );
+        const Complex product = evaluate_mpi_linear(values, product_indexed);
+        return {
+            product.real() - left_mean * right_mean,
+            "native-mpi",
+            reduced.active_qubits,
+            query.size(),
         };
     }
     if (use_cuda_observable(reduced.program, backend, cost_model)) {
@@ -1718,6 +1905,21 @@ ObservableBatch expect_observables(
             results.push_back(propagated_observable_expectation(reduced.program, value));
         }
         return {std::move(results), values.size(), "native-cpu", reduced.active_qubits};
+    }
+    if (explicit_mpi_backend(backend)) {
+        MpiPauliQuery query;
+        std::vector<std::vector<MpiLinearTerm>> indexed;
+        indexed.reserve(reduced.observables.size());
+        for (const Observable& value : reduced.observables) {
+            indexed.push_back(index_mpi_observable(query, value));
+        }
+        const std::vector<Complex> mpi_values = query.evaluate(reduced.program);
+        for (const auto& terms : indexed) {
+            results.push_back(hermitian_mpi_value(
+                evaluate_mpi_linear(mpi_values, terms), "observable expectation"
+            ));
+        }
+        return {std::move(results), values.size(), "native-mpi", reduced.active_qubits};
     }
     if (use_cuda_observable(reduced.program, backend, cost_model)) {
         CudaPauliQuery query;

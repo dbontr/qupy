@@ -154,6 +154,18 @@ void test_qec_interchange_and_distributed_capability() {
     const auto info = qupy::distributed_info();
     require(info.world_size >= 1U, "distributed world size mismatch");
     require(info.rank < info.world_size, "distributed rank mismatch");
+    if (!qupy::mpi_compiled()) {
+        const qupy::Observable xx({
+            qupy::PauliTerm(1.0, {{0U, qupy::Pauli::X}, {1U, qupy::Pauli::X}}),
+        });
+        bool plan_rejected = false;
+        try {
+            static_cast<void>(qupy::observable_plan(bell, {xx}, "native-mpi"));
+        } catch (const std::runtime_error&) {
+            plan_rejected = true;
+        }
+        require(plan_rejected, "MPI observable plan did not fail closed");
+    }
 }
 void test_provider_plugin() {
     qupy::ProviderPlugin provider(QUPY_TEST_PROVIDER_PATH);
