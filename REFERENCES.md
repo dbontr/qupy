@@ -35,3 +35,20 @@
 - [setup-uv](https://github.com/astral-sh/setup-uv) — Astral, v9.0.0. Used for: pinned uv installation in GitHub Actions CI.
 - [actions/checkout](https://github.com/actions/checkout) — GitHub, v7.0.1. Used for: source checkout in CI with an immutable commit pin.
 - [actions/setup-python](https://github.com/actions/setup-python) — GitHub, v7.0.0. Used for: Python matrix setup in CI with an immutable commit pin.
+
+## Quantum differentiation
+- [Evaluating analytic gradients on quantum hardware](https://doi.org/10.1103/PhysRevA.99.032331) — Maria Schuld, Ville Bergholm, Christian Gogolin, Josh Izaac, and Nathan Killoran, Physical Review A 99, 032331 (2019). Used for: analytic parameter-shift differentiation of variational quantum circuits.
+- [General parameter-shift rules for quantum gradients](https://arxiv.org/abs/2107.12390) — David Wierichs, Josh Izaac, Cody Wang, and Cedric Yen-Yu Lin (2021). Used for: higher-order parameter-shift structure and resource analysis.
+- [Efficient calculation of gradients in classical simulations of variational quantum algorithms](https://arxiv.org/abs/2009.02823) — Tyson Jones and Julien Gacon (2020). Used for: reverse/adjoint state-vector gradient architecture.
+
+## Open-system dynamics
+- [Completely positive dynamical semigroups of N-level systems](https://doi.org/10.1063/1.522979) — Vittorio Gorini, Andrzej Kossakowski, and E. C. G. Sudarshan, Journal of Mathematical Physics 17 (1976). Used for: the GKSL generator and Markovian open-system evolution.
+- [On the generators of quantum dynamical semigroups](https://doi.org/10.1007/BF01608499) — Goran Lindblad, Communications in Mathematical Physics 48 (1976). Used for: the Lindblad master-equation generator and completely positive dynamics.
+
+## QPU interchange and distributed execution
+- [OpenQASM 3.1 Specification](https://openqasm.com/versions/3.1/index.html) — OpenQASM contributors, specification 3.1. Used for: portable textual quantum-program interchange and gate/measurement syntax.
+- [QIR Base Profile](https://github.com/qir-alliance/qir-spec/blob/main/specification/profiles/Base_Profile.md) — QIR Alliance. Used for: LLVM-based QIR entry-point, profile, qubit/result, and output-recording requirements.
+- [MPI: A Message-Passing Interface Standard Version 5.0](https://www.mpi-forum.org/docs/mpi-5.0/mpi50-report/mpi50-report.htm) — MPI Forum, MPI 5.0 (2025). Used for: distributed state-vector point-to-point communication, communicator, and initialization semantics.
+
+## Quantum error correction
+- [Stim detector error model format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md) — Google Quantum AI, Stim. Used for: detector-event, independent-error-mechanism, and logical-frame-change semantics used by QuPy detector models.

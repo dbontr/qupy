@@ -13,6 +13,8 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
+void bind_advanced(nb::module_& module);
+
 namespace {
 
 using ComplexArray = nb::ndarray<
@@ -415,6 +417,8 @@ NB_MODULE(_native, module) {
         },
         "program"_a, "observable"_a, "backend"_a = "auto", "cost_model"_a = nb::none()
     );
+
+    bind_advanced(module);
 
     module.def("core_language", &qupy::core_language);
     module.def("core_version", &qupy::core_version);

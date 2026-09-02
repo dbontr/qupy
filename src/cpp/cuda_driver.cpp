@@ -332,7 +332,7 @@ public:
     [[nodiscard]] const std::string& device_name() const noexcept { return device_name_; }
     [[nodiscard]] int driver_version() const noexcept { return driver_version_; }
     [[nodiscard]] std::size_t total_memory() const noexcept { return total_memory_; }
-    [[nodiscard]] std::vector<Complex> statevector(
+    [[nodiscard, maybe_unused]] std::vector<Complex> statevector(
         std::size_t num_qubits,
         const std::vector<CudaStep>& steps
     );
@@ -482,7 +482,7 @@ void CudaRuntime::launch(
     );
 }
 
-std::vector<Complex> CudaRuntime::statevector(
+[[maybe_unused]] std::vector<Complex> CudaRuntime::statevector(
     std::size_t num_qubits,
     const std::vector<CudaStep>& steps
 ) {

@@ -10,8 +10,18 @@ option(QUPY_BUILD_PYTHON "Build the Python extension" ON)
 option(QUPY_BUILD_TESTS "Build native C++ tests" OFF)
 option(QUPY_WARNINGS_AS_ERRORS "Treat native compiler warnings as errors" OFF)
 option(QUPY_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(QUPY_ENABLE_MPI "Enable MPI distributed execution when an MPI runtime is available" ON)
 
-add_library(qupy_core STATIC src/cpp/core.cpp src/cpp/cuda_driver.cpp src/cpp/mps.cpp src/cpp/stabilizer.cpp)
+add_library(
+    qupy_core STATIC
+    src/cpp/core.cpp
+    src/cpp/advanced.cpp
+    src/cpp/cuda_driver.cpp
+    src/cpp/distributed.cpp
+    src/cpp/mps.cpp
+    src/cpp/provider.cpp
+    src/cpp/stabilizer.cpp
+)
 target_compile_features(qupy_core PUBLIC cxx_std_20)
 target_include_directories(
     qupy_core
@@ -43,11 +53,23 @@ if(OpenMP_CXX_FOUND)
     target_compile_definitions(qupy_core PUBLIC QUPY_HAS_OPENMP=1)
 endif()
 
+if(QUPY_ENABLE_MPI)
+    find_package(MPI QUIET COMPONENTS CXX)
+    if(MPI_CXX_FOUND)
+        target_link_libraries(qupy_core PUBLIC MPI::MPI_CXX)
+        target_compile_definitions(qupy_core PUBLIC QUPY_HAS_MPI=1)
+    endif()
+endif()
+
 if(QUPY_BUILD_PYTHON)
     find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module)
     find_package(nanobind CONFIG REQUIRED)
 
-    nanobind_add_module(_native NB_STATIC src/cpp/bindings.cpp)
+    nanobind_add_module(
+        _native NB_STATIC
+        src/cpp/bindings.cpp
+        src/cpp/advanced_bindings.cpp
+    )
     target_compile_features(_native PRIVATE cxx_std_20)
     target_link_libraries(_native PRIVATE qupy_core)
     if(MSVC)
@@ -80,4 +102,38 @@ if(QUPY_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME qupy_core_tests COMMAND qupy_core_tests)
+
+    add_library(qupy_test_provider SHARED tests/cpp/provider_fixture.cpp)
+    target_compile_features(qupy_test_provider PRIVATE cxx_std_20)
+    target_include_directories(qupy_test_provider PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+    add_executable(qupy_advanced_tests tests/cpp/test_advanced.cpp)
+    target_compile_features(qupy_advanced_tests PRIVATE cxx_std_20)
+    target_link_libraries(qupy_advanced_tests PRIVATE qupy_core)
+    target_compile_definitions(
+        qupy_advanced_tests PRIVATE
+        QUPY_TEST_PROVIDER_PATH="$<TARGET_FILE:qupy_test_provider>"
+    )
+    add_dependencies(qupy_advanced_tests qupy_test_provider)
+
+    if(MSVC)
+        target_compile_options(qupy_test_provider PRIVATE /W4 /permissive-)
+        target_compile_options(qupy_advanced_tests PRIVATE /W4 /permissive-)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_test_provider PRIVATE /WX)
+            target_compile_options(qupy_advanced_tests PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(qupy_test_provider PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(qupy_advanced_tests PRIVATE -Wall -Wextra -Wpedantic)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_test_provider PRIVATE -Werror)
+            target_compile_options(qupy_advanced_tests PRIVATE -Werror)
+        endif()
+        if(QUPY_ENABLE_SANITIZERS)
+            target_compile_options(qupy_advanced_tests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+            target_link_options(qupy_advanced_tests PRIVATE -fsanitize=address,undefined)
+        endif()
+    endif()
+    add_test(NAME qupy_advanced_tests COMMAND qupy_advanced_tests)
 endif()

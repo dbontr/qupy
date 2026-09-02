@@ -1,6 +1,6 @@
 # QuPy
 
-QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, versioned program IR, target validation, planning, simulation, sampling, probabilities, expectations, and variances.
+QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, versioned program IR, target validation, planning, simulation, sampling, rich observables, differentiation, mixed-state dynamics, distributed execution, QEC primitives, and provider interchange.
 
 Python is the user-facing language. It does not implement the quantum simulator. NumPy provides an interoperable array surface for native results.
 
@@ -69,6 +69,17 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - exact adaptive MPS/dense observable execution behind validated host-scoped planner evidence
 - exact bit-packed stabilizer sampling for large Clifford programs with polynomial state memory
 - exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones
+- arbitrary real Pauli-sum observables, Hamiltonians, expectation, variance, symmetrized covariance, and multi-observable batches
+- commuting and qubit-wise measurement grouping with deterministic shot-based observable estimation
+- exact polynomial Pauli propagation for arbitrary Pauli strings and Pauli sums on Clifford circuits
+- query-aware observable execution plans with cache identity and planner-cost provenance
+- native value/gradient, Jacobian, and Hessian evaluation with adjoint, parameter-shift, and finite-difference methods
+- semantics-preserving circuit optimization with cancellation, rotation merging, and disjoint-gate commutation
+- exact density-matrix simulation with built-in noise channels and validated custom single-qubit Kraus channels
+- Runge-Kutta integration of the GKSL/Lindblad master equation
+- optional MPI distributed state-vector execution with fail-closed capability detection
+- OpenQASM 3.1 and QIR Base Profile interchange plus a stable provider plug-in C ABI
+- detector error models, deterministic syndrome sampling, and a reference maximum-likelihood decoder
 - probabilities, Pauli-Z expectations, and Pauli-Z variances
 - platform-independent deterministic seeded sampling
 - read-only zero-copy NumPy views over native state, probability, and sample storage
@@ -219,6 +230,51 @@ The gate on qubit 99 is outside the causal cone and is removed before method sel
 
 Entangling gates expand the causal cone when they can affect the observable. The reduction and Pauli method are exact and do not use truncation, sampling, or approximation. Native conformance includes a 4,096-qubit entangled Clifford cone that is evaluated with zero state-vector bytes.
 
+## Quantum numerical computing
+
+QuPy treats an observable query as a numerical result request rather than as a simulator-specific operation. `Observable` represents a real weighted sum of Pauli strings. Expectation, variance, covariance, multi-observable batches, commuting groups, qubit-wise measurement groups, and shot-based estimates use this shared representation.
+
+```python
+hamiltonian = qp.Observable([
+    qp.PauliTerm(0.5, [qp.PauliFactor(0, qp.Pauli.X), qp.PauliFactor(1, qp.Pauli.X)]),
+    qp.PauliTerm(0.25, [qp.PauliFactor(0, qp.Pauli.Z), qp.PauliFactor(1, qp.Pauli.Z)]),
+])
+energy = qp.expect(program, hamiltonian)
+plan = qp.observable_plan(program, [hamiltonian])
+```
+
+For Clifford circuits, arbitrary Pauli strings and Pauli sums can use exact backward Pauli propagation with zero dense-state storage. Other observable requests use the reduced causal cone and the established state-vector planner. A validated CPU/CUDA cost artifact can therefore route a non-Clifford observable through CUDA without moving policy into Python.
+
+### Differentiation and circuit optimization
+
+`value_and_grad`, `grad`, `jacobian`, and `hessian` operate on native parameter slots. Automatic first derivatives select the native adjoint method when its state workspace fits the configured exact-memory bound and otherwise use parameter shift. Parameter shift and finite difference remain explicit choices. Hessians use exact parameter-shift identities for the supported RX, RY, and RZ parameterization.
+
+```python
+result = qp.value_and_grad(template, hamiltonian, slots, parameters)
+jac = qp.jacobian(template, observables, slots, parameters)
+hess = qp.hessian(template, hamiltonian, slots, parameters)
+optimized = qp.optimize(template, level=2)
+```
+
+The optimizer preserves program semantics. Level 1 performs local inverse cancellation and same-axis rotation merging. Level 2 can commute operations on disjoint qubits to expose additional reductions.
+
+### Mixed-state and open-system execution
+
+`density_matrix` executes pure or noisy programs exactly in density-matrix form. Built-in channels include bit flip, phase flip, depolarizing, amplitude damping, phase damping, and general Pauli noise. `kraus_channel` accepts validated single-qubit operator-sum channels and rejects operators that do not satisfy the trace-preserving completeness relation. `lindblad_evolve` integrates the GKSL/Lindblad master equation with fourth-order Runge-Kutta steps.
+
+### Distributed and accelerator execution
+
+The CUDA target remains an explicit native state-vector target and participates in validated automatic state-vector selection. Rich non-Clifford observable requests can execute their reduced state on CUDA and perform the observable reduction through the native result path. QuPy does not expose GPU-native arbitrary-Pauli reductions or multi-GPU CUDA kernels.
+
+When QuPy is built with MPI C++ support, `distributed_statevector` shards amplitudes across a power-of-two communicator and implements local and cross-rank H/X/Y/Z/RX/RY/RZ/CX/CZ/SWAP execution. Builds without MPI expose the capability state and fail closed rather than silently substituting local execution.
+
+### QPU interchange and provider ABI
+
+`to_openqasm3` emits OpenQASM 3.1 source and `to_qir_base_profile` emits LLVM IR that targets the QIR Base Profile. A versioned C provider ABI supports capability discovery, submit, poll, result, cancel, and teardown operations. Vendor adapters remain outside the QuPy core so remote credentials and service policy do not enter the numerical runtime.
+
+### Error-correction primitives
+
+`DetectorModel` represents independent detector-error mechanisms and logical frame changes. QuPy can construct repetition-code models, sample deterministic syndrome streams, and run an exact reference maximum-likelihood decoder. The reference decoder is intentionally bounded to 24 mechanisms; production large-code decoding requires a specialized decoder implementation.
 ## Build and test
 
 QuPy requires Python 3.12 or newer and a C++20 compiler. Python packaging uses scikit-build-core and nanobind.
@@ -260,7 +316,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when explicitly supplied. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. Noise, richer observables, and physical-QPU targets remain gated on their own semantic, conformance, and planner evidence.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when explicitly supplied. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. Rich observables, gradients, mixed-state dynamics, provider interchange, detector models, and optional distributed execution share the same native-first semantics. Automatic routing remains evidence-gated: QuPy does not claim an execution path until the target is executable and its required planner evidence is valid.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 
