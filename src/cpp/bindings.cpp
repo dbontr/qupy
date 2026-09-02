@@ -267,6 +267,10 @@ NB_MODULE(_native, module) {
     module.def("Z", &qupy::pauli_z, "qubit"_a);
 
     module.def("native_target", &qupy::native_target);
+    module.def("cuda_available", &qupy::cuda_available);
+    module.def("cuda_unavailable_reason", &qupy::cuda_unavailable_reason);
+    module.def("cuda_device_name", &qupy::cuda_device_name);
+    module.def("cuda_target", &qupy::cuda_target);
     module.def("planner_host_fingerprint", &qupy::planner_host_fingerprint);
     module.def("load_planner_cost_model", &qupy::load_planner_cost_model, "path"_a);
     module.def(

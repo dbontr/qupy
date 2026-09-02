@@ -204,6 +204,10 @@ struct Variance {
 };
 
 [[nodiscard]] Target native_target();
+[[nodiscard]] bool cuda_available() noexcept;
+[[nodiscard]] std::string cuda_unavailable_reason();
+[[nodiscard]] std::string cuda_device_name();
+[[nodiscard]] Target cuda_target();
 [[nodiscard]] std::string planner_host_fingerprint();
 [[nodiscard]] PlannerCostModel load_planner_cost_model(const std::string& path);
 [[nodiscard]] ExecutionPlan plan(

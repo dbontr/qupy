@@ -210,6 +210,17 @@ void test_native_planner_cost_artifact() {
         stabilizer_plan.cost_model_fingerprint.empty(),
         "unsupported stabilizer plan claimed cost-model provenance"
     );
+    if (qupy::cuda_available()) {
+        const auto cuda_plan = qupy::plan(
+            program, qupy::ResultMode::StateVector, "native-cuda", &model
+        );
+        require(cuda_plan.method == "cuda-statevector", "cost evidence blocked CUDA planning");
+        require(!cuda_plan.predicted_ns.has_value(), "CPU cost model predicted a CUDA plan");
+        require(
+            cuda_plan.cost_model_fingerprint.empty(),
+            "unsupported CUDA plan claimed cost-model provenance"
+        );
+    }
     require(std::filesystem::remove(artifact), "planner cost fixture was not removed");
 }
 
@@ -716,6 +727,60 @@ void test_probabilities_and_variance() {
     require(expectation_key != variance_key, "expectation and variance share a cache key");
 }
 
+void test_cuda_statevector_backend() {
+    qupy::Program program(3U);
+    program = qupy::h(program, 0U);
+    program = qupy::x(program, 1U);
+    program = qupy::y(program, 2U);
+    program = qupy::z(program, 0U);
+    program = qupy::rx(program, -0.21, 1U);
+    program = qupy::ry(program, 0.37, 2U);
+    program = qupy::rz(program, 0.19, 0U);
+    program = qupy::cx(program, 0U, 2U);
+    program = qupy::cz(program, 1U, 2U);
+    program = qupy::swap(program, 0U, 1U);
+
+    if (!qupy::cuda_available()) {
+        require(!qupy::cuda_unavailable_reason().empty(), "missing CUDA failure reason");
+        bool rejected = false;
+        try {
+            static_cast<void>(qupy::statevector(program, "native-cuda"));
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        require(rejected, "unavailable CUDA backend did not fail closed");
+        return;
+    }
+
+    const auto target = qupy::cuda_target();
+    require(target.name == "native-cuda", "CUDA target name is wrong");
+    require(target.simulator && target.state_access, "CUDA target capabilities are wrong");
+    require(!target.parameter_batches, "CUDA target exposed unsupported parameter batches");
+    require(target.supports(qupy::ResultMode::StateVector), "CUDA target lacks statevector result");
+    require(!target.supports(qupy::ResultMode::Sample), "CUDA target exposed sampling");
+
+    const auto plan = qupy::plan(program, qupy::ResultMode::StateVector, "native-cuda");
+    require(plan.backend == "native-cuda", "CUDA plan backend is wrong");
+    require(plan.method == "cuda-statevector", "CUDA plan method is wrong");
+    require(plan.threads == 1U, "CUDA plan reported CPU threads");
+    require(!plan.predicted_ns.has_value(), "CPU cost model leaked into CUDA plan");
+
+    const auto cpu = qupy::statevector(program, "native-cpu");
+    const auto gpu = qupy::statevector(program, "native-cuda");
+    require(cpu.values.size() == gpu.values.size(), "CUDA state dimension is wrong");
+    for (std::size_t index = 0U; index < cpu.values.size(); ++index) {
+        require_close(gpu.values[index], cpu.values[index], "CUDA statevector diverged from CPU");
+    }
+
+    bool rejected = false;
+    try {
+        static_cast<void>(qupy::sample(program, 8U, 7U, "native-cuda"));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "CUDA backend silently accepted unsupported sampling");
+}
+
 void test_validation() {
     bool rejected = false;
     try {
@@ -765,6 +830,7 @@ int main() {
         test_pauli_propagation_matches_dense_statevector();
         test_large_clifford_cone_avoids_statevector_allocation();
         test_probabilities_and_variance();
+        test_cuda_statevector_backend();
         test_validation();
         std::cout << "QuPy native core tests: PASS\n";
         return 0;

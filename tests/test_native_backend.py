@@ -372,6 +372,51 @@ def test_pauli_propagation_tracks_entanglement_and_ignores_unrelated_rotations()
     assert result.estimated_state_bytes == 0
 
 
+def test_cuda_statevector_backend_is_explicit_and_fail_closed() -> None:
+    program = qp.Program(3)
+    program = qp.h(program, 0)
+    program = qp.x(program, 1)
+    program = qp.y(program, 2)
+    program = qp.z(program, 0)
+    program = qp.rx(program, -0.21, 1)
+    program = qp.ry(program, 0.37, 2)
+    program = qp.rz(program, 0.19, 0)
+    program = qp.cx(program, 0, 2)
+    program = qp.cz(program, 1, 2)
+    program = qp.swap(program, 0, 1)
+
+    if not qp.cuda_available():
+        assert qp.cuda_unavailable_reason()
+        with pytest.raises(RuntimeError):
+            qp.cuda_target()
+        with pytest.raises(RuntimeError):
+            qp.statevector(program, backend="native-cuda")
+        return
+
+    target = qp.cuda_target()
+    assert target.name == "native-cuda"
+    assert target.simulator and target.state_access
+    assert not target.parameter_batches
+    assert target.supports_result(qp.ResultMode.STATEVECTOR)
+    assert not target.supports_result(qp.ResultMode.SAMPLE)
+    assert target.max_qubits is not None and target.max_qubits >= 3
+    assert qp.cuda_device_name()
+
+    plan = qp.plan(program, qp.ResultMode.STATEVECTOR, backend="native-cuda")
+    assert plan.backend == "native-cuda"
+    assert plan.method == "cuda-statevector"
+    assert plan.threads == 1
+    assert plan.predicted_ns is None
+
+    cpu = qp.statevector(program, backend="native-cpu")
+    gpu = qp.statevector(program, backend="native-cuda")
+    np.testing.assert_allclose(gpu.values, cpu.values, atol=2e-12, rtol=2e-12)
+    assert gpu.backend == "native-cuda"
+
+    with pytest.raises(ValueError, match="requested result mode"):
+        qp.sample(program, backend="native-cuda")
+
+
 def test_native_cost_model_is_inspectable_without_changing_selection(tmp_path) -> None:
     artifact = tmp_path / "planner.qpcost"
     artifact.write_text(

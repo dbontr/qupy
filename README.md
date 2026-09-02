@@ -47,6 +47,7 @@ C++20 QuPy core
     |-- result-aware execution planner and cache identity
     |-- exact Pauli propagation for eligible observables
     |-- bit-packed stabilizer sampling for large Clifford programs
+    |-- CUDA Driver API state-vector execution with embedded PTX
     |-- gate kernels and state-vector runtime
     |-- sampling and expectation evaluation
     `-- typed result storage
@@ -64,7 +65,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - SHA-256 program and target fingerprints for execution identity
 - explicit target capabilities and result-aware execution plans with versioned structural workload fingerprints
 - versioned cache keys that include program, target, result, method, and query identity
-- exact dense state-vector simulation
+- exact dense state-vector simulation on CPU and explicit CUDA targets
 - exact bit-packed stabilizer sampling for large Clifford programs with polynomial state memory
 - exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones
 - probabilities, Pauli-Z expectations, and Pauli-Z variances
@@ -78,6 +79,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - reusable per-thread state workspaces for internal result execution
 - immutable parameter binding with explicit native `ParameterSlot` objects
 - vectorized exact expectation and sampling batches with reusable compiled templates
+- toolkit-free CUDA Driver API loading with PTX JIT when a compatible NVIDIA driver is present
 - compiler-optimized release builds
 - validated host/version-scoped planner cost artifacts with native predicted-runtime introspection
 
@@ -122,6 +124,22 @@ print(plan.cache_key)
 ```
 
 Automatic execution preserves declared semantics. Execution strategies can change without moving backend policy into Python.
+
+### CUDA state-vector execution
+
+QuPy can execute an explicit `native-cuda` state-vector plan when a compatible NVIDIA CUDA driver is present. The core loads the CUDA Driver API at runtime and JIT-loads embedded PTX, so QuPy does not require CUDA Toolkit headers, `nvcc`, or NVRTC to build. CPU-only systems keep the same build and package.
+
+```python
+if qp.cuda_available():
+    plan = qp.plan(program, qp.ResultMode.STATEVECTOR, backend="native-cuda")
+    state = qp.statevector(program, backend="native-cuda")
+    print(qp.cuda_device_name())
+    print(plan.method)  # cuda-statevector
+```
+
+The CUDA target currently exposes exact state-vector results for the same H, X, Y, Z, RX, RY, RZ, CX, CZ, and SWAP program operations as the CPU state-vector path. Unsupported CUDA result modes fail during target validation; QuPy does not silently execute them on the CPU. Device memory is reused between calls, and the public `StateVector` remains native host-owned storage after one device-to-host transfer.
+
+`backend="auto"` does not select CUDA yet. Automatic GPU selection remains gated on validated crossover evidence and planner cost classes for the CUDA method. Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
 
 ### Stabilizer sampling
 
@@ -217,7 +235,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. Workload fingerprint version 1, held-out calibration, and validated native planner cost artifacts provide host-scoped predicted-runtime evidence with explicit provenance for calibrated classes. CUDA/cuQuantum, tensor-network, noise, richer-observable, and physical-QPU engines remain additional planner targets behind the shared conformance boundary.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. An explicit CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. Workload fingerprint version 1, held-out calibration, and validated native planner cost artifacts provide host-scoped predicted-runtime evidence with explicit provenance for calibrated CPU classes. Automatic CUDA selection, tensor-network execution, noise, richer observables, and physical-QPU targets remain gated on their own conformance and planner evidence.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 
