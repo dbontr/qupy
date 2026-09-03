@@ -315,7 +315,6 @@ void append_tensor(
 struct PairChoice {
     std::size_t first = 0U;
     std::size_t second = 0U;
-    std::size_t shared = 0U;
     std::size_t work_rank = std::numeric_limits<std::size_t>::max();
     std::size_t output_rank = std::numeric_limits<std::size_t>::max();
     bool found = false;
@@ -338,7 +337,7 @@ struct PairChoice {
                  std::pair{tensors[first].id, tensors[second].id} <
                      std::pair{tensors[choice.first].id, tensors[choice.second].id});
             if (better) {
-                choice = {first, second, shared, work_rank, output_rank, true};
+                choice = {first, second, work_rank, output_rank, true};
             }
         }
     }
@@ -371,9 +370,17 @@ struct PairChoice {
     std::vector<std::size_t> all_indices = output_indices;
     all_indices.insert(all_indices.end(), shared.begin(), shared.end());
 
+    const std::size_t output_bytes = tensor_bytes(output_indices.size());
+    if (output_bytes > max_tensor_bytes) {
+        throw std::length_error("tensor contraction exceeds max_tensor_bytes");
+    }
     const std::size_t output_count = checked_value_count(output_indices.size());
     const std::size_t assignment_count = checked_value_count(all_indices.size());
-    Tensor result{output_indices, std::vector<Complex>(output_count, Complex{0.0, 0.0}), next_tensor_id};
+    Tensor result{
+        output_indices,
+        std::vector<Complex>(output_count, Complex{0.0, 0.0}),
+        next_tensor_id,
+    };
     observe_tensor(result, max_tensor_bytes, stats);
 
     std::vector<std::size_t> first_positions;
