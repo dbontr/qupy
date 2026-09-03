@@ -15,6 +15,7 @@ using namespace nb::literals;
 
 void bind_advanced(nb::module_& module);
 void bind_circuit(nb::module_& module);
+void bind_compiler(nb::module_& module);
 
 namespace {
 
@@ -435,6 +436,7 @@ NB_MODULE(_native, module) {
 
     bind_advanced(module);
     bind_circuit(module);
+    bind_compiler(module);
 
     module.def("core_language", &qupy::core_language);
     module.def("core_version", &qupy::core_version);

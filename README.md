@@ -1,6 +1,6 @@
 # QuPy
 
-QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, versioned program and hardware-circuit IRs, target validation, planning, simulation, sampling, rich observables, differentiation, mixed-state dynamics, distributed execution, QEC primitives, and provider interchange.
+QuPy is a native quantum numerical-computing library with a compact Python interface. C++20 implements the execution core, versioned program and hardware-circuit IRs, target-aware hardware compilation, target validation, planning, simulation, sampling, rich observables, differentiation, mixed-state dynamics, distributed execution, QEC primitives, and provider interchange.
 
 Python is the user-facing language. It does not implement the quantum simulator. NumPy provides an interoperable array surface for native results.
 
@@ -42,9 +42,11 @@ nanobind extension
     v
 C++20 QuPy core
     |-- immutable Circuit IR for hardware control and OpenQASM interchange
+    |    |-- deterministic HardwareTarget compilation
+    |    |    `-- optimize -> layout -> route -> basis translate -> schedule
     |    `-- exact lowering to Program for unitary circuits
     |-- versioned immutable Program / Operation execution IR
-    |-- deterministic program, circuit, and target fingerprints
+    |-- deterministic program, circuit, hardware-target, and execution-target fingerprints
     |-- target capability validation
     |-- result-aware execution planner and cache identity
     |-- exact Pauli propagation for eligible observables
@@ -66,7 +68,10 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - versioned immutable native program IR with deterministic canonical text
 - versioned immutable hardware-circuit IR with classical bits, measurement, reset, barriers, and single-bit feed-forward conditions
 - exact lossless lowering from unitary `Circuit` objects to the established `Program` execution IR
-- SHA-256 program, circuit, and target fingerprints for semantic and execution identity
+- versioned `HardwareTarget` constraints for physical qubits, basis operations, coupling, measurement/reset/control capabilities, and optional operation durations
+- deterministic native hardware compilation with logical optimization, layout, shortest-path routing, exact basis translation, dependency depth, and optional ASAP scheduling
+- conditional long-range routing that restores the physical mapping on both classical-control outcomes
+- SHA-256 program, circuit, hardware-target, and execution-target fingerprints for semantic and execution identity
 - explicit target capabilities and result-aware execution plans with versioned structural workload fingerprints
 - versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation on CPU and explicit CUDA targets
@@ -124,6 +129,37 @@ print(circuit.fingerprint)
 `Circuit` is immutable and has its own versioned canonical text and SHA-256 identity. A unitary circuit can be lowered with `circuit.to_program()` and therefore uses the complete existing simulator, planner, differentiation, and observable stack. Barriers are ordering constraints and disappear during this lowering. Measurement, reset, or classically conditioned instructions make the circuit hardware-dynamic; `to_program()` rejects them instead of silently changing their meaning.
 
 `Circuit.from_program(program)` performs the reverse unitary conversion. OpenQASM 3.1 emission preserves measurement assignment, reset, barriers, and single-bit `if` feed-forward blocks. The hardware circuit IR version is reported by `qp.circuit_ir_version()` independently of the numerical `qp.ir_version()`.
+
+## Hardware compilation
+
+`HardwareTarget` describes physical compilation constraints independently from simulator `Target`. A target specifies physical qubit capacity, native one- and two-qubit operations, coupling edges, terminal and mid-circuit measurement capabilities, reset, feed-forward control, and optional per-operation timing.
+
+```python
+target = qp.HardwareTarget(
+    "example-qpu",
+    3,
+    [qp.CircuitOperationCode.H, qp.CircuitOperationCode.RZ],
+    [qp.CircuitOperationCode.CZ],
+    [qp.Coupling(0, 1), qp.Coupling(1, 2)],
+    measurement=True,
+    mid_circuit_measurement=True,
+    reset=True,
+    dynamic_control=True,
+)
+
+compiled = qp.compile(circuit, target, optimization_level=2)
+print(compiled.initial_layout)
+print(compiled.final_layout)
+print(compiled.inserted_swaps)
+print(compiled.depth)
+print(compiled.circuit.to_openqasm3())
+```
+
+Compilation optimizes the logical circuit before physical placement, chooses a deterministic degree-aware layout unless one is supplied, routes nonadjacent interactions with shortest-path SWAPs, translates supported exact basis identities such as CX through H-CZ-H, computes dependency depth, and emits an ASAP schedule when complete target durations are available. Unsupported topology, basis operations, measurement/reset capability, or classical feed-forward fail instead of changing semantics.
+
+Terminal measurement and mid-circuit measurement are separate capabilities. Conditioned long-range interactions use conditioned forward and reverse routing SWAPs so the compiler's physical mapping is identical whether the branch executes or not. `CompilationResult` records the initial and final layouts, each operation-count stage, routing SWAPs, decompositions, depth, optional timing schedule, and hardware-target fingerprint.
+
+See [docs/hardware_compilation.md](docs/hardware_compilation.md) for the compiler contract and current target-model ceilings.
 
 ## Parameter binding and batches
 
@@ -332,7 +368,7 @@ When QuPy is built with MPI C++ support, `distributed_statevector` shards amplit
 
 ### QPU interchange and provider ABI
 
-`Circuit.to_openqasm3()` emits OpenQASM 3.1 including hardware-control instructions. The existing `to_openqasm3(program)` path emits OpenQASM for numerical `Program` objects, and `to_qir_base_profile` emits LLVM IR that targets the QIR Base Profile. A versioned C provider ABI supports capability discovery, submit, poll, result, cancel, and teardown operations. Vendor adapters remain outside the QuPy core so remote credentials and service policy do not enter the numerical runtime.
+`Circuit.to_openqasm3()` emits OpenQASM 3.1 including hardware-control instructions. `qp.compile()` produces a physical target-constrained `Circuit` that can be serialized through the same OpenQASM path before provider submission. The existing `to_openqasm3(program)` path emits OpenQASM for numerical `Program` objects, and `to_qir_base_profile` emits LLVM IR that targets the QIR Base Profile. A versioned C provider ABI supports capability discovery, submit, poll, result, cancel, and teardown operations. Vendor adapters remain outside the QuPy core so remote credentials and service policy do not enter the numerical runtime.
 
 ### Error-correction primitives
 
@@ -373,15 +409,15 @@ The distribution name is `qupy-compute`. The import package is `qupy`.
 
 ## Foundation contracts
 
-QuPy separates semantic identity from execution strategy. Numerical Program IR version 1 has deterministic text and SHA-256 fingerprints. Hardware Circuit IR version 1 independently identifies classical-state and device-control semantics without changing the calibrated Program workload schema. Targets publish explicit capabilities and independent fingerprints. Execution plans bind the program, target, requested result, method, and query-specific data into a versioned cache key.
+QuPy separates semantic identity from execution strategy. Numerical Program IR version 1 has deterministic text and SHA-256 fingerprints. Hardware Circuit IR version 1 independently identifies classical-state and device-control semantics without changing the calibrated Program workload schema. Hardware targets identify physical compilation constraints with their own deterministic SHA-256 fingerprints. Execution targets publish simulator/runtime capabilities and independent fingerprints. Execution plans bind the program, target, requested result, method, and query-specific data into a versioned cache key.
 
 Seeded sampling uses QuPy-defined random-number mapping rather than implementation-defined standard-library distributions. The conformance suite pins the resulting sequence so supported operating systems must agree for the same program and seed.
 
-These contracts are the stable integration boundary for additional execution engines and QPU compilation. A new engine can change performance or physical execution without changing the meaning of a QuPy program or silently changing an exact result request. Hardware-control circuits remain distinct until a compiler or provider can preserve their complete semantics.
+These contracts are the stable integration boundary for additional execution engines and QPU providers. A new engine can change performance or physical execution without changing the meaning of a QuPy program or silently changing an exact result request. Hardware-control circuits remain distinct from numerical Program semantics and are compiled against explicit `HardwareTarget` constraints before provider interchange.
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. CUDA uses the Driver API and embedded PTX JIT without a toolkit build dependency for state vectors, Pauli reduction, and exact density-matrix/noise execution. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when supplied explicitly or discovered from the host cache. Schema-v4 evidence adds query-aware CPU/CUDA routing for rich observables using the same deduplicated Pauli work that the GPU runtime executes. Schema-v5 evidence adds CPU/CUDA routing for noisy density matrices using the same Kraus work and superoperator events that execution performs. Workload fingerprint version 1, held-out or leave-one-workload-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. The hardware Circuit IR supplies the semantic input for target-aware basis translation, physical layout, routing, scheduling, and provider execution without contaminating calibrated numerical execution identity. Rich observables, gradients, mixed-state dynamics, provider interchange, detector models, and optional distributed execution share the same native-first semantics. Automatic routing remains evidence-gated: QuPy does not claim an execution path until the target is executable and its required planner evidence is valid. Validated artifacts can be installed once and discovered automatically on later `backend="auto"` calls from the same compatible host.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. CUDA uses the Driver API and embedded PTX JIT without a toolkit build dependency for state vectors, Pauli reduction, and exact density-matrix/noise execution. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when supplied explicitly or discovered from the host cache. Schema-v4 evidence adds query-aware CPU/CUDA routing for rich observables using the same deduplicated Pauli work that the GPU runtime executes. Schema-v5 evidence adds CPU/CUDA routing for noisy density matrices using the same Kraus work and superoperator events that execution performs. Workload fingerprint version 1, held-out or leave-one-workload-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. The hardware Circuit IR and HardwareTarget compiler provide deterministic physical layout, routing, exact basis translation, and optional scheduling without contaminating calibrated numerical execution identity. Rich observables, gradients, mixed-state dynamics, provider interchange, detector models, and optional distributed execution share the same native-first semantics. Automatic execution routing remains evidence-gated: QuPy does not claim an execution path until the target is executable and its required planner evidence is valid. Validated artifacts can be installed once and discovered automatically on later `backend="auto"` calls from the same compatible host. The next hardware boundary is provider target discovery and submission of compiled circuits; the next simulation-scale boundaries are trajectory methods for noisy systems, general tensor-network contraction, and multi-device acceleration.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

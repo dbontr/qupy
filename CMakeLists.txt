@@ -17,8 +17,10 @@ add_library(
     src/cpp/core.cpp
     src/cpp/advanced.cpp
     src/cpp/circuit.cpp
+    src/cpp/compiler.cpp
     src/cpp/cuda_driver.cpp
     src/cpp/distributed.cpp
+    src/cpp/fingerprint.cpp
     src/cpp/mps.cpp
     src/cpp/provider.cpp
     src/cpp/stabilizer.cpp
@@ -71,6 +73,7 @@ if(QUPY_BUILD_PYTHON)
         src/cpp/bindings.cpp
         src/cpp/advanced_bindings.cpp
         src/cpp/circuit_bindings.cpp
+        src/cpp/compiler_bindings.cpp
     )
     target_compile_features(_native PRIVATE cxx_std_20)
     target_link_libraries(_native PRIVATE qupy_core)
@@ -126,6 +129,28 @@ if(QUPY_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME qupy_circuit_tests COMMAND qupy_circuit_tests)
+
+    add_executable(qupy_compiler_tests tests/cpp/test_compiler.cpp)
+    target_compile_features(qupy_compiler_tests PRIVATE cxx_std_20)
+    target_link_libraries(qupy_compiler_tests PRIVATE qupy_core)
+    if(MSVC)
+        target_compile_options(qupy_compiler_tests PRIVATE /W4 /permissive-)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_compiler_tests PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(qupy_compiler_tests PRIVATE -Wall -Wextra -Wpedantic)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_compiler_tests PRIVATE -Werror)
+        endif()
+        if(QUPY_ENABLE_SANITIZERS)
+            target_compile_options(
+                qupy_compiler_tests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer
+            )
+            target_link_options(qupy_compiler_tests PRIVATE -fsanitize=address,undefined)
+        endif()
+    endif()
+    add_test(NAME qupy_compiler_tests COMMAND qupy_compiler_tests)
 
     add_library(qupy_test_provider SHARED tests/cpp/provider_fixture.cpp)
     target_compile_features(qupy_test_provider PRIVATE cxx_std_20)
