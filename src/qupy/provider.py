@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Protocol, cast
 
 from . import _native
 from .circuit import Circuit, CircuitOperationCode
-from .compiler import CompilationResult, Coupling, HardwareTarget, OperationDuration, compile_circuit
+from .compiler import (
+    CompilationResult,
+    Coupling,
+    HardwareTarget,
+    OperationDuration,
+    compile_circuit,
+)
 
 _HARDWARE_TARGET_SCHEMA = 1
 _OPERATION_BY_NAME = {
@@ -24,6 +29,16 @@ _OPERATION_BY_NAME = {
     "measure": CircuitOperationCode.MEASURE,
     "reset": CircuitOperationCode.RESET,
 }
+
+
+class _ProviderProgramFactory(Protocol):
+    def _make_provider_program(
+        self,
+        format: str,
+        text: str,
+        num_qubits: int,
+        measures_all: bool,
+    ) -> _native.ProviderProgram: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,25 +58,27 @@ class ProviderSubmission:
 
 def _mapping(value: object, name: str) -> dict[str, object]:
     if not isinstance(value, dict):
-        raise ValueError(f"{name} must be a JSON object")
+        raise TypeError(f"{name} must be a JSON object")
     return cast(dict[str, object], value)
 
 
 def _sequence(value: object, name: str) -> list[object]:
     if not isinstance(value, list):
-        raise ValueError(f"{name} must be a JSON array")
+        raise TypeError(f"{name} must be a JSON array")
     return cast(list[object], value)
 
 
 def _string(value: object, name: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{name} must be a non-empty string")
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be a string")
+    if not value:
+        raise ValueError(f"{name} must be non-empty")
     return value
 
 
 def _integer(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{name} must be an integer")
+        raise TypeError(f"{name} must be an integer")
     return value
 
 
@@ -83,7 +100,7 @@ def _boolean(value: object, name: str, default: bool = False) -> bool:
     if value is None:
         return default
     if not isinstance(value, bool):
-        raise ValueError(f"{name} must be a boolean")
+        raise TypeError(f"{name} must be a boolean")
     return value
 
 
@@ -127,7 +144,7 @@ def _durations(value: object | None) -> list[OperationDuration]:
     result: list[OperationDuration] = []
     for name, duration in mapping.items():
         if isinstance(duration, bool) or not isinstance(duration, (int, float)):
-            raise ValueError(f"hardware_target.durations_ns.{name} must be a number")
+            raise TypeError(f"hardware_target.durations_ns.{name} must be a number")
         result.append(
             OperationDuration(
                 _operation(name, "hardware_target.durations_ns"),
@@ -201,11 +218,8 @@ def _measures_all(circuit: Circuit) -> bool:
 
 
 def provider_program(circuit: Circuit) -> _native.ProviderProgram:
-    factory = cast(
-        Callable[[str, str, int, bool], _native.ProviderProgram],
-        getattr(_native, "_make_provider_program"),
-    )
-    return factory(
+    native = cast(_ProviderProgramFactory, _native)
+    return native._make_provider_program(
         "openqasm3",
         circuit.to_openqasm3(),
         circuit.num_qubits,
@@ -266,11 +280,14 @@ def submit_circuit(
 ) -> ProviderSubmission:
     capabilities = provider_capabilities(plugin)
     advertised_target = capabilities.hardware_target
-    if target is not None and advertised_target is not None:
-        if target.fingerprint != advertised_target.fingerprint:
-            raise ValueError(
-                "explicit target does not match the provider-advertised hardware_target"
-            )
+    if (
+        target is not None
+        and advertised_target is not None
+        and target.fingerprint != advertised_target.fingerprint
+    ):
+        raise ValueError(
+            "explicit target does not match the provider-advertised hardware_target"
+        )
     selected_target = target if target is not None else advertised_target
     if selected_target is None:
         raise ValueError(
