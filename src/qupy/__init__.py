@@ -123,8 +123,19 @@ from ._planner import (
     remove_planner_cost_model,
     set_default_planner_cost_model,
 )
+from .circuit import (
+    Circuit,
+    CircuitInstruction,
+    CircuitOperationCode,
+    ClassicalCondition,
+    circuit_ir_version,
+)
 
 __all__ = [
+    "Circuit",
+    "CircuitInstruction",
+    "CircuitOperationCode",
+    "ClassicalCondition",
     "DecodeResult",
     "DensityMatrix",
     "DetectorError",
@@ -174,6 +185,7 @@ __all__ = [
     "adaptive_mps_target",
     "amplitude_damping",
     "bit_flip",
+    "circuit_ir_version",
     "commuting_groups",
     "core_language",
     "core_version",
