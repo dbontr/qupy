@@ -38,6 +38,8 @@ void validate_observables(
     }
 }
 
+#ifdef QUPY_HAS_MPI
+
 [[nodiscard]] std::uint64_t splitmix64(std::uint64_t value) noexcept {
     value += 0x9e3779b97f4a7c15ULL;
     value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
@@ -50,8 +52,6 @@ void validate_observables(
     return (static_cast<std::uint64_t>(device()) << 32U) ^
         static_cast<std::uint64_t>(device());
 }
-
-#ifdef QUPY_HAS_MPI
 
 void check_mpi(int status, const char* operation) {
     if (status != MPI_SUCCESS) {
