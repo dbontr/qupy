@@ -97,6 +97,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - toolkit-free CUDA Driver API loading with PTX JIT when a compatible NVIDIA driver is present
 - compiler-optimized release builds
 - validated host/version-scoped planner cost artifacts with native predicted-runtime introspection
+- automatic reuse of validated host-scoped planner artifacts for `backend="auto"`
 
 ## Parameter binding and batches
 
@@ -140,6 +141,18 @@ print(plan.cache_key)
 
 Automatic execution preserves declared semantics. Execution strategies can change without moving backend policy into Python.
 
+For execution APIs that support planner evidence, `backend="auto"` checks for a validated default artifact when the caller does not pass `cost_model=`. Discovery uses an in-process override first, then `QUPY_PLANNER_COST_MODEL`, then QuPy's host/version-scoped cache. Explicit backends never consult this discovery path. Invalid, stale, wrong-host, or wrong-device artifacts still fail closed through the native artifact validator.
+
+A validated artifact can be installed once and reused by later processes on the same compatible host:
+
+```python
+qp.install_planner_cost_model("planner.qpcost")
+plan = qp.expectation_plan(program, qp.Z(0))
+print(plan.cost_model_fingerprint)
+```
+
+`qp.planner_cache_path()` reports the cache destination. `qp.remove_planner_cost_model()` removes the installed artifact. `qp.set_default_planner_cost_model(path)` provides a process-local override, and passing `None` restores normal discovery.
+
 ### CUDA state-vector and Pauli reduction
 
 QuPy can execute explicit `native-cuda` state-vector, Pauli-Z expectation/variance, and arbitrary Pauli-sum observable plans when a compatible NVIDIA CUDA driver is present. The core loads the CUDA Driver API at runtime and JIT-loads embedded PTX, so QuPy does not require CUDA Toolkit headers, `nvcc`, or NVRTC to build. CPU-only systems keep the same build and package.
@@ -156,7 +169,7 @@ The CUDA target supports the same H, X, Y, Z, RX, RY, RZ, CX, CZ, and SWAP opera
 
 Unsupported CUDA result modes still fail during target validation; QuPy does not silently execute them on the CPU. Device state memory is reused between calls. A public `StateVector` still performs one complete device-to-host transfer because returning amplitudes is the requested result, while `cuda-pauli-reduction` keeps observable reduction on the accelerator.
 
-`backend="auto"` remains CPU-only when no planner cost model is supplied. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Schema-v2 and schema-v3 artifacts keep the earlier conservative rich-observable behavior: they can reuse the validated state-vector backend decision but do not claim a dedicated observable prediction.
+`backend="auto"` remains on its conservative CPU behavior when no explicit or discovered planner cost model is available. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Schema-v2 and schema-v3 artifacts keep the earlier conservative rich-observable behavior: they can reuse the validated state-vector backend decision but do not claim a dedicated observable prediction.
 
 A validated schema-v4 artifact adds dedicated rich-observable CPU/CUDA evidence. The CPU model prices dense state preparation plus observable work from the reduced causal cone. The CUDA model prices the compiled device-state work and the exact number of unique Pauli masks that the runtime will evaluate after deduplication. The CUDA fit is additive and constrained non-negative so predicted runtime remains a positive sum of measured work components. `ObservableExecutionPlan.predicted_ns` and `cost_model_class` then report the query-specific prediction and its provenance. If the reduced program exceeds the CUDA target capacity, automatic observable planning keeps the CPU candidate instead of attempting an invalid GPU plan.
 
@@ -216,7 +229,7 @@ print(plan.cost_model_class)
 print(plan.cost_model_fingerprint)
 ```
 
-Schema-v1 models remain evidence-only: they do not change `backend`, `method`, or `cache_key`. Schema-v2 through schema-v5 artifacts can retain validated CUDA state-vector evidence for `ResultMode.STATEVECTOR` with `backend="auto"`. Schema-v3 through schema-v5 can additionally retain the adaptive-MPS policy for eligible Pauli-Z expectation and variance requests. Schema-v4 and schema-v5 can route non-Clifford rich-observable expectation, variance, covariance, and batch requests between dense CPU and GPU-resident Pauli reduction using their dedicated query evidence. Schema-v5 can additionally route noisy `density_matrix` requests between CPU and CUDA from dedicated noisy-density evidence. Pure-program density construction remains on its specialized CPU path under `auto`, even with a schema-v5 model, because it is a different execution mechanism. Pauli-propagation-eligible observables keep their specialized CPU method. Execution without a supplied model is unchanged.
+Explicit `cost_model=` always takes precedence over default discovery. Schema-v1 models remain evidence-only: they do not change `backend`, `method`, or `cache_key`. Schema-v2 through schema-v5 artifacts can retain validated CUDA state-vector evidence for `ResultMode.STATEVECTOR` with `backend="auto"`. Schema-v3 through schema-v5 can additionally retain the adaptive-MPS policy for eligible Pauli-Z expectation and variance requests. Schema-v4 and schema-v5 can route non-Clifford rich-observable expectation, variance, covariance, and batch requests between dense CPU and GPU-resident Pauli reduction using their dedicated query evidence. Schema-v5 can additionally route noisy `density_matrix` requests between CPU and CUDA from dedicated noisy-density evidence. Pure-program density construction remains on its specialized CPU path under `auto`, even with a schema-v5 model, because it is a different execution mechanism. Pauli-propagation-eligible observables keep their specialized CPU method. If no explicit or discovered artifact is available, existing conservative automatic behavior is unchanged.
 
 Rich-observable promotion uses repeated counterbalanced CPU/CUDA timing pairs and recomputes medians from raw samples. Each decision is validated leave-one-workload-out: its prediction is fitted without that workload. Promotion requires at least three matching reports, exact agreement within `2e-11`, at least 12 decision workloads, no decision with more than 10% regret, and the same fixed planner holdout limits used elsewhere. The CUDA work descriptor counts deduplicated Pauli masks, matching the native query object rather than raw Hamiltonian-product cardinality.
 
@@ -283,7 +296,7 @@ model = qp.load_planner_cost_model("planner-v5.qpcost")
 auto_rho = qp.density_matrix(noisy_program, cost_model=model)
 ```
 
-Without a schema-v5 model, `backend="auto"` preserves the established CPU behavior. With matching validated noisy-density evidence, `auto` can choose CPU or CUDA for noisy programs from the calibrated cost curves and current device-memory capacity. Pure programs remain on the specialized CPU pure-state/outer-product route under `auto`. `lindblad_evolve` integrates the GKSL/Lindblad master equation with fourth-order Runge-Kutta steps and remains CPU-resident.
+Without an explicit or discovered schema-v5 model, `backend="auto"` preserves the established CPU behavior for noisy density execution. With matching validated noisy-density evidence, `auto` can choose CPU or CUDA for noisy programs from the calibrated cost curves and current device-memory capacity. Pure programs remain on the specialized CPU pure-state/outer-product route under `auto`. `lindblad_evolve` integrates the GKSL/Lindblad master equation with fourth-order Runge-Kutta steps and remains CPU-resident.
 
 ### Distributed and accelerator execution
 
@@ -341,7 +354,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. CUDA uses the Driver API and embedded PTX JIT without a toolkit build dependency for state vectors, Pauli reduction, and exact density-matrix/noise execution. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when explicitly supplied. Schema-v4 evidence adds query-aware CPU/CUDA routing for rich observables using the same deduplicated Pauli work that the GPU runtime executes. Schema-v5 evidence adds CPU/CUDA routing for noisy density matrices using the same Kraus work and superoperator events that execution performs. Workload fingerprint version 1, held-out or leave-one-workload-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. Rich observables, gradients, mixed-state dynamics, provider interchange, detector models, and optional distributed execution share the same native-first semantics. Automatic routing remains evidence-gated: QuPy does not claim an execution path until the target is executable and its required planner evidence is valid.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. CUDA uses the Driver API and embedded PTX JIT without a toolkit build dependency for state vectors, Pauli reduction, and exact density-matrix/noise execution. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when supplied explicitly or discovered from the host cache. Schema-v4 evidence adds query-aware CPU/CUDA routing for rich observables using the same deduplicated Pauli work that the GPU runtime executes. Schema-v5 evidence adds CPU/CUDA routing for noisy density matrices using the same Kraus work and superoperator events that execution performs. Workload fingerprint version 1, held-out or leave-one-workload-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. Rich observables, gradients, mixed-state dynamics, provider interchange, detector models, and optional distributed execution share the same native-first semantics. Automatic routing remains evidence-gated: QuPy does not claim an execution path until the target is executable and its required planner evidence is valid. Validated artifacts can be installed once and discovered automatically on later `backend="auto"` calls from the same compatible host.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 
