@@ -24,6 +24,7 @@ add_library(
     src/cpp/mps.cpp
     src/cpp/provider.cpp
     src/cpp/stabilizer.cpp
+    src/cpp/tensor_network.cpp
     src/cpp/trajectory.cpp
 )
 target_compile_features(qupy_core PUBLIC cxx_std_20)
@@ -75,6 +76,7 @@ if(QUPY_BUILD_PYTHON)
         src/cpp/advanced_bindings.cpp
         src/cpp/circuit_bindings.cpp
         src/cpp/compiler_bindings.cpp
+        src/cpp/tensor_network_bindings.cpp
         src/cpp/trajectory_bindings.cpp
     )
     target_compile_features(_native PRIVATE cxx_std_20)
@@ -153,6 +155,28 @@ if(QUPY_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME qupy_compiler_tests COMMAND qupy_compiler_tests)
+
+    add_executable(qupy_tensor_network_tests tests/cpp/test_tensor_network.cpp)
+    target_compile_features(qupy_tensor_network_tests PRIVATE cxx_std_20)
+    target_link_libraries(qupy_tensor_network_tests PRIVATE qupy_core)
+    if(MSVC)
+        target_compile_options(qupy_tensor_network_tests PRIVATE /W4 /permissive-)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_tensor_network_tests PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(qupy_tensor_network_tests PRIVATE -Wall -Wextra -Wpedantic)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_tensor_network_tests PRIVATE -Werror)
+        endif()
+        if(QUPY_ENABLE_SANITIZERS)
+            target_compile_options(
+                qupy_tensor_network_tests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer
+            )
+            target_link_options(qupy_tensor_network_tests PRIVATE -fsanitize=address,undefined)
+        endif()
+    endif()
+    add_test(NAME qupy_tensor_network_tests COMMAND qupy_tensor_network_tests)
 
     add_executable(qupy_trajectory_tests tests/cpp/test_trajectory.cpp)
     target_compile_features(qupy_trajectory_tests PRIVATE cxx_std_20)
