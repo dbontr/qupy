@@ -78,7 +78,7 @@ constexpr int kMaximumOpenMpTeam = 16;
 constexpr std::uint32_t kIrVersion = 1U;
 constexpr std::uint32_t kWorkloadVersion = 1U;
 constexpr std::size_t kStabilizerSamplingMinQubits = 24U;
-constexpr std::uint32_t kPlannerCostSchemaVersion = 4U;
+constexpr std::uint32_t kPlannerCostSchemaVersion = 5U;
 constexpr double kCudaDecisionMaxRegret = 1.10;
 constexpr std::size_t kCudaDecisionMinimumSamples = 8U;
 constexpr std::uint32_t kAdaptiveMpsPolicyVersion = 1U;
@@ -87,6 +87,9 @@ constexpr std::size_t kMpsDecisionMinimumSamples = 16U;
 constexpr std::uint32_t kObservablePolicyVersion = 1U;
 constexpr double kObservableDecisionMaxRegret = 1.10;
 constexpr std::size_t kObservableDecisionMinimumSamples = 12U;
+constexpr std::uint32_t kDensityPolicyVersion = 1U;
+constexpr double kDensityDecisionMaxRegret = 1.10;
+constexpr std::size_t kDensityDecisionMinimumSamples = 18U;
 constexpr std::size_t kAdaptiveMpsMinQubits = 14U;
 constexpr std::size_t kAdaptiveMpsBondLimit = 16U;
 constexpr std::size_t kAdaptiveMpsRoutingMultiplier = 4U;
@@ -2137,12 +2140,26 @@ bool PlannerCostModel::observable_auto_validated() const noexcept {
            has_cost_class("observable-return-cuda");
 }
 
+bool PlannerCostModel::density_auto_validated() const noexcept {
+    return schema_version_ >= 5U && density_policy_version_ == kDensityPolicyVersion &&
+           density_decision_samples_ >= kDensityDecisionMinimumSamples &&
+           density_decision_mistakes_ == 0U &&
+           density_decision_max_regret_ <= kDensityDecisionMaxRegret &&
+           has_cost_class("density-return-cpu") &&
+           has_cost_class("density-return-cuda") &&
+           has_cost_class("density-speedup");
+}
+
 std::uint32_t PlannerCostModel::mps_policy_version() const noexcept {
     return mps_policy_version_;
 }
 
 std::uint32_t PlannerCostModel::observable_policy_version() const noexcept {
     return observable_policy_version_;
+}
+
+std::uint32_t PlannerCostModel::density_policy_version() const noexcept {
+    return density_policy_version_;
 }
 
 double PlannerCostModel::predict_ns(const ExecutionPlan& execution_plan) const {
@@ -2211,6 +2228,110 @@ double PlannerCostModel::predict_observable_ns(
     return prediction;
 }
 
+double PlannerCostModel::predict_density_ns(
+    const std::string& backend,
+    std::size_t qubits,
+    std::size_t single_qubit_operations,
+    std::size_t two_qubit_operations,
+    std::size_t noise_events,
+    std::size_t kraus_evaluations
+) const {
+    const bool cuda = backend == "cuda" || backend == "native-cuda";
+    if (!cuda && backend != "cpu" && backend != "native-cpu") {
+        throw std::invalid_argument("unknown density cost backend: " + backend);
+    }
+    if (noise_events == 0U || kraus_evaluations == 0U) {
+        throw std::invalid_argument("density cost prediction requires noisy execution work");
+    }
+    const std::string cost_class = cuda ? "density-return-cuda" : "density-return-cpu";
+    const auto curve = std::find_if(
+        curves_.begin(), curves_.end(),
+        [&](const Curve& item) { return item.cost_class == cost_class; }
+    );
+    if (curve == curves_.end()) {
+        throw std::invalid_argument("cost model does not contain class " + cost_class);
+    }
+    const double q = static_cast<double>(qubits);
+    const double operations = static_cast<double>(single_qubit_operations + two_qubit_operations);
+    std::vector<double> features;
+    if (cuda) {
+        const double elements = std::exp2(2.0 * q);
+        features = {
+            1.0,
+            elements,
+            elements * static_cast<double>(single_qubit_operations),
+            elements * static_cast<double>(two_qubit_operations),
+            elements * static_cast<double>(noise_events),
+            operations,
+            static_cast<double>(noise_events),
+        };
+    } else {
+        const double log_kraus = std::log1p(static_cast<double>(kraus_evaluations));
+        features = {
+            1.0,
+            q,
+            q * q,
+            std::log1p(operations),
+            log_kraus,
+            q * log_kraus,
+        };
+    }
+    if (features.size() != curve->coefficients.size()) {
+        throw std::logic_error("density cost model coefficient count does not match features");
+    }
+    double score = 0.0;
+    for (std::size_t index = 0U; index < features.size(); ++index) {
+        score += features[index] * curve->coefficients[index];
+    }
+    const double prediction = cuda ? score : std::exp(score);
+    if (!std::isfinite(prediction) || prediction <= 0.0) {
+        throw std::overflow_error("density cost model produced an invalid runtime prediction");
+    }
+    return prediction;
+}
+
+
+double PlannerCostModel::predict_density_speedup(
+    std::size_t qubits,
+    std::size_t single_qubit_operations,
+    std::size_t two_qubit_operations,
+    std::size_t noise_events,
+    std::size_t kraus_evaluations
+) const {
+    if (noise_events == 0U || kraus_evaluations == 0U) {
+        throw std::invalid_argument("density speedup prediction requires noisy execution work");
+    }
+    const auto curve = std::find_if(
+        curves_.begin(), curves_.end(),
+        [](const Curve& item) { return item.cost_class == "density-speedup"; }
+    );
+    if (curve == curves_.end()) {
+        throw std::invalid_argument("cost model does not contain class density-speedup");
+    }
+    const double q = static_cast<double>(qubits);
+    const double operations = static_cast<double>(single_qubit_operations + two_qubit_operations);
+    const std::array<double, 6> features = {
+        1.0,
+        q,
+        q * q,
+        std::log1p(operations),
+        std::log1p(static_cast<double>(noise_events)),
+        std::log1p(static_cast<double>(kraus_evaluations)),
+    };
+    if (features.size() != curve->coefficients.size()) {
+        throw std::logic_error("density speedup coefficient count does not match features");
+    }
+    double score = 0.0;
+    for (std::size_t index = 0U; index < features.size(); ++index) {
+        score += features[index] * curve->coefficients[index];
+    }
+    const double speedup = std::exp(score);
+    if (!std::isfinite(speedup) || speedup <= 0.0) {
+        throw std::overflow_error("density speedup model produced an invalid prediction");
+    }
+    return speedup;
+}
+
 std::string planner_host_fingerprint() {
     return fingerprint_text(planner_host_text());
 }
@@ -2256,6 +2377,8 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     } else if (line == "qupy-planner-cost 3") {
         schema_version = 3U;
     } else if (line == "qupy-planner-cost 4") {
+        schema_version = 4U;
+    } else if (line == "qupy-planner-cost 5") {
         schema_version = kPlannerCostSchemaVersion;
     } else {
         throw std::invalid_argument("planner cost artifact has an unsupported schema");
@@ -2272,6 +2395,8 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     bool has_mps_decision = false;
     bool has_observable_policy = false;
     bool has_observable_decision = false;
+    bool has_density_policy = false;
+    bool has_density_decision = false;
     bool validated = false;
     std::set<std::string> classes;
     while (std::getline(lines, line)) {
@@ -2324,6 +2449,15 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                 }
                 model.observable_policy_version_ = policy_version;
                 has_observable_policy = true;
+            } else if (policy_class == "noisy-density") {
+                if (schema_version < 5U || has_density_policy ||
+                    policy_version != kDensityPolicyVersion) {
+                    throw std::invalid_argument(
+                        "planner cost artifact has invalid density policy metadata"
+                    );
+                }
+                model.density_policy_version_ = policy_version;
+                has_density_policy = true;
             } else {
                 throw std::invalid_argument("planner cost artifact has an unknown policy class");
             }
@@ -2371,6 +2505,21 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                     );
                 }
                 has_observable_decision = true;
+            } else if (decision_class == "noisy-density-auto") {
+                if (schema_version < 5U || has_density_decision ||
+                    !(fields >> model.density_decision_samples_ >>
+                      model.density_decision_mistakes_ >>
+                      model.density_decision_max_regret_) ||
+                    model.density_decision_samples_ < kDensityDecisionMinimumSamples ||
+                    model.density_decision_mistakes_ != 0U ||
+                    !std::isfinite(model.density_decision_max_regret_) ||
+                    model.density_decision_max_regret_ < 1.0 ||
+                    model.density_decision_max_regret_ > kDensityDecisionMaxRegret) {
+                    throw std::invalid_argument(
+                        "planner cost artifact has invalid density decision evidence"
+                    );
+                }
+                has_density_decision = true;
             } else {
                 throw std::invalid_argument("planner cost artifact has an unknown decision class");
             }
@@ -2402,6 +2551,12 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                 expected = 11U;
             } else if (curve.cost_class == "observable-return-cuda") {
                 expected = 7U;
+            } else if (curve.cost_class == "density-return-cpu") {
+                expected = 6U;
+            } else if (curve.cost_class == "density-return-cuda") {
+                expected = 7U;
+            } else if (curve.cost_class == "density-speedup") {
+                expected = 6U;
             }
             if (
                 expected == 0U || coefficient_count != expected ||
@@ -2415,7 +2570,9 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                     throw std::invalid_argument("planner cost artifact has an invalid coefficient");
                 }
             }
-            if (curve.cost_class == "observable-return-cuda" &&
+            const bool additive_cuda = curve.cost_class == "observable-return-cuda" ||
+                curve.cost_class == "density-return-cuda";
+            if (additive_cuda &&
                 (std::any_of(
                     curve.coefficients.begin(), curve.coefficients.end(),
                     [](double coefficient) { return coefficient < 0.0; }
@@ -2464,6 +2621,16 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
         expected_classes.insert("observable-return-cpu");
         expected_classes.insert("observable-return-cuda");
     }
+    const bool has_density_curves =
+        classes.contains("density-return-cpu") || classes.contains("density-return-cuda") ||
+        classes.contains("density-speedup");
+    const bool density_extension =
+        has_density_policy || has_density_decision || has_density_curves;
+    if (schema_version >= 5U || density_extension) {
+        expected_classes.insert("density-return-cpu");
+        expected_classes.insert("density-return-cuda");
+        expected_classes.insert("density-speedup");
+    }
     const bool base_complete = has_engine && has_workload && has_host && validated &&
         classes == expected_classes;
     const bool cuda_complete = schema_version == 1U
@@ -2478,7 +2645,14 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
         ? !observable_extension
         : has_observable_policy && has_observable_decision && has_observable_curves &&
           has_cuda_host && has_cuda_decision;
-    if (!base_complete || !cuda_complete || !mps_complete || !observable_complete) {
+    const bool density_complete = schema_version < 5U
+        ? !density_extension
+        : has_density_policy && has_density_decision && has_density_curves &&
+          has_cuda_host;
+    if (
+        !base_complete || !cuda_complete || !mps_complete || !observable_complete ||
+        !density_complete
+    ) {
         throw std::invalid_argument("planner cost artifact is incomplete");
     }
     if (model.engine_version_ != kCoreVersion) {

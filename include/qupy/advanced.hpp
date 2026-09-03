@@ -371,8 +371,16 @@ struct DistributedStateVector {
     std::size_t qubit,
     const std::vector<std::vector<Complex>>& operators
 );
-[[nodiscard]] DensityMatrix density_matrix(const Program& program);
-[[nodiscard]] DensityMatrix density_matrix(const NoisyProgram& program);
+[[nodiscard]] DensityMatrix density_matrix(
+    const Program& program,
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
+);
+[[nodiscard]] DensityMatrix density_matrix(
+    const NoisyProgram& program,
+    const std::string& backend = "auto",
+    const PlannerCostModel* cost_model = nullptr
+);
 [[nodiscard]] LindbladResult lindblad_evolve(
     const DensityMatrix& initial,
     const std::vector<Complex>& hamiltonian,

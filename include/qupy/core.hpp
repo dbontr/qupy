@@ -134,13 +134,29 @@ public:
     [[nodiscard]] bool cuda_auto_validated() const noexcept;
     [[nodiscard]] bool mps_auto_validated() const noexcept;
     [[nodiscard]] bool observable_auto_validated() const noexcept;
+    [[nodiscard]] bool density_auto_validated() const noexcept;
     [[nodiscard]] std::uint32_t mps_policy_version() const noexcept;
     [[nodiscard]] std::uint32_t observable_policy_version() const noexcept;
+    [[nodiscard]] std::uint32_t density_policy_version() const noexcept;
     [[nodiscard]] double predict_ns(const ExecutionPlan& plan) const;
     [[nodiscard]] double predict_observable_ns(
         const ExecutionPlan& state_plan,
         std::size_t term_evaluations,
         std::size_t state_passes
+    ) const;
+    [[nodiscard]] double predict_density_ns(
+        const std::string& backend,
+        std::size_t qubits,
+        std::size_t single_qubit_operations,
+        std::size_t two_qubit_operations,
+        std::size_t noise_events,
+        std::size_t kraus_evaluations
+    ) const;    [[nodiscard]] double predict_density_speedup(
+        std::size_t qubits,
+        std::size_t single_qubit_operations,
+        std::size_t two_qubit_operations,
+        std::size_t noise_events,
+        std::size_t kraus_evaluations
     ) const;
 
 private:
@@ -170,6 +186,10 @@ private:
     std::size_t observable_decision_samples_ = 0U;
     std::size_t observable_decision_mistakes_ = 0U;
     double observable_decision_max_regret_ = 0.0;
+    std::uint32_t density_policy_version_ = 0U;
+    std::size_t density_decision_samples_ = 0U;
+    std::size_t density_decision_mistakes_ = 0U;
+    double density_decision_max_regret_ = 0.0;
     std::vector<Curve> curves_;
 };
 

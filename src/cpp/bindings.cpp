@@ -184,9 +184,21 @@ NB_MODULE(_native, module) {
         .def_prop_ro("cuda_auto_validated", &qupy::PlannerCostModel::cuda_auto_validated)
         .def_prop_ro("mps_auto_validated", &qupy::PlannerCostModel::mps_auto_validated)
         .def_prop_ro("observable_auto_validated", &qupy::PlannerCostModel::observable_auto_validated)
+        .def_prop_ro("density_auto_validated", &qupy::PlannerCostModel::density_auto_validated)
         .def_prop_ro("mps_policy_version", &qupy::PlannerCostModel::mps_policy_version)
         .def_prop_ro("observable_policy_version", &qupy::PlannerCostModel::observable_policy_version)
-        .def("predict_ns", &qupy::PlannerCostModel::predict_ns, "plan"_a);
+        .def_prop_ro("density_policy_version", &qupy::PlannerCostModel::density_policy_version)
+        .def("predict_ns", &qupy::PlannerCostModel::predict_ns, "plan"_a)
+        .def(
+            "predict_density_ns", &qupy::PlannerCostModel::predict_density_ns,
+            "backend"_a, "qubits"_a, "single_qubit_operations"_a,
+            "two_qubit_operations"_a, "noise_events"_a, "kraus_evaluations"_a
+        )
+        .def(
+            "predict_density_speedup", &qupy::PlannerCostModel::predict_density_speedup,
+            "qubits"_a, "single_qubit_operations"_a, "two_qubit_operations"_a,
+            "noise_events"_a, "kraus_evaluations"_a
+        );
 
     nb::class_<qupy::ExecutionPlan>(module, "ExecutionPlan")
         .def_ro("backend", &qupy::ExecutionPlan::backend)

@@ -305,6 +305,261 @@ DONE:
     ret;
 }
 
+.visible .entry apply_matrix4(
+    .param .u64 p_state,
+    .param .u64 p_dimension,
+    .param .u32 p_first,
+    .param .u32 p_second,
+    .param .u64 p_matrix
+) {
+    .reg .pred %p<3>;
+    .reg .b32 %r<8>;
+    .reg .b64 %rd<32>;
+    .reg .f64 %fd<24>;
+    ld.param.u64 %rd1, [p_state];
+    ld.param.u64 %rd2, [p_dimension];
+    ld.param.u32 %r4, [p_first];
+    ld.param.u32 %r5, [p_second];
+    ld.param.u64 %rd24, [p_matrix];
+    mov.u32 %r1, %ctaid.x;
+    mov.u32 %r2, %ntid.x;
+    mov.u32 %r3, %tid.x;
+    mul.wide.u32 %rd3, %r1, %r2;
+    cvt.u64.u32 %rd4, %r3;
+    add.u64 %rd3, %rd3, %rd4;
+    shr.u64 %rd4, %rd2, 2;
+    setp.ge.u64 %p1, %rd3, %rd4;
+    @%p1 bra MATRIX4_DONE;
+    mov.u64 %rd5, 1;
+    shl.b64 %rd5, %rd5, %r4;
+    mov.u64 %rd6, 1;
+    shl.b64 %rd6, %rd6, %r5;
+    sub.u64 %rd7, %rd5, 1;
+    and.b64 %rd8, %rd3, %rd7;
+    not.b64 %rd9, %rd7;
+    and.b64 %rd10, %rd3, %rd9;
+    shl.b64 %rd10, %rd10, 1;
+    or.b64 %rd11, %rd8, %rd10;
+    sub.u64 %rd12, %rd6, 1;
+    and.b64 %rd13, %rd11, %rd12;
+    not.b64 %rd14, %rd12;
+    and.b64 %rd15, %rd11, %rd14;
+    shl.b64 %rd15, %rd15, 1;
+    or.b64 %rd16, %rd13, %rd15;
+    or.b64 %rd17, %rd16, %rd5;
+    or.b64 %rd18, %rd16, %rd6;
+    or.b64 %rd19, %rd17, %rd6;
+    shl.b64 %rd20, %rd16, 4;
+    shl.b64 %rd21, %rd17, 4;
+    shl.b64 %rd22, %rd18, 4;
+    shl.b64 %rd23, %rd19, 4;
+    add.u64 %rd20, %rd1, %rd20;
+    add.u64 %rd21, %rd1, %rd21;
+    add.u64 %rd22, %rd1, %rd22;
+    add.u64 %rd23, %rd1, %rd23;
+    ld.global.f64 %fd0, [%rd20];
+    ld.global.f64 %fd1, [%rd20+8];
+    ld.global.f64 %fd2, [%rd21];
+    ld.global.f64 %fd3, [%rd21+8];
+    ld.global.f64 %fd4, [%rd22];
+    ld.global.f64 %fd5, [%rd22+8];
+    ld.global.f64 %fd6, [%rd23];
+    ld.global.f64 %fd7, [%rd23+8];
+    mov.f64 %fd10, 0d0000000000000000;
+    mov.f64 %fd11, 0d0000000000000000;
+    add.u64 %rd25, %rd24, 0;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd0;
+    mul.rn.f64 %fd13, %fd9, %fd1;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd1;
+    mul.rn.f64 %fd13, %fd9, %fd0;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 16;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd2;
+    mul.rn.f64 %fd13, %fd9, %fd3;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd3;
+    mul.rn.f64 %fd13, %fd9, %fd2;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 32;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd4;
+    mul.rn.f64 %fd13, %fd9, %fd5;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd5;
+    mul.rn.f64 %fd13, %fd9, %fd4;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 48;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd6;
+    mul.rn.f64 %fd13, %fd9, %fd7;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd7;
+    mul.rn.f64 %fd13, %fd9, %fd6;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    st.global.f64 [%rd20], %fd10;
+    st.global.f64 [%rd20+8], %fd11;
+    mov.f64 %fd10, 0d0000000000000000;
+    mov.f64 %fd11, 0d0000000000000000;
+    add.u64 %rd25, %rd24, 64;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd0;
+    mul.rn.f64 %fd13, %fd9, %fd1;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd1;
+    mul.rn.f64 %fd13, %fd9, %fd0;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 80;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd2;
+    mul.rn.f64 %fd13, %fd9, %fd3;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd3;
+    mul.rn.f64 %fd13, %fd9, %fd2;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 96;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd4;
+    mul.rn.f64 %fd13, %fd9, %fd5;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd5;
+    mul.rn.f64 %fd13, %fd9, %fd4;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 112;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd6;
+    mul.rn.f64 %fd13, %fd9, %fd7;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd7;
+    mul.rn.f64 %fd13, %fd9, %fd6;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    st.global.f64 [%rd21], %fd10;
+    st.global.f64 [%rd21+8], %fd11;
+    mov.f64 %fd10, 0d0000000000000000;
+    mov.f64 %fd11, 0d0000000000000000;
+    add.u64 %rd25, %rd24, 128;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd0;
+    mul.rn.f64 %fd13, %fd9, %fd1;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd1;
+    mul.rn.f64 %fd13, %fd9, %fd0;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 144;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd2;
+    mul.rn.f64 %fd13, %fd9, %fd3;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd3;
+    mul.rn.f64 %fd13, %fd9, %fd2;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 160;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd4;
+    mul.rn.f64 %fd13, %fd9, %fd5;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd5;
+    mul.rn.f64 %fd13, %fd9, %fd4;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 176;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd6;
+    mul.rn.f64 %fd13, %fd9, %fd7;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd7;
+    mul.rn.f64 %fd13, %fd9, %fd6;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    st.global.f64 [%rd22], %fd10;
+    st.global.f64 [%rd22+8], %fd11;
+    mov.f64 %fd10, 0d0000000000000000;
+    mov.f64 %fd11, 0d0000000000000000;
+    add.u64 %rd25, %rd24, 192;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd0;
+    mul.rn.f64 %fd13, %fd9, %fd1;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd1;
+    mul.rn.f64 %fd13, %fd9, %fd0;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 208;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd2;
+    mul.rn.f64 %fd13, %fd9, %fd3;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd3;
+    mul.rn.f64 %fd13, %fd9, %fd2;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 224;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd4;
+    mul.rn.f64 %fd13, %fd9, %fd5;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd5;
+    mul.rn.f64 %fd13, %fd9, %fd4;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    add.u64 %rd25, %rd24, 240;
+    ld.global.f64 %fd8, [%rd25];
+    ld.global.f64 %fd9, [%rd25+8];
+    mul.rn.f64 %fd12, %fd8, %fd6;
+    mul.rn.f64 %fd13, %fd9, %fd7;
+    sub.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd10, %fd10, %fd12;
+    mul.rn.f64 %fd12, %fd8, %fd7;
+    mul.rn.f64 %fd13, %fd9, %fd6;
+    add.rn.f64 %fd12, %fd12, %fd13;
+    add.rn.f64 %fd11, %fd11, %fd12;
+    st.global.f64 [%rd23], %fd10;
+    st.global.f64 [%rd23+8], %fd11;
+MATRIX4_DONE:
+    ret;
+}
 .visible .entry pauli_term(
     .param .u64 p_state,
     .param .u64 p_dimension,
@@ -701,6 +956,10 @@ public:
         std::size_t num_qubits,
         const std::vector<CudaStep>& steps
     );
+    [[nodiscard, maybe_unused]] std::vector<Complex> density_matrix(
+        std::size_t num_qubits,
+        const std::vector<CudaDensityStep>& steps
+    );
     [[nodiscard, maybe_unused]] std::vector<Complex> pauli_expectations(
         std::size_t num_qubits,
         const std::vector<CudaStep>& steps,
@@ -710,10 +969,17 @@ public:
 private:
     void check(CUresult result, std::string_view operation) const;
     void set_current() const;
+    [[nodiscard]] std::uint64_t prepare_zero_state(std::size_t num_qubits);
     [[nodiscard]] std::uint64_t prepare_state(
         std::size_t num_qubits, const std::vector<CudaStep>& steps
     );
     void launch(CUdeviceptr state, std::uint64_t dimension, const CudaStep& step) const;
+    void launch_density(
+        CUdeviceptr state, std::uint64_t dimension, const CudaDensityStep& step
+    );
+    void launch_matrix4(
+        CUdeviceptr state, std::uint64_t dimension, const CudaDensityStep& step
+    );
     [[nodiscard]] std::uint64_t launch_pauli(
         std::uint64_t dimension, const CudaPauliMask& term, CUdeviceptr output
     ) const;
@@ -748,6 +1014,7 @@ private:
     CUcontext context_ = nullptr;
     CUmodule module_ = nullptr;
     CUfunction apply_gate_ = nullptr;
+    CUfunction apply_matrix4_ = nullptr;
     CUfunction pauli_term_ = nullptr;
     CUfunction reduce_complex_ = nullptr;
     std::string device_name_;
@@ -756,6 +1023,7 @@ private:
     std::mutex execution_mutex_;
     CUdeviceptr workspace_ = 0U;
     std::size_t workspace_bytes_ = 0U;
+    CUdeviceptr matrix4_workspace_ = 0U;
     CUdeviceptr reduction_first_ = 0U;
     CUdeviceptr reduction_second_ = 0U;
     std::size_t reduction_workspace_bytes_ = 0U;
@@ -814,6 +1082,7 @@ CudaRuntime::CudaRuntime()
             }
         }
         check(cu_module_get_function_(&apply_gate_, module_, "apply_gate"), "cuModuleGetFunction");
+        check(cu_module_get_function_(&apply_matrix4_, module_, "apply_matrix4"), "cuModuleGetFunction");
         check(cu_module_get_function_(&pauli_term_, module_, "pauli_term"), "cuModuleGetFunction");
         check(cu_module_get_function_(&reduce_complex_, module_, "reduce_complex"), "cuModuleGetFunction");
     } catch (...) {
@@ -827,6 +1096,7 @@ CudaRuntime::~CudaRuntime() {
     if (context_ != nullptr) {
         (void)cu_ctx_set_current_(context_);
         if (workspace_ != 0U) (void)cu_mem_free_(workspace_);
+        if (matrix4_workspace_ != 0U) (void)cu_mem_free_(matrix4_workspace_);
         if (reduction_second_ != 0U) (void)cu_mem_free_(reduction_second_);
         if (reduction_first_ != 0U) (void)cu_mem_free_(reduction_first_);
         if (module_ != nullptr) (void)cu_module_unload_(module_);
@@ -887,18 +1157,84 @@ void CudaRuntime::launch(
     );
 }
 
-std::uint64_t CudaRuntime::prepare_state(
-    std::size_t num_qubits,
-    const std::vector<CudaStep>& steps
+void CudaRuntime::launch_matrix4(
+    CUdeviceptr state,
+    std::uint64_t dimension,
+    const CudaDensityStep& step
 ) {
+    if (step.first >= step.second) {
+        throw std::invalid_argument("CUDA matrix4 targets must be ordered and distinct");
+    }
+    constexpr std::uint32_t block_size = 256U;
+    const std::uint64_t work_items = dimension / 4U;
+    const std::uint64_t grid64 = (work_items + block_size - 1U) / block_size;
+    if (grid64 == 0U || grid64 > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::length_error("CUDA matrix4 launch grid exceeds driver range");
+    }
+    if (matrix4_workspace_ == 0U) {
+        check(cu_mem_alloc_(&matrix4_workspace_, sizeof(step.matrix)), "cuMemAlloc(matrix4)");
+    }
+    check(
+        cu_memcpy_htod_(matrix4_workspace_, step.matrix.data(), sizeof(step.matrix)),
+        "cuMemcpyHtoD(matrix4)"
+    );
+    std::uint32_t first = checked_u32(step.first, "CUDA matrix4 qubit index");
+    std::uint32_t second = checked_u32(step.second, "CUDA matrix4 qubit index");
+    CUdeviceptr matrix = matrix4_workspace_;
+    void* arguments[] = {&state, &dimension, &first, &second, &matrix};
+    check(
+        cu_launch_kernel_(
+            apply_matrix4_, static_cast<std::uint32_t>(grid64), 1U, 1U,
+            block_size, 1U, 1U, 0U, nullptr, arguments, nullptr
+        ),
+        "cuLaunchKernel(apply_matrix4)"
+    );
+}
+
+void CudaRuntime::launch_density(
+    CUdeviceptr state,
+    std::uint64_t dimension,
+    const CudaDensityStep& step
+) {
+    if (step.kind == CudaDensityStepKind::Matrix4) {
+        launch_matrix4(state, dimension, step);
+        return;
+    }
+    CudaStepKind kind = CudaStepKind::Single;
+    switch (step.kind) {
+    case CudaDensityStepKind::Single: kind = CudaStepKind::Single; break;
+    case CudaDensityStepKind::CX: kind = CudaStepKind::CX; break;
+    case CudaDensityStepKind::CZ: kind = CudaStepKind::CZ; break;
+    case CudaDensityStepKind::SWAP: kind = CudaStepKind::SWAP; break;
+    case CudaDensityStepKind::Matrix4: break;
+    }
+    std::array<Complex, 4> matrix{};
+    std::copy_n(step.matrix.begin(), matrix.size(), matrix.begin());
+    launch(state, dimension, {kind, matrix, step.first, step.second});
+}
+
+std::uint64_t CudaRuntime::prepare_zero_state(std::size_t num_qubits) {
     static_assert(sizeof(Complex) == 2U * sizeof(double));
     const std::size_t bytes = checked_state_bytes(num_qubits);
     if (bytes > total_memory_) {
-        throw std::length_error("CUDA state vector exceeds device memory");
+        throw std::length_error("CUDA state exceeds device memory");
     }
     const std::uint64_t dimension = static_cast<std::uint64_t>(bytes / sizeof(Complex));
     set_current();
     if (workspace_bytes_ < bytes) {
+        if (reduction_second_ != 0U) {
+            check(cu_mem_free_(reduction_second_), "cuMemFree(reduction)");
+            reduction_second_ = 0U;
+        }
+        if (reduction_first_ != 0U) {
+            check(cu_mem_free_(reduction_first_), "cuMemFree(reduction)");
+            reduction_first_ = 0U;
+        }
+        reduction_workspace_bytes_ = 0U;
+        if (matrix4_workspace_ != 0U) {
+            check(cu_mem_free_(matrix4_workspace_), "cuMemFree(matrix4)");
+            matrix4_workspace_ = 0U;
+        }
         if (workspace_ != 0U) {
             check(cu_mem_free_(workspace_), "cuMemFree");
             workspace_ = 0U;
@@ -910,6 +1246,14 @@ std::uint64_t CudaRuntime::prepare_state(
     check(cu_memset_d8_(workspace_, 0U, bytes), "cuMemsetD8");
     const Complex zero_state{1.0, 0.0};
     check(cu_memcpy_htod_(workspace_, &zero_state, sizeof(zero_state)), "cuMemcpyHtoD");
+    return dimension;
+}
+
+std::uint64_t CudaRuntime::prepare_state(
+    std::size_t num_qubits,
+    const std::vector<CudaStep>& steps
+) {
+    const std::uint64_t dimension = prepare_zero_state(num_qubits);
     for (const CudaStep& step : steps) launch(workspace_, dimension, step);
     return dimension;
 }
@@ -1004,6 +1348,51 @@ void CudaRuntime::ensure_reduction_workspace(std::size_t bytes, bool need_second
     std::vector<Complex> result(static_cast<std::size_t>(dimension));
     check(cu_ctx_synchronize_(), "cuCtxSynchronize");
     check(cu_memcpy_dtoh_(result.data(), workspace_, bytes), "cuMemcpyDtoH");
+    return result;
+}
+
+[[maybe_unused]] std::vector<Complex> CudaRuntime::density_matrix(
+    std::size_t num_qubits,
+    const std::vector<CudaDensityStep>& steps
+) {
+    if (num_qubits > std::numeric_limits<std::size_t>::max() / 2U) {
+        throw std::length_error("CUDA density matrix qubit count exceeds native range");
+    }
+    const std::size_t density_qubits = num_qubits * 2U;
+    const std::size_t state_bytes = checked_state_bytes(density_qubits);
+    const bool needs_matrix4 = std::any_of(
+        steps.begin(), steps.end(),
+        [](const CudaDensityStep& step) { return step.kind == CudaDensityStepKind::Matrix4; }
+    );
+    const std::size_t matrix4_bytes = sizeof(std::array<Complex, 16>);
+    if (needs_matrix4 &&
+        (total_memory_ <= matrix4_bytes || state_bytes > total_memory_ - matrix4_bytes)) {
+        throw std::length_error("CUDA density matrix exceeds device memory");
+    }
+    std::scoped_lock lock(execution_mutex_);
+    if (reduction_second_ != 0U) {
+        check(cu_mem_free_(reduction_second_), "cuMemFree(reduction)");
+        reduction_second_ = 0U;
+    }
+    if (reduction_first_ != 0U) {
+        check(cu_mem_free_(reduction_first_), "cuMemFree(reduction)");
+        reduction_first_ = 0U;
+    }
+    reduction_workspace_bytes_ = 0U;
+    if (needs_matrix4 && matrix4_workspace_ == 0U && workspace_bytes_ > state_bytes &&
+        workspace_bytes_ > total_memory_ - matrix4_bytes) {
+        check(cu_mem_free_(workspace_), "cuMemFree");
+        workspace_ = 0U;
+        workspace_bytes_ = 0U;
+    }
+    const std::uint64_t dimension = prepare_zero_state(density_qubits);
+    for (const CudaDensityStep& step : steps) {
+        launch_density(workspace_, dimension, step);
+    }
+    const std::size_t bytes = static_cast<std::size_t>(dimension) * sizeof(Complex);
+    std::vector<Complex> result(static_cast<std::size_t>(dimension));
+    check(cu_ctx_synchronize_(), "cuCtxSynchronize");
+    check(cu_memcpy_dtoh_(result.data(), workspace_, bytes), "cuMemcpyDtoH(density)");
     return result;
 }
 
@@ -1150,6 +1539,19 @@ std::vector<Complex> cuda_statevector(
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
     return runtime().statevector(num_qubits, steps);
+#endif
+}
+
+std::vector<Complex> cuda_density_matrix(
+    std::size_t num_qubits,
+    const std::vector<CudaDensityStep>& steps
+) {
+#ifdef QUPY_SANITIZER_BUILD
+    static_cast<void>(num_qubits);
+    static_cast<void>(steps);
+    throw std::runtime_error(std::string(kSanitizerCudaDisabled));
+#else
+    return runtime().density_matrix(num_qubits, steps);
 #endif
 }
 

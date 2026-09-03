@@ -19,6 +19,15 @@ struct CudaStep {
     std::size_t second;
 };
 
+enum class CudaDensityStepKind : std::uint8_t { Single, CX, CZ, SWAP, Matrix4 };
+
+struct CudaDensityStep {
+    CudaDensityStepKind kind;
+    std::array<Complex, 16> matrix;
+    std::size_t first;
+    std::size_t second;
+};
+
 struct CudaPauliMask {
     std::uint64_t flip_mask;
     std::uint64_t sign_mask;
@@ -33,6 +42,10 @@ struct CudaPauliMask {
 [[nodiscard]] std::vector<Complex> cuda_statevector(
     std::size_t num_qubits,
     const std::vector<CudaStep>& steps
+);
+[[nodiscard]] std::vector<Complex> cuda_density_matrix(
+    std::size_t num_qubits,
+    const std::vector<CudaDensityStep>& steps
 );
 [[nodiscard]] std::vector<Complex> cuda_pauli_expectations(
     std::size_t num_qubits,

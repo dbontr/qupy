@@ -181,6 +181,58 @@ def test_kraus_noise_channels_are_trace_preserving() -> None:
     assert np.trace(dephased.values) == pytest.approx(1.0, abs=1e-12)
 
 
+def test_density_matrix_backend_contract() -> None:
+    program = qp.rz(qp.h(qp.Program(1), 0), 0.37, 0)
+    assert qp.density_matrix(program).backend == "native-density"
+    assert qp.density_matrix(program, "cpu").backend == "native-density"
+    with pytest.raises(ValueError, match="density-matrix backend"):
+        qp.density_matrix(program, "invalid")
+    if not qp.cuda_available():
+        with pytest.raises(RuntimeError, match="CUDA"):
+            qp.density_matrix(program, "native-cuda")
+
+
+def test_cuda_density_matrix_matches_cpu_for_unitary_and_noise_execution() -> None:
+    if not qp.cuda_available():
+        pytest.skip(qp.cuda_unavailable_reason())
+    program = qp.h(qp.Program(3), 0)
+    program = qp.rz(program, 0.41, 0)
+    program = qp.ry(program, -0.27, 1)
+    program = qp.rx(program, 0.39, 2)
+    program = qp.cx(program, 0, 1)
+    program = qp.cz(program, 1, 2)
+    program = qp.swap(program, 0, 2)
+    program = qp.rz(program, -0.17, 2)
+    cpu = qp.density_matrix(program, "native-cpu")
+    gpu = qp.density_matrix(program, "native-cuda")
+    assert gpu.backend == "native-cuda-density"
+    np.testing.assert_allclose(gpu.values, cpu.values, atol=3e-12, rtol=3e-12)
+
+    phase = np.exp(0.37j)
+    unitary = np.array([[0.0, phase], [phase.conjugate(), 0.0]], dtype=np.complex128)
+    custom = qp.kraus_channel(
+        1,
+        [math.sqrt(0.6) * np.eye(2, dtype=np.complex128), math.sqrt(0.4) * unitary],
+    )
+    noisy = qp.NoisyProgram(
+        program,
+        [
+            qp.NoiseInstruction(0, qp.bit_flip(0, 0.11)),
+            qp.NoiseInstruction(2, qp.phase_flip(1, 0.07)),
+            qp.NoiseInstruction(4, qp.depolarizing(2, 0.09)),
+            qp.NoiseInstruction(5, qp.amplitude_damping(0, 0.13)),
+            qp.NoiseInstruction(6, qp.phase_damping(1, 0.17)),
+            qp.NoiseInstruction(8, qp.pauli_channel(2, 0.03, 0.04, 0.05)),
+            qp.NoiseInstruction(8, custom),
+        ],
+    )
+    noisy_cpu = qp.density_matrix(noisy, "native-cpu")
+    noisy_gpu = qp.density_matrix(noisy, "native-cuda")
+    np.testing.assert_allclose(noisy_gpu.values, noisy_cpu.values, atol=3e-12, rtol=3e-12)
+    np.testing.assert_allclose(noisy_gpu.values, noisy_gpu.values.conj().T, atol=3e-12)
+    assert np.trace(noisy_gpu.values) == pytest.approx(1.0, abs=3e-12)
+
+
 def test_lindblad_rk4_preserves_static_state_and_models_decay() -> None:
     zero_hamiltonian = np.zeros((2, 2), dtype=np.complex128)
     initial_zero = qp.density_matrix(qp.Program(1))

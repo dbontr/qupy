@@ -1060,11 +1060,7 @@ void apply_kraus_channel(
     return result;
 }
 
-void apply_noise_channel(
-    std::vector<Complex>& rho,
-    std::size_t dimension,
-    const NoiseChannel& channel
-) {
+[[nodiscard]] std::vector<Matrix2> noise_kraus_operators(const NoiseChannel& channel) {
     const Matrix2 identity{1.0, 0.0, 0.0, 1.0};
     const Matrix2 x_matrix{0.0, 1.0, 1.0, 0.0};
     const Matrix2 y_matrix{0.0, Complex{0.0, -1.0}, Complex{0.0, 1.0}, 0.0};
@@ -1072,55 +1068,43 @@ void apply_noise_channel(
     switch (channel.code) {
     case NoiseChannelCode::BitFlip: {
         const double p = channel.parameters.at(0);
-        apply_kraus_channel(
-            rho, dimension, channel.qubit,
-            {scaled(identity, std::sqrt(1.0 - p)), scaled(x_matrix, std::sqrt(p))}
-        );
-        return;
+        return {scaled(identity, std::sqrt(1.0 - p)), scaled(x_matrix, std::sqrt(p))};
     }
     case NoiseChannelCode::PhaseFlip: {
         const double p = channel.parameters.at(0);
-        apply_kraus_channel(
-            rho, dimension, channel.qubit,
-            {scaled(identity, std::sqrt(1.0 - p)), scaled(z_matrix, std::sqrt(p))}
-        );
-        return;
+        return {scaled(identity, std::sqrt(1.0 - p)), scaled(z_matrix, std::sqrt(p))};
     }
     case NoiseChannelCode::Depolarizing: {
         const double p = channel.parameters.at(0);
         const double error_scale = std::sqrt(p / 3.0);
-        apply_kraus_channel(
-            rho, dimension, channel.qubit,
-            {scaled(identity, std::sqrt(1.0 - p)), scaled(x_matrix, error_scale),
-             scaled(y_matrix, error_scale), scaled(z_matrix, error_scale)}
-        );
-        return;
+        return {
+            scaled(identity, std::sqrt(1.0 - p)), scaled(x_matrix, error_scale),
+            scaled(y_matrix, error_scale), scaled(z_matrix, error_scale),
+        };
     }
     case NoiseChannelCode::AmplitudeDamping: {
         const double gamma = channel.parameters.at(0);
-        const Matrix2 k0{1.0, 0.0, 0.0, std::sqrt(1.0 - gamma)};
-        const Matrix2 k1{0.0, std::sqrt(gamma), 0.0, 0.0};
-        apply_kraus_channel(rho, dimension, channel.qubit, {k0, k1});
-        return;
+        return {
+            Matrix2{1.0, 0.0, 0.0, std::sqrt(1.0 - gamma)},
+            Matrix2{0.0, std::sqrt(gamma), 0.0, 0.0},
+        };
     }
     case NoiseChannelCode::PhaseDamping: {
         const double gamma = channel.parameters.at(0);
-        const Matrix2 k0{1.0, 0.0, 0.0, std::sqrt(1.0 - gamma)};
-        const Matrix2 k1{0.0, 0.0, 0.0, std::sqrt(gamma)};
-        apply_kraus_channel(rho, dimension, channel.qubit, {k0, k1});
-        return;
+        return {
+            Matrix2{1.0, 0.0, 0.0, std::sqrt(1.0 - gamma)},
+            Matrix2{0.0, 0.0, 0.0, std::sqrt(gamma)},
+        };
     }
     case NoiseChannelCode::Pauli: {
         const double px = channel.parameters.at(0);
         const double py = channel.parameters.at(1);
         const double pz = channel.parameters.at(2);
         const double identity_probability = 1.0 - px - py - pz;
-        apply_kraus_channel(
-            rho, dimension, channel.qubit,
-            {scaled(identity, std::sqrt(identity_probability)), scaled(x_matrix, std::sqrt(px)),
-             scaled(y_matrix, std::sqrt(py)), scaled(z_matrix, std::sqrt(pz))}
-        );
-        return;
+        return {
+            scaled(identity, std::sqrt(identity_probability)), scaled(x_matrix, std::sqrt(px)),
+            scaled(y_matrix, std::sqrt(py)), scaled(z_matrix, std::sqrt(pz)),
+        };
     }
     case NoiseChannelCode::Kraus: {
         if (channel.kraus_count == 0U || channel.kraus_operators.size() != channel.kraus_count * 4U) {
@@ -1130,14 +1114,130 @@ void apply_noise_channel(
         operators.reserve(channel.kraus_count);
         for (std::size_t index = 0U; index < channel.kraus_count; ++index) {
             Matrix2 matrix{};
-            std::copy_n(channel.kraus_operators.begin() + static_cast<std::ptrdiff_t>(index * 4U), 4U, matrix.begin());
+            std::copy_n(
+                channel.kraus_operators.begin() + static_cast<std::ptrdiff_t>(index * 4U),
+                4U,
+                matrix.begin()
+            );
             operators.push_back(matrix);
         }
-        apply_kraus_channel(rho, dimension, channel.qubit, operators);
-        return;
+        return operators;
     }
     }
     throw std::invalid_argument("unknown noise channel");
+}
+
+void apply_noise_channel(
+    std::vector<Complex>& rho,
+    std::size_t dimension,
+    const NoiseChannel& channel
+) {
+    apply_kraus_channel(rho, dimension, channel.qubit, noise_kraus_operators(channel));
+}
+
+[[nodiscard]] std::array<Complex, 16> density_superoperator(
+    const std::vector<Matrix2>& operators
+) {
+    std::array<Complex, 16> result{};
+    for (const Matrix2& matrix : operators) {
+        for (std::size_t row = 0U; row < 2U; ++row) {
+            for (std::size_t column = 0U; column < 2U; ++column) {
+                const std::size_t output = column + 2U * row;
+                for (std::size_t input_row = 0U; input_row < 2U; ++input_row) {
+                    for (std::size_t input_column = 0U; input_column < 2U; ++input_column) {
+                        const std::size_t input = input_column + 2U * input_row;
+                        result[output * 4U + input] +=
+                            matrix[row * 2U + input_row] *
+                            std::conj(matrix[column * 2U + input_column]);
+                    }
+                }
+            }
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] detail::CudaDensityStepKind cuda_density_gate_kind(OperationCode code) {
+    switch (code) {
+    case OperationCode::CX: return detail::CudaDensityStepKind::CX;
+    case OperationCode::CZ: return detail::CudaDensityStepKind::CZ;
+    case OperationCode::SWAP: return detail::CudaDensityStepKind::SWAP;
+    default: break;
+    }
+    throw std::invalid_argument("operation is not a CUDA density two-qubit gate");
+}
+
+void append_cuda_density_operation(
+    std::vector<detail::CudaDensityStep>& steps,
+    const Operation& operation,
+    std::size_t num_qubits
+) {
+    if (operation.qubits.size() == 1U) {
+        const Matrix2 matrix = gate_matrix(operation);
+        std::array<Complex, 16> column_matrix{};
+        std::array<Complex, 16> row_matrix{};
+        for (std::size_t index = 0U; index < matrix.size(); ++index) {
+            column_matrix[index] = std::conj(matrix[index]);
+            row_matrix[index] = matrix[index];
+        }
+        const std::size_t qubit = operation.qubits.front();
+        steps.push_back({detail::CudaDensityStepKind::Single, column_matrix, qubit, 0U});
+        steps.push_back({detail::CudaDensityStepKind::Single, row_matrix, qubit + num_qubits, 0U});
+        return;
+    }
+    const detail::CudaDensityStepKind kind = cuda_density_gate_kind(operation.code);
+    const std::array<Complex, 16> matrix{};
+    steps.push_back({kind, matrix, operation.qubits.at(0), operation.qubits.at(1)});
+    steps.push_back({
+        kind,
+        matrix,
+        operation.qubits.at(0) + num_qubits,
+        operation.qubits.at(1) + num_qubits,
+    });
+}
+
+void append_cuda_density_noise(
+    std::vector<detail::CudaDensityStep>& steps,
+    const NoiseChannel& channel,
+    std::size_t num_qubits
+) {
+    steps.push_back({
+        detail::CudaDensityStepKind::Matrix4,
+        density_superoperator(noise_kraus_operators(channel)),
+        channel.qubit,
+        channel.qubit + num_qubits,
+    });
+}
+
+[[nodiscard]] std::vector<detail::CudaDensityStep> cuda_density_steps(const Program& program) {
+    std::vector<detail::CudaDensityStep> steps;
+    steps.reserve(program.operations().size() * 2U);
+    for (const Operation& operation : program.operations()) {
+        append_cuda_density_operation(steps, operation, program.num_qubits());
+    }
+    return steps;
+}
+
+[[nodiscard]] std::vector<detail::CudaDensityStep> cuda_density_steps(
+    const NoisyProgram& noisy
+) {
+    const Program& program = noisy.program();
+    std::vector<detail::CudaDensityStep> steps;
+    steps.reserve(program.operations().size() * 2U + noisy.noise().size());
+    std::size_t noise_index = 0U;
+    const auto append_noise_at = [&](std::size_t point) {
+        while (noise_index < noisy.noise().size() &&
+               noisy.noise()[noise_index].after_operation == point) {
+            append_cuda_density_noise(steps, noisy.noise()[noise_index].channel, program.num_qubits());
+            ++noise_index;
+        }
+    };
+    append_noise_at(0U);
+    for (std::size_t index = 0U; index < program.operations().size(); ++index) {
+        append_cuda_density_operation(steps, program.operations()[index], program.num_qubits());
+        append_noise_at(index + 1U);
+    }
+    return steps;
 }
 
 [[nodiscard]] std::vector<Complex> matrix_multiply(
@@ -2426,12 +2526,47 @@ NoiseChannel kraus_channel(
     }
     return {NoiseChannelCode::Kraus, qubit, {}, std::move(flattened), operators.size()};
 }
-DensityMatrix density_matrix(const Program& program) {
-    StateVector state = statevector(program, "native-cpu");
-    const std::size_t dimension = state.values.size();
+[[nodiscard]] bool cuda_density_backend(const std::string& backend) {
+    return backend == "cuda" || backend == "native-cuda";
+}
+
+void validate_density_backend(const std::string& backend) {
+    if (backend != "auto" && backend != "cpu" && backend != "native-cpu" &&
+        !cuda_density_backend(backend)) {
+        throw std::invalid_argument("unknown density-matrix backend: " + backend);
+    }
+}
+
+[[nodiscard]] std::size_t density_dimension(const Program& program) {
+    const std::size_t dimension = checked_dimension(program.num_qubits());
     if (dimension > std::numeric_limits<std::size_t>::max() / dimension) {
         throw std::length_error("density matrix exceeds native address space");
     }
+    return dimension;
+}
+
+DensityMatrix density_matrix(
+    const Program& program,
+    const std::string& backend,
+    const PlannerCostModel* cost_model
+) {
+    static_cast<void>(cost_model);
+    validate_density_backend(backend);
+    const std::size_t dimension = density_dimension(program);
+    if (cuda_density_backend(backend)) {
+        if (!detail::cuda_available()) {
+            throw std::runtime_error(detail::cuda_unavailable_reason());
+        }
+        std::vector<Complex> values = detail::cuda_density_matrix(
+            program.num_qubits(), cuda_density_steps(program)
+        );
+        if (values.size() != dimension * dimension) {
+            throw std::logic_error("CUDA density matrix returned an invalid dimension");
+        }
+        return {std::move(values), dimension, "native-cuda-density"};
+    }
+
+    StateVector state = statevector(program, "native-cpu");
     std::vector<Complex> values(dimension * dimension);
     for (std::size_t row = 0; row < dimension; ++row) {
         for (std::size_t column = 0; column < dimension; ++column) {
@@ -2440,12 +2575,75 @@ DensityMatrix density_matrix(const Program& program) {
     }
     return {std::move(values), dimension, "native-density"};
 }
-DensityMatrix density_matrix(const NoisyProgram& noisy) {
-    const Program& program = noisy.program();
-    const std::size_t dimension = checked_dimension(program.num_qubits());
-    if (dimension > std::numeric_limits<std::size_t>::max() / dimension) {
-        throw std::length_error("density matrix exceeds native address space");
+
+struct DensityCostWork {
+    std::size_t single_qubit_operations = 0U;
+    std::size_t two_qubit_operations = 0U;
+    std::size_t noise_events = 0U;
+    std::size_t kraus_evaluations = 0U;
+};
+
+[[nodiscard]] DensityCostWork density_cost_work(const NoisyProgram& noisy) {
+    DensityCostWork work;
+    for (const Operation& operation : noisy.program().operations()) {
+        if (operation.qubits.size() == 1U) {
+            ++work.single_qubit_operations;
+        } else if (operation.qubits.size() == 2U) {
+            ++work.two_qubit_operations;
+        }
     }
+    work.noise_events = noisy.noise().size();
+    for (const NoiseInstruction& instruction : noisy.noise()) {
+        work.kraus_evaluations += noise_kraus_operators(instruction.channel).size();
+    }
+    return work;
+}
+
+[[nodiscard]] bool cuda_density_fits(std::size_t density_values) noexcept {
+    if (!detail::cuda_available()) {
+        return false;
+    }
+    const std::size_t memory = detail::cuda_total_memory_bytes();
+    const std::size_t reserve = sizeof(std::array<Complex, 16>);
+    return memory > reserve && density_values <= (memory - reserve) / sizeof(Complex);
+}
+
+DensityMatrix density_matrix(
+    const NoisyProgram& noisy,
+    const std::string& backend,
+    const PlannerCostModel* cost_model
+) {
+    validate_density_backend(backend);
+    const Program& program = noisy.program();
+    const std::size_t dimension = density_dimension(program);
+    const std::size_t density_values = dimension * dimension;
+    bool use_cuda = cuda_density_backend(backend);
+    if (
+        backend == "auto" && cost_model != nullptr && cost_model->density_auto_validated() &&
+        cuda_density_fits(density_values)
+    ) {
+        const DensityCostWork work = density_cost_work(noisy);
+        if (work.noise_events != 0U) {
+            const double speedup = cost_model->predict_density_speedup(
+                program.num_qubits(), work.single_qubit_operations,
+                work.two_qubit_operations, work.noise_events, work.kraus_evaluations
+            );
+            use_cuda = speedup > 1.0;
+        }
+    }
+    if (use_cuda) {
+        if (!detail::cuda_available()) {
+            throw std::runtime_error(detail::cuda_unavailable_reason());
+        }
+        std::vector<Complex> values = detail::cuda_density_matrix(
+            program.num_qubits(), cuda_density_steps(noisy)
+        );
+        if (values.size() != dimension * dimension) {
+            throw std::logic_error("CUDA density matrix returned an invalid dimension");
+        }
+        return {std::move(values), dimension, "native-cuda-density"};
+    }
+
     std::vector<Complex> rho(dimension * dimension, Complex{0.0, 0.0});
     rho.front() = 1.0;
     std::size_t noise_index = 0U;
