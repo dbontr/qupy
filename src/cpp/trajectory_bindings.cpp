@@ -9,6 +9,8 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
+void bind_tensor_network(nb::module_& module);
+
 namespace {
 
 using DoubleArray = nb::ndarray<
@@ -58,4 +60,6 @@ void bind_trajectory(nb::module_& module) {
         "backend"_a = "auto",
         nb::call_guard<nb::gil_scoped_release>()
     );
+
+    bind_tensor_network(module);
 }
