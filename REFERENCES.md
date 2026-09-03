@@ -45,6 +45,7 @@
 ## Open-system dynamics
 - [Completely positive dynamical semigroups of N-level systems](https://doi.org/10.1063/1.522979) — Vittorio Gorini, Andrzej Kossakowski, and E. C. G. Sudarshan, Journal of Mathematical Physics 17 (1976). Used for: the GKSL generator and Markovian open-system evolution.
 - [On the generators of quantum dynamical semigroups](https://doi.org/10.1007/BF01608499) — Goran Lindblad, Communications in Mathematical Physics 48 (1976). Used for: the Lindblad master-equation generator and completely positive dynamics.
+- [Wave-function approach to dissipative processes in quantum optics](https://doi.org/10.1103/PhysRevLett.68.580) — Jean Dalibard, Yvan Castin, and Klaus Molmer, Physical Review Letters 68, 580 (1992). Used for: Monte Carlo wave-function/quantum-trajectory evolution, stochastic branch selection, normalization, and ensemble-equivalent open-system observables.
 
 ## QPU interchange and distributed execution
 - [OpenQASM 3.1 Specification](https://openqasm.com/versions/3.1/index.html) — OpenQASM contributors, specification 3.1. Used for: portable textual quantum-program interchange, gate calls, measurement, reset, barriers, and classical feed-forward syntax.
