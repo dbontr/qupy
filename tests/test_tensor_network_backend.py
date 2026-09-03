@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 import pytest
 
@@ -119,8 +120,8 @@ def test_auto_routing_does_not_select_uncalibrated_tensor_network() -> None:
         lambda program, observable: qp.density_matrix(program, backend="native-tn"),
     ],
 )
-def test_native_tn_fails_closed_for_unsupported_result_modes(operation: object) -> None:
-    callable_operation = operation
-    assert callable(callable_operation)
+def test_native_tn_fails_closed_for_unsupported_result_modes(
+    operation: Callable[[qp.Program, qp.Observable], object],
+) -> None:
     with pytest.raises(ValueError, match="currently supports observable expectations only"):
-        callable_operation(_program(), _rich_observable())
+        operation(_program(), _rich_observable())
