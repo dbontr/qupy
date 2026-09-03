@@ -30,7 +30,7 @@ result = qp.expect_observable(program, observable, backend="native-tn")
 
 `qp.expect(program, observable, backend="native-tn")` and `qp.expect_observables(...)` use the same explicit backend. The backend currently owns rich observable expectations only. State vectors, density matrices, variances, and covariances fail explicitly instead of silently changing execution method.
 
-`backend="auto"` does not select general tensor networks yet. Automatic selection requires measured, host-scoped planner evidence for the tensor-network cost surface before QuPy can safely add it to the existing evidence-gated policy.
+`backend="auto"` does not select general tensor networks yet. Automatic selection remains gated on promoted host-scoped planner evidence; collecting calibration data does not itself change execution policy.
 
 ## Structural preflight
 
@@ -66,7 +66,37 @@ The structural planner uses tensor indices, ranks, and stable tensor identifiers
 
 The native conformance suite requires planner work, peak-rank, and peak-byte metrics to agree exactly with the numerical executor. This guards against planner/executor drift.
 
-The normal `qp.observable_plan(..., backend="native-tn")` maps this structural preflight into QuPy's standard `ObservableExecutionPlan`. For this backend, `estimated_state_bytes` reports the peak tensor intermediate bytes because no dense state vector is materialized. `predicted_ns` remains unset until runtime calibration exists.
+The normal `qp.observable_plan(..., backend="native-tn")` maps this structural preflight into QuPy's standard `ObservableExecutionPlan`. For this backend, `estimated_state_bytes` reports the peak tensor intermediate bytes because no dense state vector is materialized. `predicted_ns` remains unset until runtime evidence is promoted into the native planner.
+
+## Runtime calibration
+
+`benchmarks.tensor_network_cost` collects paired dense-CPU and exact tensor-network timings over expectation and multi-observable batch workloads. Each workload records the structural preflight used by the TN executor: contraction count, peak rank, peak intermediate bytes, scalar multiplications, term count, and structural-plan fingerprint.
+
+Timing evidence is accepted only after dense CPU and TN results agree within `2e-11`. CPU and TN calls are counterbalanced within each workload, and the report stores the raw nanosecond samples rather than relying on claimed summary statistics.
+
+Collect three policy reports on the same host:
+
+```text
+python -m benchmarks.tensor_network_cost --profile policy --warmups 2 --iterations 8 --output tn-policy-1.json
+python -m benchmarks.tensor_network_cost --profile policy --warmups 2 --iterations 8 --output tn-policy-2.json
+python -m benchmarks.tensor_network_cost --profile policy --warmups 2 --iterations 8 --output tn-policy-3.json
+python -m benchmarks.tensor_network_calibrate tn-policy-1.json tn-policy-2.json tn-policy-3.json --output tn-calibration.json
+```
+
+Calibration recomputes medians from the raw timing arrays. It fits separate six-feature log-runtime models for the dense CPU baseline and tensor-network execution. Every prediction used for routing validation is leave-one-workload-out: the held-out workload contributes to neither candidate's fitted coefficients.
+
+A calibration report is validated only when all of the following hold:
+
+- at least three reports from one exact planner host;
+- the same semantic workload fingerprint and tensor-network structural-plan fingerprint for each named workload in every report;
+- at least 18 paired CPU/TN decision workloads;
+- exact CPU/TN agreement no worse than `2e-11` for every workload;
+- each model has held-out median error no worse than `1.5x` and maximum error no worse than `2.0x`;
+- every leave-one-workload-out backend decision matches the measured faster backend;
+- maximum decision regret is no worse than `1.10x`;
+- dense CPU and TN are each the measured faster candidate on at least three held-out workloads, proving that the evidence covers a real routing boundary rather than a one-backend sweep.
+
+The calibration artifact is evidence, not an execution-policy override. `backend="auto"` remains unchanged until a native planner schema explicitly consumes this evidence and preserves the same fail-closed validation contract.
 
 ## Network construction
 
@@ -141,5 +171,6 @@ QuPy also supports MPI term-parallel tensor-network execution through `distribut
 - Pauli terms contracted independently
 - no approximation or slicing
 - explicit `native-tn`; no automatic planner selection yet
+- held-out CPU/TN routing calibration available, but not yet promoted into native auto policy
 
-The next tensor-network tranche is evidence-backed path and runtime calibration, followed by automatic routing only if held-out measurements demonstrate a safe decision policy.
+The next tensor-network tranche is native planner promotion of validated routing evidence, followed by broader contraction-path optimization only when it improves measured decision quality.
