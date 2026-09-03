@@ -52,7 +52,7 @@ def test_trajectory_batch_matches_exact_density_with_reported_error() -> None:
         seed=123456,
     )
     density = qp.density_matrix(noisy, backend="native-cpu")
-    exact_z = float((density.values[0] - density.values[3]).real)
+    exact_z = float((density.values[0, 0] - density.values[1, 1]).real)
 
     assert result.values.shape == (2,)
     assert result.standard_errors.shape == (2,)
@@ -69,8 +69,8 @@ def test_trajectory_custom_kraus_and_insertion_order() -> None:
     reset_to_zero = qp.kraus_channel(
         0,
         [
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
+            np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.complex128),
+            np.array([[0.0, 1.0], [0.0, 0.0]], dtype=np.complex128),
         ],
     )
     program = qp.x(qp.Program(1), 0)
