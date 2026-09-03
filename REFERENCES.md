@@ -5,6 +5,12 @@
 - [nanobind ndarray](https://nanobind.readthedocs.io/en/latest/ndarray.html) — nanobind 3.x. Used for: ownership-safe zero-copy NumPy result views.
 - [scikit-build-core getting started](https://scikit-build-core.readthedocs.io/en/latest/guide/getting_started.html) — scikit-build-core. Used for: CMake-backed Python packaging.
 
+## Framework autodiff interoperability
+- [JAX pure_callback](https://docs.jax.dev/en/latest/_autosummary/jax.pure_callback.html) — JAX. Used for: JIT-compatible host execution of QuPy objectives without making JAX a QuPy runtime dependency.
+- [JAX custom_jvp](https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html) — JAX. Used for: first-order JVP and reverse-mode rules backed by QuPy native gradients.
+- [Extending PyTorch](https://docs.pytorch.org/docs/stable/notes/extending.html) — PyTorch. Used for: standard `torch.autograd.Function` integration of external numerical code.
+- [Extending torch.func with autograd.Function](https://docs.pytorch.org/docs/stable/notes/extending.func.html) — PyTorch. Used for: defining the current transform-composability boundary and avoiding unsupported `torch.func` claims.
+
 ## Parallel numerical execution
 - [OpenMP API specifications](https://www.openmp.org/specifications/) — OpenMP Architecture Review Board, OpenMP 6.0. Used for: portable CPU parallel execution of amplitude kernels.
 - [NumPy Array API compatibility](https://numpy.org/devdocs/reference/array_api.html) — NumPy. Used for: classical array interoperability principles at the Python boundary.
