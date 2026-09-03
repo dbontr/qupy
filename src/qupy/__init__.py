@@ -147,6 +147,12 @@ from .provider import (
     submit_circuit,
     submit_compiled_circuit,
 )
+from .trajectory import (
+    TrajectoryEstimate,
+    TrajectoryResult,
+    trajectory_expectation,
+    trajectory_expectations,
+)
 
 __all__ = [
     "Circuit",
@@ -204,6 +210,8 @@ __all__ = [
     "ShotEstimate",
     "StateVector",
     "Target",
+    "TrajectoryEstimate",
+    "TrajectoryResult",
     "Variance",
     "Z",
     "adaptive_mps_target",
@@ -279,6 +287,8 @@ __all__ = [
     "swap",
     "to_openqasm3",
     "to_qir_base_profile",
+    "trajectory_expectation",
+    "trajectory_expectations",
     "value_and_grad",
     "variance",
     "variance_observable",
