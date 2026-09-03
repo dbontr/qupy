@@ -37,6 +37,8 @@ class ProviderSubmission:
     job_id: str
     compilation: CompilationResult
     program: _native.ProviderProgram
+    shots: int
+    options_json: str
 
 
 def _mapping(value: object, name: str) -> dict[str, object]:
@@ -221,9 +223,23 @@ def _submit_with_capabilities(
     shot_count = _positive_integer(shots, "shots")
     if "openqasm3" not in capabilities.formats:
         raise ValueError("provider does not advertise openqasm3 program support")
+    advertised_target = capabilities.hardware_target
+    if (
+        advertised_target is not None
+        and compilation.target_fingerprint != advertised_target.fingerprint
+    ):
+        raise ValueError(
+            "compiled target does not match the provider-advertised hardware_target"
+        )
     program = provider_program(compilation.circuit)
     job_id = plugin.submit(program, shot_count, options_json)
-    return ProviderSubmission(job_id=job_id, compilation=compilation, program=program)
+    return ProviderSubmission(
+        job_id=job_id,
+        compilation=compilation,
+        program=program,
+        shots=shot_count,
+        options_json=options_json,
+    )
 
 
 def submit_compiled_circuit(
