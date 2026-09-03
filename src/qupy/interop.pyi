@@ -3,7 +3,6 @@ from typing import Any
 
 from ._native import GradientMethod, Observable, ParameterSlot, Program
 
-
 def make_jax_expectation(
     program: Program,
     observable: Observable,
