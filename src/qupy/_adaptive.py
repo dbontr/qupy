@@ -20,11 +20,7 @@ from ._native import (
     Variance,
 )
 from ._planner import resolve_planner_cost_model
-from .tensor_network import (
-    _expect_observable as _tensor_network_expect_observable,
-    _expect_observables as _tensor_network_expect_observables,
-    _observable_plan as _tensor_network_observable_plan,
-)
+from .tensor_network import _expect_observable, _expect_observables, _observable_plan
 
 _TENSOR_NETWORK_BACKEND = "native-tn"
 
@@ -85,7 +81,7 @@ def observable_plan(
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableExecutionPlan:
     if backend == _TENSOR_NETWORK_BACKEND:
-        return _tensor_network_observable_plan(program, observables)
+        return _observable_plan(program, observables)
     return _native.observable_plan(
         program, observables, backend, resolve_planner_cost_model(backend, cost_model)
     )
@@ -98,7 +94,7 @@ def expect_observable(
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult:
     if backend == _TENSOR_NETWORK_BACKEND:
-        return _tensor_network_expect_observable(program, observable)
+        return _expect_observable(program, observable)
     function = cast(Any, _native.expect_observable)
     return cast(
         ObservableResult,
@@ -142,7 +138,7 @@ def expect_observables(
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableBatch:
     if backend == _TENSOR_NETWORK_BACKEND:
-        return _tensor_network_expect_observables(program, observables)
+        return _expect_observables(program, observables)
     function = cast(Any, _native.expect_observables)
     return cast(
         ObservableBatch,
