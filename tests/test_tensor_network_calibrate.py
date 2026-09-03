@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 import qupy as qp
-from benchmarks.tensor_network_calibrate import Observation, _features, calibrate_files
+from benchmarks.tensor_network_calibrate import (
+    Observation,
+    _features,
+    calibrate_files,
+)
 
 
 _CPU_COEFFICIENTS = (8.1, 0.12, 0.18, 0.25, 0.09, -0.06)
