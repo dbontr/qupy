@@ -2,7 +2,6 @@ from collections.abc import Mapping, Sequence
 
 from ._native import ParameterSlot, PauliTerm, Program
 
-
 class VariationalTemplate:
     program: Program
     slots: tuple[ParameterSlot, ...]
