@@ -67,6 +67,7 @@ The core library is independent of Python bindings. CTest validates the C++ impl
 - versioned cache keys that include program, target, result, method, and query identity
 - exact dense state-vector simulation on CPU and explicit CUDA targets
 - GPU-resident exact Pauli-string, Hamiltonian, expectation, variance, covariance, and observable-batch reduction
+- validated query-aware CPU/CUDA routing for rich observables with deduplicated GPU Pauli-work costing
 - exact adaptive MPS/dense observable execution behind validated host-scoped planner evidence
 - exact bit-packed stabilizer sampling for large Clifford programs with polynomial state memory
 - exact backward Pauli propagation for Clifford-compatible Pauli-Z expectation and variance cones
@@ -154,7 +155,11 @@ The CUDA target supports the same H, X, Y, Z, RX, RY, RZ, CX, CZ, and SWAP opera
 
 Unsupported CUDA result modes still fail during target validation; QuPy does not silently execute them on the CPU. Device state memory is reused between calls. A public `StateVector` still performs one complete device-to-host transfer because returning amplitudes is the requested result, while `cuda-pauli-reduction` keeps observable reduction on the accelerator.
 
-`backend="auto"` remains CPU-only when no planner cost model is supplied. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Rich non-Clifford observable queries may reuse that validated backend decision as a conservative execution gate, but `ObservableExecutionPlan.predicted_ns` remains unset for `cuda-pauli-reduction` until a dedicated observable calibration model exists. Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
+`backend="auto"` remains CPU-only when no planner cost model is supplied. A validated schema-v2 planner artifact can enable cost-based CPU/CUDA selection for `STATEVECTOR` when it matches both the native host and CUDA host fingerprints. Schema-v2 and schema-v3 artifacts keep the earlier conservative rich-observable behavior: they can reuse the validated state-vector backend decision but do not claim a dedicated observable prediction.
+
+A validated schema-v4 artifact adds dedicated rich-observable CPU/CUDA evidence. The CPU model prices dense state preparation plus observable work from the reduced causal cone. The CUDA model prices the compiled device-state work and the exact number of unique Pauli masks that the runtime will evaluate after deduplication. The CUDA fit is additive and constrained non-negative so predicted runtime remains a positive sum of measured work components. `ObservableExecutionPlan.predicted_ns` and `cost_model_class` then report the query-specific prediction and its provenance. If the reduced program exceeds the CUDA target capacity, automatic observable planning keeps the CPU candidate instead of attempting an invalid GPU plan.
+
+Sanitizer builds keep the CUDA driver disabled and exercise the fail-closed path so third-party driver allocations do not enter ASan/LSan accounting.
 
 ### Exact MPS execution
 
@@ -199,7 +204,7 @@ The 24-qubit threshold keeps the established small-circuit seeded state-vector s
 
 ### Validated planner cost evidence
 
-Validated benchmark calibration can be promoted into a compact native planner artifact. Schema-v1 artifacts bind CPU cost evidence to the QuPy core version, workload schema, and native host fingerprint. Schema-v2 artifacts additionally bind a CUDA host fingerprint and validated CPU/CUDA state-vector return-cost evidence. Schema-v3 artifacts can preserve that CUDA evidence and add the validated adaptive-MPS observable policy. Invalid, stale, unvalidated, incomplete, or wrong-host artifacts fail closed.
+Validated benchmark calibration can be promoted into a compact native planner artifact. Schema-v1 artifacts bind CPU cost evidence to the QuPy core version, workload schema, and native host fingerprint. Schema-v2 artifacts additionally bind a CUDA host fingerprint and validated CPU/CUDA state-vector return-cost evidence. Schema-v3 artifacts can preserve that CUDA evidence and add the validated adaptive-MPS observable policy. Schema-v4 artifacts preserve both earlier policies and add dedicated CPU/CUDA rich-observable cost models plus validated backend-decision evidence. Invalid, stale, unvalidated, incomplete, or wrong-host artifacts fail closed.
 
 ```python
 model = qp.load_planner_cost_model("planner.qpcost")
@@ -210,7 +215,9 @@ print(plan.cost_model_class)
 print(plan.cost_model_fingerprint)
 ```
 
-Schema-v1 models remain evidence-only: they do not change `backend`, `method`, or `cache_key`. A schema-v2 or schema-v3 artifact with validated CUDA evidence can affect only `ResultMode.STATEVECTOR` with `backend="auto"`. A schema-v3 artifact with validated MPS policy evidence can additionally select `native-adaptive-mps` for eligible expectation and variance requests. Pauli-propagation-eligible observables keep their specialized CPU method. The chosen plan retains its normal cache identity; cost-model fingerprints remain separate provenance. Execution without a supplied model is unchanged.
+Schema-v1 models remain evidence-only: they do not change `backend`, `method`, or `cache_key`. Schema-v2 through schema-v4 artifacts can retain validated CUDA state-vector evidence for `ResultMode.STATEVECTOR` with `backend="auto"`. Schema-v3 and schema-v4 can additionally retain the adaptive-MPS policy for eligible Pauli-Z expectation and variance requests. Schema-v4 can route non-Clifford rich-observable expectation, variance, covariance, and batch requests between dense CPU and GPU-resident Pauli reduction using their dedicated query evidence. Pauli-propagation-eligible observables keep their specialized CPU method. The chosen plan retains its normal cache identity; cost-model fingerprints remain separate provenance. Execution without a supplied model is unchanged.
+
+Rich-observable promotion uses repeated counterbalanced CPU/CUDA timing pairs and recomputes medians from raw samples. Each decision is validated leave-one-workload-out: its prediction is fitted without that workload. Promotion requires at least three matching reports, exact agreement within `2e-11`, at least 12 decision workloads, no decision with more than 10% regret, and the same fixed planner holdout limits used elsewhere. The CUDA work descriptor counts deduplicated Pauli masks, matching the native query object rather than raw Hamiltonian-product cardinality.
 
 ### Result-aware expectation planning
 
@@ -246,7 +253,7 @@ energy = qp.expect(program, hamiltonian)
 plan = qp.observable_plan(program, [hamiltonian])
 ```
 
-For Clifford circuits, arbitrary Pauli strings and Pauli sums can use exact backward Pauli propagation with zero dense-state storage. Other observable requests use the reduced causal cone and the established state-vector planner. Explicit `native-cuda` execution keeps the reduced state and Pauli reductions on the GPU. A validated CPU/CUDA cost artifact can route a non-Clifford observable through the same device-reduction path without moving policy into Python.
+For Clifford circuits, arbitrary Pauli strings and Pauli sums can use exact backward Pauli propagation with zero dense-state storage. Other observable requests use the reduced causal cone and the established state-vector methods. Explicit `native-cuda` execution keeps the reduced state and Pauli reductions on the GPU. A validated schema-v4 artifact can route a non-Clifford observable between dense CPU execution and the same GPU-resident reduction path without moving policy into Python.
 
 ### Differentiation and circuit optimization
 
@@ -321,7 +328,7 @@ These contracts are the stable integration boundary for additional execution eng
 
 ## Direction
 
-Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when explicitly supplied. Workload fingerprint version 1, held-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. Rich observables, gradients, mixed-state dynamics, provider interchange, detector models, and optional distributed execution share the same native-first semantics. Automatic routing remains evidence-gated: QuPy does not claim an execution path until the target is executable and its required planner evidence is valid.
+Pauli propagation and stabilizer sampling are specialized exact methods selected by the native planner. The CUDA state-vector target uses the CUDA Driver API and PTX JIT without a toolkit build dependency. The MPS target provides exact tensor-network execution with inspectable bond, routing, and contraction-cost features, and schema-v3 evidence can enable its exact adaptive observable policy when explicitly supplied. Schema-v4 evidence adds query-aware CPU/CUDA routing for rich observables using the same deduplicated Pauli work that the GPU runtime executes. Workload fingerprint version 1, held-out or leave-one-workload-out calibration, and validated planner artifacts provide host-scoped execution evidence with explicit provenance. Rich observables, gradients, mixed-state dynamics, provider interchange, detector models, and optional distributed execution share the same native-first semantics. Automatic routing remains evidence-gated: QuPy does not claim an execution path until the target is executable and its required planner evidence is valid.
 
 See [REFERENCES.md](REFERENCES.md) for the specifications, libraries, and upstream systems that materially shape the implementation.
 

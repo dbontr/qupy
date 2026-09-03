@@ -681,16 +681,70 @@ struct MpiLinearTerm {
     return backend == "cuda" || backend == "native-cuda";
 }
 
+[[nodiscard]] std::size_t checked_term_sum(std::size_t left, std::size_t right) {
+    if (right > std::numeric_limits<std::size_t>::max() - left) {
+        throw std::length_error("observable term evaluation count exceeds native range");
+    }
+    return left + right;
+}
+
+struct ObservableCostWork {
+    std::size_t term_evaluations;
+    std::size_t state_passes;
+};
+
+[[nodiscard]] bool has_observable_cost_work(const ObservableCostWork& work) noexcept {
+    return work.term_evaluations != 0U || work.state_passes != 0U;
+}
+
+[[nodiscard]] bool cuda_observable_candidate_supported(const Program& program) noexcept {
+    if (!detail::cuda_available()) {
+        return false;
+    }
+    try {
+        cuda_target().validate(program, ResultMode::StateVector);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+[[nodiscard]] bool needs_cuda_observable_query(
+    const Program& program,
+    const std::string& backend,
+    const PlannerCostModel* cost_model
+) noexcept {
+    return explicit_cuda_backend(backend) ||
+        (backend == "auto" && cost_model != nullptr && cost_model->observable_auto_validated() &&
+         cuda_observable_candidate_supported(program));
+}
+
 [[nodiscard]] bool use_cuda_observable(
     const Program& program,
+    const ObservableCostWork& cpu_work,
+    const ObservableCostWork& cuda_work,
     const std::string& backend,
     const PlannerCostModel* cost_model
 ) {
     if (explicit_cuda_backend(backend)) {
         return true;
     }
-    if (backend != "auto" || cost_model == nullptr) {
+    if (backend != "auto" || cost_model == nullptr ||
+        !has_observable_cost_work(cpu_work) || !has_observable_cost_work(cuda_work)) {
         return false;
+    }
+    if (cost_model->observable_auto_validated()) {
+        if (!cuda_observable_candidate_supported(program)) {
+            return false;
+        }
+        const ExecutionPlan cpu = plan(program, ResultMode::StateVector, "native-cpu");
+        const ExecutionPlan cuda = plan(program, ResultMode::StateVector, "native-cuda");
+        return cost_model->predict_observable_ns(
+                   cuda, cuda_work.term_evaluations, cuda_work.state_passes
+               ) <
+               cost_model->predict_observable_ns(
+                   cpu, cpu_work.term_evaluations, cpu_work.state_passes
+               );
     }
     const ExecutionPlan candidate = plan(program, ResultMode::StateVector, "auto", cost_model);
     return candidate.backend == "native-cuda" && candidate.method == "cuda-statevector";
@@ -1458,8 +1512,8 @@ ObservableExecutionPlan observable_plan(
     query_text.imbue(std::locale::classic());
     query_text << "qupy-observable-query 1\n";
     for (const Observable& value : values) {
-        term_count += value.terms().size();
-        group_count += measurement_groups(value).size();
+        term_count = checked_term_sum(term_count, value.terms().size());
+        group_count = checked_term_sum(group_count, measurement_groups(value).size());
         query_text << "observable " << value.fingerprint() << '\n';
     }
     const std::string query_fingerprint = fingerprint_text(query_text.str());
@@ -1495,7 +1549,7 @@ ObservableExecutionPlan observable_plan(
         return {
             "native-mpi", "mpi-pauli-reduction", true, reduced.active_qubits, values.size(),
             term_count, group_count, local_state_bytes, program.fingerprint(), query_fingerprint,
-            cache_key, std::nullopt, {},
+            cache_key, std::nullopt, {}, {},
         };
     }
     if (use_rich_pauli_propagation(reduced.program, backend)) {
@@ -1506,12 +1560,48 @@ ObservableExecutionPlan observable_plan(
         return {
             "native-cpu", "pauli-propagation", true, reduced.active_qubits, values.size(),
             term_count, group_count, 0U, program.fingerprint(), query_fingerprint, cache_key,
-            std::nullopt, {},
+            std::nullopt, {}, {},
         };
     }
-    const ExecutionPlan base = plan(
-        reduced.program, ResultMode::StateVector, backend, cost_model
+    const bool observable_policy = cost_model != nullptr &&
+        cost_model->observable_auto_validated() && term_count > 0U;
+    const std::string initial_backend = observable_policy &&
+        (backend == "auto" || backend == "cpu") ? "native-cpu" : backend;
+    ExecutionPlan base = plan(
+        reduced.program, ResultMode::StateVector, initial_backend, cost_model
     );
+    std::optional<double> predicted =
+        base.backend == "native-cuda" ? std::nullopt : base.predicted_ns;
+    std::string cost_class = base.cost_model_class;
+    std::string cost_fingerprint = base.cost_model_fingerprint;
+    if (observable_policy &&
+        (backend == "auto" || backend == "native-cpu" || backend == "cpu" ||
+         explicit_cuda_backend(backend))) {
+        const ExecutionPlan cpu = plan(reduced.program, ResultMode::StateVector, "native-cpu");
+        const double cpu_prediction = cost_model->predict_observable_ns(cpu, term_count, 0U);
+        base = cpu;
+        predicted = cpu_prediction;
+        cost_class = "observable-return-cpu";
+        if (explicit_cuda_backend(backend) ||
+            (backend == "auto" && cuda_observable_candidate_supported(reduced.program))) {
+            const ExecutionPlan cuda = plan(
+                reduced.program, ResultMode::StateVector, "native-cuda"
+            );
+            CudaPauliQuery cuda_query;
+            for (const Observable& value : reduced.observables) {
+                static_cast<void>(index_observable(cuda_query, value));
+            }
+            const double cuda_prediction = cost_model->predict_observable_ns(
+                cuda, cuda_query.size(), 0U
+            );
+            if (explicit_cuda_backend(backend) || cuda_prediction < cpu_prediction) {
+                base = cuda;
+                predicted = cuda_prediction;
+                cost_class = "observable-return-cuda";
+            }
+        }
+        cost_fingerprint = cost_model->artifact_fingerprint();
+    }
     const bool cuda_reduction =
         base.backend == "native-cuda" && base.method == "cuda-statevector";
     const std::string method = cuda_reduction
@@ -1523,8 +1613,7 @@ ObservableExecutionPlan observable_plan(
     return {
         base.backend, method, base.exact, reduced.active_qubits, values.size(), term_count,
         group_count, base.estimated_state_bytes, program.fingerprint(), query_fingerprint,
-        cache_key, cuda_reduction ? std::nullopt : base.predicted_ns,
-        base.cost_model_fingerprint,
+        cache_key, predicted, cost_class, cost_fingerprint,
     };
 }
 std::vector<std::vector<std::size_t>> commuting_groups(const Observable& value) {
@@ -1710,17 +1799,33 @@ ObservableResult expect_observable(
             query.size(),
         };
     }
-    if (use_cuda_observable(reduced.program, backend, cost_model)) {
-        CudaPauliQuery query;
-        const std::vector<CudaLinearTerm> indexed = index_observable(
-            query, reduced.observables.front()
-        );
-        const std::vector<Complex> values = query.evaluate(reduced.program);
+    const std::size_t expectation_terms = reduced.observables.front().terms().size();
+    CudaPauliQuery cuda_query;
+    std::vector<CudaLinearTerm> cuda_indexed;
+    bool cuda_query_ready = false;
+    if (needs_cuda_observable_query(reduced.program, backend, cost_model)) {
+        cuda_indexed = index_observable(cuda_query, reduced.observables.front());
+        cuda_query_ready = true;
+    }
+    const std::size_t cuda_evaluations = cuda_query_ready ? cuda_query.size() : expectation_terms;
+    if (use_cuda_observable(
+            reduced.program,
+            {expectation_terms, 0U},
+            {cuda_evaluations, 0U},
+            backend,
+            cost_model
+        )) {
+        if (!cuda_query_ready) {
+            cuda_indexed = index_observable(cuda_query, reduced.observables.front());
+        }
+        const std::vector<Complex> values = cuda_query.evaluate(reduced.program);
         return {
-            hermitian_cuda_value(evaluate_cuda_linear(values, indexed), "observable expectation"),
+            hermitian_cuda_value(
+                evaluate_cuda_linear(values, cuda_indexed), "observable expectation"
+            ),
             "native-cuda",
             reduced.active_qubits,
-            query.size(),
+            cuda_query.size(),
         };
     }
     StateVector state = statevector(reduced.program, backend, cost_model);
@@ -1770,23 +1875,39 @@ ObservableResult variance_observable(
         if (result < 0.0 && result > -1e-12) result = 0.0;
         return {result, "native-mpi", reduced.active_qubits, query.size()};
     }
-    if (use_cuda_observable(reduced.program, backend, cost_model)) {
-        const Observable& observable_value = reduced.observables.front();
-        CudaPauliQuery query;
-        const std::vector<CudaLinearTerm> indexed = index_observable(query, observable_value);
-        const std::vector<CudaLinearTerm> squared = index_observable_product(
-            query, observable_value, observable_value
-        );
-        const std::vector<Complex> values = query.evaluate(reduced.program);
+    const Observable& observable_value = reduced.observables.front();
+    const std::size_t variance_terms = observable_value.terms().size();
+    CudaPauliQuery cuda_query;
+    std::vector<CudaLinearTerm> cuda_indexed;
+    std::vector<CudaLinearTerm> cuda_squared;
+    bool cuda_query_ready = false;
+    if (needs_cuda_observable_query(reduced.program, backend, cost_model)) {
+        cuda_indexed = index_observable(cuda_query, observable_value);
+        cuda_squared = index_observable_product(cuda_query, observable_value, observable_value);
+        cuda_query_ready = true;
+    }
+    const std::size_t cuda_evaluations = cuda_query_ready ? cuda_query.size() : variance_terms;
+    if (use_cuda_observable(
+            reduced.program,
+            {checked_term_sum(variance_terms, variance_terms), 1U},
+            {cuda_evaluations, 0U},
+            backend,
+            cost_model
+        )) {
+        if (!cuda_query_ready) {
+            cuda_indexed = index_observable(cuda_query, observable_value);
+            cuda_squared = index_observable_product(cuda_query, observable_value, observable_value);
+        }
+        const std::vector<Complex> values = cuda_query.evaluate(reduced.program);
         const double mean = hermitian_cuda_value(
-            evaluate_cuda_linear(values, indexed), "observable expectation"
+            evaluate_cuda_linear(values, cuda_indexed), "observable expectation"
         );
         const double second = hermitian_cuda_value(
-            evaluate_cuda_linear(values, squared), "observable variance"
+            evaluate_cuda_linear(values, cuda_squared), "observable variance"
         );
         double result = second - mean * mean;
         if (result < 0.0 && result > -1e-12) result = 0.0;
-        return {result, "native-cuda", reduced.active_qubits, query.size()};
+        return {result, "native-cuda", reduced.active_qubits, cuda_query.size()};
     }
     StateVector state = statevector(reduced.program, backend, cost_model);
     std::vector<Complex> applied;
@@ -1848,30 +1969,50 @@ ObservableResult covariance_observable(
             query.size(),
         };
     }
-    if (use_cuda_observable(reduced.program, backend, cost_model)) {
-        CudaPauliQuery query;
-        const std::vector<CudaLinearTerm> left_indexed = index_observable(
-            query, reduced.observables[0]
+    const std::size_t left_terms = reduced.observables[0].terms().size();
+    const std::size_t right_terms = reduced.observables[1].terms().size();
+    const std::size_t covariance_mean_terms = checked_term_sum(left_terms, right_terms);
+    CudaPauliQuery cuda_query;
+    std::vector<CudaLinearTerm> cuda_left;
+    std::vector<CudaLinearTerm> cuda_right;
+    std::vector<CudaLinearTerm> cuda_product;
+    bool cuda_query_ready = false;
+    if (needs_cuda_observable_query(reduced.program, backend, cost_model)) {
+        cuda_left = index_observable(cuda_query, reduced.observables[0]);
+        cuda_right = index_observable(cuda_query, reduced.observables[1]);
+        cuda_product = index_observable_product(
+            cuda_query, reduced.observables[0], reduced.observables[1]
         );
-        const std::vector<CudaLinearTerm> right_indexed = index_observable(
-            query, reduced.observables[1]
-        );
-        const std::vector<CudaLinearTerm> product_indexed = index_observable_product(
-            query, reduced.observables[0], reduced.observables[1]
-        );
-        const std::vector<Complex> values = query.evaluate(reduced.program);
+        cuda_query_ready = true;
+    }
+    const std::size_t cuda_evaluations = cuda_query_ready ? cuda_query.size() : covariance_mean_terms;
+    if (use_cuda_observable(
+            reduced.program,
+            {checked_term_sum(covariance_mean_terms, covariance_mean_terms), 1U},
+            {cuda_evaluations, 0U},
+            backend,
+            cost_model
+        )) {
+        if (!cuda_query_ready) {
+            cuda_left = index_observable(cuda_query, reduced.observables[0]);
+            cuda_right = index_observable(cuda_query, reduced.observables[1]);
+            cuda_product = index_observable_product(
+                cuda_query, reduced.observables[0], reduced.observables[1]
+            );
+        }
+        const std::vector<Complex> values = cuda_query.evaluate(reduced.program);
         const double left_mean = hermitian_cuda_value(
-            evaluate_cuda_linear(values, left_indexed), "left observable expectation"
+            evaluate_cuda_linear(values, cuda_left), "left observable expectation"
         );
         const double right_mean = hermitian_cuda_value(
-            evaluate_cuda_linear(values, right_indexed), "right observable expectation"
+            evaluate_cuda_linear(values, cuda_right), "right observable expectation"
         );
-        const Complex product = evaluate_cuda_linear(values, product_indexed);
+        const Complex product = evaluate_cuda_linear(values, cuda_product);
         return {
             product.real() - left_mean * right_mean,
             "native-cuda",
             reduced.active_qubits,
-            query.size(),
+            cuda_query.size(),
         };
     }
     StateVector state = statevector(reduced.program, backend, cost_model);
@@ -1921,15 +2062,36 @@ ObservableBatch expect_observables(
         }
         return {std::move(results), values.size(), "native-mpi", reduced.active_qubits};
     }
-    if (use_cuda_observable(reduced.program, backend, cost_model)) {
-        CudaPauliQuery query;
-        std::vector<std::vector<CudaLinearTerm>> indexed;
-        indexed.reserve(reduced.observables.size());
+    std::size_t batch_evaluations = 0U;
+    for (const Observable& value : reduced.observables) {
+        batch_evaluations = checked_term_sum(batch_evaluations, value.terms().size());
+    }
+    CudaPauliQuery cuda_query;
+    std::vector<std::vector<CudaLinearTerm>> cuda_indexed;
+    bool cuda_query_ready = false;
+    if (needs_cuda_observable_query(reduced.program, backend, cost_model)) {
+        cuda_indexed.reserve(reduced.observables.size());
         for (const Observable& value : reduced.observables) {
-            indexed.push_back(index_observable(query, value));
+            cuda_indexed.push_back(index_observable(cuda_query, value));
         }
-        const std::vector<Complex> gpu_values = query.evaluate(reduced.program);
-        for (const auto& terms : indexed) {
+        cuda_query_ready = true;
+    }
+    const std::size_t cuda_evaluations = cuda_query_ready ? cuda_query.size() : batch_evaluations;
+    if (use_cuda_observable(
+            reduced.program,
+            {batch_evaluations, 0U},
+            {cuda_evaluations, 0U},
+            backend,
+            cost_model
+        )) {
+        if (!cuda_query_ready) {
+            cuda_indexed.reserve(reduced.observables.size());
+            for (const Observable& value : reduced.observables) {
+                cuda_indexed.push_back(index_observable(cuda_query, value));
+            }
+        }
+        const std::vector<Complex> gpu_values = cuda_query.evaluate(reduced.program);
+        for (const auto& terms : cuda_indexed) {
             results.push_back(hermitian_cuda_value(
                 evaluate_cuda_linear(gpu_values, terms), "observable expectation"
             ));
