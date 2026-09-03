@@ -123,6 +123,13 @@ from ._planner import (
     remove_planner_cost_model,
     set_default_planner_cost_model,
 )
+from .algorithms import (
+    VariationalTemplate,
+    append_pauli_evolution,
+    append_qft,
+    hardware_efficient_ansatz,
+    qft,
+)
 from .circuit import (
     Circuit,
     CircuitInstruction,
@@ -233,9 +240,12 @@ __all__ = [
     "TrajectoryEstimate",
     "TrajectoryResult",
     "Variance",
+    "VariationalTemplate",
     "Z",
     "adaptive_mps_target",
     "amplitude_damping",
+    "append_pauli_evolution",
+    "append_qft",
     "bit_flip",
     "circuit_ir_version",
     "commuting_groups",
@@ -267,6 +277,7 @@ __all__ = [
     "expectation_plan",
     "grad",
     "h",
+    "hardware_efficient_ansatz",
     "hessian",
     "install_planner_cost_model",
     "ir_version",
@@ -297,6 +308,7 @@ __all__ = [
     "probabilities",
     "provider_capabilities",
     "provider_program",
+    "qft",
     "remove_planner_cost_model",
     "repetition_code_detector_model",
     "rx",
