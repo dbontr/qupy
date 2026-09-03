@@ -33,6 +33,7 @@ public:
         std::vector<CircuitOperationCode> one_qubit_operations,
         std::vector<CircuitOperationCode> two_qubit_operations,
         std::vector<Coupling> couplings = {},
+        bool measurement = false,
         bool mid_circuit_measurement = false,
         bool reset = false,
         bool dynamic_control = false,
@@ -44,6 +45,7 @@ public:
     [[nodiscard]] const std::vector<CircuitOperationCode>& one_qubit_operations() const noexcept;
     [[nodiscard]] const std::vector<CircuitOperationCode>& two_qubit_operations() const noexcept;
     [[nodiscard]] const std::vector<Coupling>& couplings() const noexcept;
+    [[nodiscard]] bool measurement() const noexcept;
     [[nodiscard]] bool mid_circuit_measurement() const noexcept;
     [[nodiscard]] bool reset() const noexcept;
     [[nodiscard]] bool dynamic_control() const noexcept;
@@ -63,6 +65,7 @@ private:
     std::vector<CircuitOperationCode> one_qubit_operations_;
     std::vector<CircuitOperationCode> two_qubit_operations_;
     std::vector<Coupling> couplings_;
+    bool measurement_;
     bool mid_circuit_measurement_;
     bool reset_;
     bool dynamic_control_;
