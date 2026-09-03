@@ -38,7 +38,12 @@ def test_compile_routes_long_range_interaction_and_tracks_layout() -> None:
         [qp.CircuitOperationCode.CX],
         [qp.Coupling(0, 1), qp.Coupling(1, 2)],
     )
-    result = qp.compile(qp.Circuit(2).cx(0, 1), target, initial_layout=[0, 2], optimization_level=0)
+    result = qp.compile(
+        qp.Circuit(2).cx(0, 1),
+        target,
+        initial_layout=[0, 2],
+        optimization_level=0,
+    )
 
     assert result.initial_layout == [0, 2]
     assert result.final_layout == [1, 2]
@@ -46,7 +51,10 @@ def test_compile_routes_long_range_interaction_and_tracks_layout() -> None:
     assert result.routed_operations == 2
     assert result.compiled_operations == 4
     assert result.decompositions == 1
-    assert all(instruction.code is not qp.CircuitOperationCode.SWAP for instruction in result.circuit.instructions)
+    assert all(
+        instruction.code is not qp.CircuitOperationCode.SWAP
+        for instruction in result.circuit.instructions
+    )
     assert result.target_fingerprint == target.fingerprint
 
 
@@ -84,7 +92,12 @@ def test_compile_translates_cx_to_native_cz_basis() -> None:
         [qp.CircuitOperationCode.H],
         [qp.CircuitOperationCode.CZ],
     )
-    result = qp.compile(qp.Circuit(2).cx(0, 1), target, initial_layout=[0, 1], optimization_level=0)
+    result = qp.compile(
+        qp.Circuit(2).cx(0, 1),
+        target,
+        initial_layout=[0, 1],
+        optimization_level=0,
+    )
 
     assert [instruction.code for instruction in result.circuit.instructions] == [
         qp.CircuitOperationCode.H,
@@ -148,10 +161,18 @@ def test_compile_schedules_classical_feed_forward() -> None:
 
 def test_compile_optimization_and_fail_closed_validation() -> None:
     adjacent = qp.Circuit(1).h(0).h(0)
-    assert qp.compile(adjacent, _full_target(1), initial_layout=[0], optimization_level=0).compiled_operations == 2
-    assert qp.compile(adjacent, _full_target(1), initial_layout=[0], optimization_level=1).compiled_operations == 0
+    assert (
+        qp.compile(adjacent, _full_target(1), initial_layout=[0], optimization_level=0)
+        .compiled_operations
+        == 2
+    )
+    assert (
+        qp.compile(adjacent, _full_target(1), initial_layout=[0], optimization_level=1)
+        .compiled_operations
+        == 0
+    )
 
-    with pytest.raises(ValueError, match="dynamic"):
+    with pytest.raises(ValueError, match="classical feed-forward"):
         qp.compile(
             qp.Circuit(1, 1).x(0, qp.ClassicalCondition(0, True)),
             qp.HardwareTarget("static", 1, [qp.CircuitOperationCode.X], []),
