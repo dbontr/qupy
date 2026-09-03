@@ -32,10 +32,13 @@ Supported instructions are:
 - `h`, `x`, `y`, `z`
 - `rx`, `ry`, `rz` with one finite numeric literal
 - `cx`, `cz`, `swap`
-- measurement assignment such as `c[0] = measure q[0];`
+- indexed measurement assignment such as `c[0] = measure q[0];`
+- whole-register measurement such as `c = measure q;` when the quantum and classical register sizes are equal
 - `reset`
 - barriers with zero or more explicitly indexed qubits
 - one supported instruction inside `if (c[index] == 0)` or `if (c[index] == 1)`
+
+Whole-register measurement is lowered deterministically to one indexed `Circuit.measure()` instruction per qubit/classical-bit pair in ascending index order. Unequal register sizes are rejected rather than truncated or broadcast implicitly. This also makes the OpenQASM emitted by `to_openqasm3(program, measure_all=True)` directly importable as a `Circuit`.
 
 Both `//` line comments and `/* ... */` block comments are ignored. Decimal and scientific-notation numeric literals are accepted for rotation parameters.
 
@@ -56,13 +59,14 @@ The importer rejects unsupported constructs rather than dropping or rewriting th
 - symbolic or arithmetic parameter expressions
 - calibration, delay, pulse, and timing constructs
 - invalid or out-of-range qubit/classical references
+- whole-register measurements with mismatched quantum/classical register sizes
 - non-finite numeric parameters
 
 Syntax failures include source line and column information. Existing `Circuit` validation remains responsible for semantic constraints such as distinct two-qubit operands and valid condition bits.
 
 ## Provider interchange
 
-QuPy provider payloads can already use OpenQASM 3 text. When a provider or external tool returns source inside the supported subset, it can now be converted back into `Circuit` and then inspected, compiled, fingerprinted, or re-serialized.
+QuPy provider payloads can already use OpenQASM 3 text. Both unitary provider payloads and `measure_all=True` payloads can be converted back into `Circuit`, then inspected, compiled, fingerprinted, or re-serialized.
 
 The importer does not trust provider text. Unsupported or malformed input fails closed through the same parser boundary.
 
