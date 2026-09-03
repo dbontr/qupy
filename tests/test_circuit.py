@@ -66,6 +66,76 @@ def test_dynamic_circuit_emits_openqasm_31() -> None:
     assert circuit.instructions[3].condition.value is True
 
 
+def test_openqasm_31_round_trip_preserves_circuit_identity() -> None:
+    circuit = qp.Circuit(3, 2)
+    circuit = circuit.h(0).x(1).y(2).z(0)
+    circuit = circuit.rx(-0.125, 1).ry(3.25e-7, 2).rz(0.5, 0)
+    circuit = circuit.cx(0, 1).cz(1, 2).swap(0, 2)
+    circuit = circuit.measure(0, 0)
+    circuit = circuit.measure(1, 1, qp.ClassicalCondition(0, True))
+    circuit = circuit.x(2, qp.ClassicalCondition(1, False))
+    circuit = circuit.reset(0, qp.ClassicalCondition(0, False))
+    circuit = circuit.barrier([0, 2]).barrier()
+
+    restored = qp.Circuit.from_openqasm3(circuit.to_openqasm3())
+
+    assert restored.canonical_text == circuit.canonical_text
+    assert restored.fingerprint == circuit.fingerprint
+    assert restored.to_openqasm3() == circuit.to_openqasm3()
+
+
+def test_openqasm_import_accepts_comments_and_named_registers() -> None:
+    restored = qp.Circuit.from_openqasm3(
+        """
+        // register names are parser-local and do not affect Circuit identity
+        OPENQASM 3;
+        include "stdgates.inc";
+        /* declarations */
+        qubit[2] data;
+        bit[1] flag;
+        rx(-1.25e-2) data[0];
+        flag[0] = measure data[0];
+        if (flag[0] == 0) { z data[1]; }
+        barrier data[0], data[1];
+        """
+    )
+
+    assert restored.num_qubits == 2
+    assert restored.num_clbits == 1
+    assert len(restored.instructions) == 4
+    assert restored.instructions[0].parameters[0] == pytest.approx(-0.0125)
+    assert restored.instructions[2].condition is not None
+    assert restored.instructions[2].condition.value is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "OPENQASM 2.0; qubit[1] q; h q[0];",
+        'OPENQASM 3.1; include "other.inc"; qubit[1] q; h q[0];',
+        "OPENQASM 3.1; qubit[1] q; qubit[1] r; h q[0];",
+        "OPENQASM 3.1; qubit[1] q; h q[1];",
+        "OPENQASM 3.1; qubit[1] q; t q[0];",
+        "OPENQASM 3.1; qubit[1] q; rx(1e999) q[0];",
+        "OPENQASM 3.1; qubit[1] q; bit[1] c; if (c[0] == 2) { x q[0]; }",
+        "OPENQASM 3.1; qubit[1] q; bit[1] c; if (c[0] == 1) { x q[0]; z q[0]; }",
+        "OPENQASM 3.1; qubit[1] q; bit[1] c; if (c[0] == 1) { barrier q[0]; }",
+        "OPENQASM 3.1; qubit[1] q; gate custom a { x a; } custom q[0];",
+        "OPENQASM 3.1; qubit[1] q; /* unterminated",
+    ],
+)
+def test_openqasm_import_fails_closed(text: str) -> None:
+    with pytest.raises(ValueError):
+        qp.Circuit.from_openqasm3(text)
+
+
+def test_openqasm_syntax_errors_report_source_location() -> None:
+    with pytest.raises(ValueError, match=r"line 3, column"):
+        qp.Circuit.from_openqasm3(
+            "OPENQASM 3.1;\nqubit[1] q;\nh q[0]\n"
+        )
+
+
 def test_circuit_identity_is_versioned_and_parameter_exact() -> None:
     first = qp.Circuit(1, 1).ry(math.pi / 7.0, 0).measure(0, 0)
     second = qp.Circuit(1, 1).ry(math.pi / 7.0, 0).measure(0, 0)
