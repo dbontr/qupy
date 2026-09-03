@@ -139,6 +139,14 @@ from .compiler import (
     compile,
     compile_circuit,
 )
+from .provider import (
+    ProviderCapabilities,
+    ProviderSubmission,
+    provider_capabilities,
+    provider_program,
+    submit_circuit,
+    submit_compiled_circuit,
+)
 
 __all__ = [
     "Circuit",
@@ -184,9 +192,11 @@ __all__ = [
     "PlannerCostModel",
     "Probabilities",
     "Program",
+    "ProviderCapabilities",
     "ProviderJobState",
     "ProviderPlugin",
     "ProviderProgram",
+    "ProviderSubmission",
     "ResultMode",
     "Samples",
     "SamplesBatch",
@@ -252,6 +262,8 @@ __all__ = [
     "planner_cuda_host_fingerprint",
     "planner_host_fingerprint",
     "probabilities",
+    "provider_capabilities",
+    "provider_program",
     "remove_planner_cost_model",
     "repetition_code_detector_model",
     "rx",
@@ -262,6 +274,8 @@ __all__ = [
     "sample_detector_model",
     "set_default_planner_cost_model",
     "statevector",
+    "submit_circuit",
+    "submit_compiled_circuit",
     "swap",
     "to_openqasm3",
     "to_qir_base_profile",

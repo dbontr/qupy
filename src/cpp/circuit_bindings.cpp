@@ -1,9 +1,14 @@
 #include "qupy/circuit.hpp"
 
+#include "qupy/advanced.hpp"
+
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
+
+#include <string>
+#include <utility>
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -112,4 +117,16 @@ void bind_circuit(nb::module_& module) {
         .def("barrier", &qupy::Circuit::barrier, "qubits"_a = std::vector<std::size_t>{});
 
     module.def("circuit_ir_version", &qupy::circuit_ir_version);
+    module.def(
+        "_make_provider_program",
+        [](std::string format, std::string text, std::size_t num_qubits, bool measures_all) {
+            return qupy::ProviderProgram{
+                std::move(format), std::move(text), num_qubits, measures_all
+            };
+        },
+        "format"_a,
+        "text"_a,
+        "num_qubits"_a,
+        "measures_all"_a
+    );
 }
