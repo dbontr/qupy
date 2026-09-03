@@ -14,7 +14,7 @@
 - [Parallel Thread Execution ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/) — NVIDIA PTX ISA 9.3. Used for: embedded portable PTX gate, density-matrix superoperator, Pauli-expectation, shared-memory block-reduction, and recursive complex-reduction kernels.
 
 ## Program identity
-- [FIPS 180-4 Secure Hash Standard](https://doi.org/10.6028/NIST.FIPS.180-4) — NIST. Used for: portable SHA-256 program and target fingerprints for execution-plan cache identity.
+- [FIPS 180-4 Secure Hash Standard](https://doi.org/10.6028/NIST.FIPS.180-4) — NIST. Used for: portable SHA-256 program, circuit, and target fingerprints for semantic and execution identity.
 
 ## Tensor-network and MPS execution
 - [Efficient Classical Simulation of Slightly Entangled Quantum Computations](https://doi.org/10.1103/PhysRevLett.91.147902) — Guifre Vidal, Physical Review Letters 91, 147902 (2003). Used for: exact MPS simulation scaling with restricted entanglement and bond-dimension structure.
