@@ -60,6 +60,11 @@ void bind_circuit(nb::module_& module) {
             "program"_a,
             "num_clbits"_a = 0U
         )
+        .def_static(
+            "from_openqasm3",
+            &qupy::Circuit::from_openqasm3,
+            "text"_a
+        )
         .def("h", &qupy::Circuit::h, "qubit"_a, "condition"_a = nb::none())
         .def("x", &qupy::Circuit::x, "qubit"_a, "condition"_a = nb::none())
         .def("y", &qupy::Circuit::y, "qubit"_a, "condition"_a = nb::none())
