@@ -119,7 +119,7 @@ def test_submit_compiled_circuit_rejects_missing_format_and_bad_shots() -> None:
     valid = _FakePlugin(_capabilities(hardware=False))
     with pytest.raises(ValueError, match="shots must be positive"):
         qp.submit_compiled_circuit(_plugin(valid), compilation, 0)
-    with pytest.raises(ValueError, match="shots must be an integer"):
+    with pytest.raises(TypeError, match="shots must be an integer"):
         qp.submit_compiled_circuit(_plugin(valid), compilation, True)
     assert not valid.submissions
 
@@ -203,3 +203,7 @@ def test_provider_capabilities_rejects_invalid_contracts() -> None:
     hardware["num_qubits"] = -1
     with pytest.raises(ValueError, match="num_qubits must be positive"):
         qp.provider_capabilities(_plugin(_FakePlugin(json.dumps(negative_qubits))))
+
+    wrong_root = json.dumps(["openqasm3"])
+    with pytest.raises(TypeError, match="provider capabilities must be a JSON object"):
+        qp.provider_capabilities(_plugin(_FakePlugin(wrong_root)))
