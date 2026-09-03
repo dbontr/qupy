@@ -1,3 +1,10 @@
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("qupy-compute")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
+
 from ._adaptive import (
     covariance,
     density_matrix,
