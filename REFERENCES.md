@@ -19,7 +19,9 @@
 ## Tensor-network and MPS execution
 - [Efficient Classical Simulation of Slightly Entangled Quantum Computations](https://doi.org/10.1103/PhysRevLett.91.147902) — Guifre Vidal, Physical Review Letters 91, 147902 (2003). Used for: exact MPS simulation scaling with restricted entanglement and bond-dimension structure.
 - [The density-matrix renormalization group in the age of matrix product states](https://doi.org/10.1016/j.aop.2010.09.012) — Ulrich Schollwock, Annals of Physics 326 (2011). Used for: MPS canonical forms, local tensor updates, and SVD-based bond factorization.
-- [cuTensorNet overview](https://docs.nvidia.com/cuda/cuquantum/latest/cutensornet/overview.html) — NVIDIA cuQuantum. Used for: gate-split tensor-network execution and MPS contraction/decomposition architecture comparison.
+- [Simulating quantum computation by contracting tensor networks](https://arxiv.org/abs/quant-ph/0511069) — Igor Markov and Yaoyun Shi (2005). Used for: exact circuit simulation by tensor contraction and the relationship between contraction complexity and graph/treewidth structure.
+- [Constructing Optimal Contraction Trees for Tensor Network Quantum Circuit Simulation](https://arxiv.org/abs/2209.02895) — Cameron Ibrahim, Danylo Lykov, Zichang He, Yuri Alexeev, and Ilya Safro (2022). Used for: contraction-tree cost modeling and deterministic contraction-order architecture comparison.
+- [cuTensorNet overview](https://docs.nvidia.com/cuda/cuquantum/latest/cutensornet/overview.html) — NVIDIA cuQuantum. Used for: gate-split tensor-network execution and MPS/general contraction architecture comparison.
 
 ## Stabilizer and Pauli methods
 - [Improved Simulation of Stabilizer Circuits](https://doi.org/10.1103/PhysRevA.70.052328) — Scott Aaronson and Daniel Gottesman, Physical Review A 70, 052328 (2004), arXiv:quant-ph/0406196. Used for: Clifford tableau conjugation, stabilizer-state simulation principles, and exact backward Pauli propagation.
