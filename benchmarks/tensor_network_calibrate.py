@@ -16,6 +16,7 @@ from benchmarks.cost_model import ErrorMetrics
 
 _MIN_REPORTS = 3
 _MIN_DECISION_SAMPLES = 18
+_MIN_BACKEND_WINS = 3
 _MAX_DECISION_REGRET = 1.10
 _MAX_MEDIAN_FACTOR = 1.5
 _MAX_FACTOR = 2.0
@@ -84,6 +85,8 @@ class DecisionEvidence:
     samples: int
     mistakes: int
     max_regret: float
+    cpu_wins: int
+    tn_wins: int
     rows: tuple[dict[str, Any], ...]
 
     @property
@@ -92,6 +95,8 @@ class DecisionEvidence:
             self.samples >= _MIN_DECISION_SAMPLES
             and self.mistakes == 0
             and self.max_regret <= _MAX_DECISION_REGRET
+            and self.cpu_wins >= _MIN_BACKEND_WINS
+            and self.tn_wins >= _MIN_BACKEND_WINS
         )
 
 
@@ -235,7 +240,9 @@ def _nonnegative_int(row: dict[str, Any], key: str) -> int:
     return value
 
 
-def _load_report(path: Path) -> tuple[dict[str, str], list[Observation], set[str]]:
+def _load_report(
+    path: Path,
+) -> tuple[dict[str, str], list[Observation], dict[str, tuple[str, str]]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if (
         payload.get("schema_version") != 1
@@ -280,26 +287,29 @@ def _load_report(path: Path) -> tuple[dict[str, str], list[Observation], set[str
         validated_names.add(workload)
 
     observations: list[Observation] = []
-    evidence_names: set[str] = set()
+    identities: dict[str, tuple[str, str]] = {}
+    seen_fingerprints: set[str] = set()
     for row in evidence:
         if not isinstance(row, dict):
             raise TypeError("tensor-network policy evidence row is invalid")
         workload = row.get("workload")
         fingerprint = row.get("fingerprint")
+        plan_fingerprint = row.get("tn_plan_fingerprint")
         if (
             not isinstance(workload, str)
             or not workload
-            or workload in evidence_names
+            or workload in identities
             or not isinstance(fingerprint, str)
             or len(fingerprint) != 64
+            or fingerprint in seen_fingerprints
+            or not isinstance(plan_fingerprint, str)
+            or len(plan_fingerprint) != 64
         ):
             raise ValueError("tensor-network policy workload identity is invalid or duplicated")
-        evidence_names.add(workload)
+        identities[workload] = (fingerprint, plan_fingerprint)
+        seen_fingerprints.add(fingerprint)
 
-        plan_fingerprint = row.get("tn_plan_fingerprint")
         scalar_multiplications = row.get("tn_scalar_multiplications")
-        if not isinstance(plan_fingerprint, str) or len(plan_fingerprint) != 64:
-            raise ValueError("tensor-network structural-plan fingerprint is invalid")
         if (
             not isinstance(scalar_multiplications, (int, float))
             or isinstance(scalar_multiplications, bool)
@@ -356,9 +366,9 @@ def _load_report(path: Path) -> tuple[dict[str, str], list[Observation], set[str
                 )
             )
 
-    if validated_names != evidence_names:
+    if validated_names != set(identities):
         raise ValueError("tensor-network exactness validation does not cover the decision workload set")
-    return dict(host), observations, evidence_names
+    return dict(host), observations, identities
 
 
 def _aggregate(rows: list[Observation]) -> list[Observation]:
@@ -460,6 +470,8 @@ def _leave_one_out(
     decision_rows: list[dict[str, Any]] = []
     mistakes = 0
     max_regret = 1.0
+    cpu_wins = 0
+    tn_wins = 0
 
     for fingerprint in sorted(by_fingerprint):
         held_out = by_fingerprint[fingerprint]
@@ -478,6 +490,10 @@ def _leave_one_out(
         actual_tn = held_out["native-tn"].median_ns
         selected = "native-cpu" if predicted_cpu <= predicted_tn else "native-tn"
         optimal = "native-cpu" if actual_cpu <= actual_tn else "native-tn"
+        if optimal == "native-cpu":
+            cpu_wins += 1
+        else:
+            tn_wins += 1
         selected_actual = actual_cpu if selected == "native-cpu" else actual_tn
         optimal_actual = min(actual_cpu, actual_tn)
         regret = selected_actual / optimal_actual
@@ -502,6 +518,8 @@ def _leave_one_out(
         samples=len(decision_rows),
         mistakes=mistakes,
         max_regret=float(max_regret),
+        cpu_wins=cpu_wins,
+        tn_wins=tn_wins,
         rows=tuple(decision_rows),
     )
 
@@ -512,17 +530,17 @@ def calibrate_files(paths: tuple[Path, ...]) -> TensorNetworkCalibration:
 
     all_rows: list[Observation] = []
     hosts: list[dict[str, str]] = []
-    workload_sets: list[set[str]] = []
+    identities: list[dict[str, tuple[str, str]]] = []
     for path in paths:
-        host, rows, workloads = _load_report(path)
+        host, rows, report_identities = _load_report(path)
         hosts.append(host)
         all_rows.extend(rows)
-        workload_sets.append(workloads)
+        identities.append(report_identities)
 
     if any(host != hosts[0] for host in hosts[1:]):
         raise ValueError("tensor-network calibration cannot mix hosts")
-    if any(workloads != workload_sets[0] for workloads in workload_sets[1:]):
-        raise ValueError("tensor-network calibration reports do not contain the same workloads")
+    if any(value != identities[0] for value in identities[1:]):
+        raise ValueError("tensor-network workload identities changed between reports")
 
     aggregated = _aggregate(all_rows)
     predictions, decision = _leave_one_out(aggregated)
