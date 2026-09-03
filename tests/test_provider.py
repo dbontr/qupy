@@ -83,11 +83,13 @@ def test_submit_circuit_compiles_serializes_and_submits_once() -> None:
     )
 
     assert submission.job_id == "fixture-job-1"
+    assert submission.shots == 128
+    assert submission.options_json == '{"priority":"normal"}'
     assert fake.capability_calls == 1
     assert len(fake.submissions) == 1
     program, shots, options = fake.submissions[0]
-    assert shots == 128
-    assert options == '{"priority":"normal"}'
+    assert shots == submission.shots
+    assert options == submission.options_json
     assert program.format == "openqasm3"
     assert program.text == submission.compilation.circuit.to_openqasm3()
     assert program.text.startswith("OPENQASM 3.1;")
@@ -120,6 +122,26 @@ def test_submit_compiled_circuit_rejects_missing_format_and_bad_shots() -> None:
     with pytest.raises(ValueError, match="shots must be an integer"):
         qp.submit_compiled_circuit(_plugin(valid), compilation, True)
     assert not valid.submissions
+
+
+def test_submit_compiled_circuit_rejects_provider_target_mismatch() -> None:
+    fake = _FakePlugin(_capabilities())
+    conflicting = qp.HardwareTarget(
+        "other-qpu",
+        2,
+        [qp.CircuitOperationCode.H],
+        [qp.CircuitOperationCode.CX],
+    )
+    compilation = qp.compile(
+        qp.Circuit(2).h(0).cx(0, 1),
+        conflicting,
+        initial_layout=[0, 1],
+    )
+
+    with pytest.raises(ValueError, match="compiled target does not match"):
+        qp.submit_compiled_circuit(_plugin(fake), compilation, 64)
+    assert fake.capability_calls == 1
+    assert not fake.submissions
 
 
 def test_submit_circuit_fails_closed_on_target_mismatch() -> None:
