@@ -84,6 +84,24 @@ def test_openqasm_31_round_trip_preserves_circuit_identity() -> None:
     assert restored.to_openqasm3() == circuit.to_openqasm3()
 
 
+def test_provider_openqasm_payload_round_trips_to_circuit() -> None:
+    program = qp.h(qp.Program(2), 0)
+    program = qp.ry(program, -0.375, 1)
+    program = qp.cx(program, 0, 1)
+
+    unitary_payload = qp.to_openqasm3(program, measure_all=False)
+    unitary = qp.Circuit.from_openqasm3(unitary_payload.text)
+    assert unitary.to_program().fingerprint == program.fingerprint
+
+    measured_payload = qp.to_openqasm3(program, measure_all=True)
+    measured = qp.Circuit.from_openqasm3(measured_payload.text)
+    assert measured.num_clbits == 2
+    assert [instruction.name for instruction in measured.instructions[-2:]] == [
+        "measure",
+        "measure",
+    ]
+
+
 def test_openqasm_import_accepts_comments_and_named_registers() -> None:
     restored = qp.Circuit.from_openqasm3(
         """
@@ -130,7 +148,7 @@ def test_openqasm_import_fails_closed(text: str) -> None:
 
 
 def test_openqasm_syntax_errors_report_source_location() -> None:
-    with pytest.raises(ValueError, match=r"line 3, column"):
+    with pytest.raises(ValueError, match=r"line 4, column"):
         qp.Circuit.from_openqasm3(
             "OPENQASM 3.1;\nqubit[1] q;\nh q[0]\n"
         )
