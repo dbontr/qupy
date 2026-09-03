@@ -15,7 +15,7 @@ from benchmarks.tensor_network_calibrate import (
 
 
 _CPU_COEFFICIENTS = (8.1, 0.12, 0.18, 0.25, 0.09, -0.06)
-_TN_COEFFICIENTS = (6.2, 0.21, 0.11, 0.045, 0.075, 0.10)
+_TN_COEFFICIENTS = (7.5, 0.21, 0.11, 0.045, 0.075, 0.10)
 
 
 def _runtime(row: Observation, coefficients: tuple[float, ...]) -> int:
@@ -131,6 +131,8 @@ def test_tensor_network_calibration_uses_raw_samples_and_validates(tmp_path: Pat
     assert baseline.decision.samples == 18
     assert baseline.decision.mistakes == 0
     assert baseline.decision.max_regret <= 1.10
+    assert baseline.decision.cpu_wins >= 3
+    assert baseline.decision.tn_wins >= 3
     assert all(model.validated for model in baseline.models)
     assert baseline.models == claimed.models
     assert baseline.decision == claimed.decision
@@ -157,4 +159,13 @@ def test_tensor_network_calibration_rejects_mixed_hosts(tmp_path: Path) -> None:
     _report(replacement, host_suffix="b")
     reports[-1] = replacement
     with pytest.raises(ValueError, match="cannot mix hosts"):
+        calibrate_files(tuple(reports))
+
+
+def test_tensor_network_calibration_rejects_cross_report_identity_drift(tmp_path: Path) -> None:
+    reports = list(_reports(tmp_path))
+    payload = json.loads(reports[-1].read_text(encoding="utf-8"))
+    payload["policy_evidence"][0]["tn_plan_fingerprint"] = "f" * 64
+    reports[-1].write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="identities changed"):
         calibrate_files(tuple(reports))
