@@ -86,8 +86,7 @@ private:
 
     void skip_trivia() {
         while (position_ < input_.size()) {
-            const unsigned char current = static_cast<unsigned char>(peek());
-            if (std::isspace(current) != 0) {
+            if (std::isspace(static_cast<unsigned char>(peek())) != 0) {
                 advance();
                 continue;
             }
@@ -142,11 +141,8 @@ private:
         if (first == '.' && std::isdigit(static_cast<unsigned char>(second)) != 0) {
             return true;
         }
-        if ((first == '+' || first == '-') &&
-            (std::isdigit(static_cast<unsigned char>(second)) != 0 || second == '.')) {
-            return true;
-        }
-        return false;
+        return (first == '+' || first == '-') &&
+            (std::isdigit(static_cast<unsigned char>(second)) != 0 || second == '.');
     }
 
     [[nodiscard]] Token identifier_token(
@@ -227,9 +223,9 @@ private:
                     parse_error(line, column, "unterminated string escape");
                 }
                 value.push_back(advance());
-                continue;
+            } else {
+                value.push_back(current);
             }
-            value.push_back(current);
         }
         parse_error(line, column, "unterminated string literal");
     }
@@ -326,8 +322,10 @@ public:
                     fail(size, "quantum register size must be positive");
                 }
                 expect(TokenKind::RBracket, "']' after quantum register size");
-                const Token& name = expect(TokenKind::Identifier, "quantum register name");
-                qubit_register = name.text;
+                qubit_register = expect(
+                    TokenKind::Identifier,
+                    "quantum register name"
+                ).text;
                 expect(TokenKind::Semicolon, "';' after quantum register declaration");
                 saw_qubits = true;
                 continue;
@@ -344,8 +342,10 @@ public:
                     fail(size, "classical register size must be positive");
                 }
                 expect(TokenKind::RBracket, "']' after classical register size");
-                const Token& name = expect(TokenKind::Identifier, "classical register name");
-                clbit_register = name.text;
+                clbit_register = expect(
+                    TokenKind::Identifier,
+                    "classical register name"
+                ).text;
                 expect(TokenKind::Semicolon, "';' after classical register declaration");
                 saw_clbits = true;
                 continue;
@@ -359,6 +359,7 @@ public:
         if (saw_clbits && clbit_register == qubit_register) {
             fail(peek(), "quantum and classical registers must have distinct names");
         }
+
         qubit_register_ = std::move(qubit_register);
         clbit_register_ = std::move(clbit_register);
         num_qubits_ = num_qubits;
@@ -403,22 +404,18 @@ private:
         if (token.text.empty()) {
             fail(token, "expected a non-negative integer");
         }
-        for (const char value : token.text) {
-            if (std::isdigit(static_cast<unsigned char>(value)) == 0) {
+        std::size_t value = 0U;
+        for (const char digit : token.text) {
+            if (std::isdigit(static_cast<unsigned char>(digit)) == 0) {
                 fail(token, "expected a non-negative integer");
             }
-        }
-        try {
-            std::size_t consumed = 0U;
-            const unsigned long long parsed = std::stoull(token.text, &consumed, 10);
-            if (consumed != token.text.size() ||
-                parsed > static_cast<unsigned long long>(std::numeric_limits<std::size_t>::max())) {
+            const std::size_t numeric = static_cast<std::size_t>(digit - '0');
+            if (value > (std::numeric_limits<std::size_t>::max() - numeric) / 10U) {
                 fail(token, "integer is outside the native size range");
             }
-            return static_cast<std::size_t>(parsed);
-        } catch (const std::exception&) {
-            fail(token, "integer is outside the native size range");
+            value = value * 10U + numeric;
         }
+        return value;
     }
 
     [[nodiscard]] double parse_double(const Token& token) const {
@@ -463,7 +460,7 @@ private:
     }
 
     [[nodiscard]] Circuit parse_if(Circuit circuit) {
-        const Token& if_token = expect_identifier("if");
+        expect_identifier("if");
         expect(TokenKind::LParen, "'(' after if");
         const std::size_t bit = parse_clbit_ref();
         expect(TokenKind::EqualEqual, "'==' in classical condition");
@@ -487,7 +484,6 @@ private:
             );
         }
         consume();
-        static_cast<void>(if_token);
         return circuit;
     }
 
@@ -495,12 +491,48 @@ private:
         Circuit circuit,
         std::optional<ClassicalCondition> condition
     ) {
-        const std::size_t classical_bit = parse_clbit_ref();
+        if (peek(1U).kind == TokenKind::LBracket) {
+            const std::size_t classical_bit = parse_clbit_ref();
+            expect(TokenKind::Assign, "'=' in measurement assignment");
+            expect_identifier("measure");
+            const std::size_t qubit = parse_qubit_ref();
+            expect(TokenKind::Semicolon, "';' after measurement");
+            return circuit.measure(qubit, classical_bit, condition);
+        }
+
+        const Token& classical_register = expect(
+            TokenKind::Identifier,
+            "classical register name"
+        );
+        if (classical_register.text != clbit_register_) {
+            fail(
+                classical_register,
+                "unknown classical register '" + classical_register.text + "'"
+            );
+        }
         expect(TokenKind::Assign, "'=' in measurement assignment");
         expect_identifier("measure");
-        const std::size_t qubit = parse_qubit_ref();
+        const Token& quantum_register = expect(
+            TokenKind::Identifier,
+            "quantum register name"
+        );
+        if (quantum_register.text != qubit_register_) {
+            fail(
+                quantum_register,
+                "unknown quantum register '" + quantum_register.text + "'"
+            );
+        }
         expect(TokenKind::Semicolon, "';' after measurement");
-        return circuit.measure(qubit, classical_bit, condition);
+        if (num_clbits_ != num_qubits_) {
+            fail(
+                classical_register,
+                "whole-register measurement requires equal quantum and classical register sizes"
+            );
+        }
+        for (std::size_t index = 0U; index < num_qubits_; ++index) {
+            circuit = circuit.measure(index, index, condition);
+        }
+        return circuit;
     }
 
     [[nodiscard]] Circuit parse_barrier(
@@ -574,7 +606,8 @@ private:
             return parse_if(std::move(circuit));
         }
         if (!clbit_register_.empty() && peek().text == clbit_register_ &&
-            peek(1U).kind == TokenKind::LBracket) {
+            (peek(1U).kind == TokenKind::LBracket ||
+             peek(1U).kind == TokenKind::Assign)) {
             return parse_measurement(std::move(circuit), condition);
         }
         const Token operation = consume();
