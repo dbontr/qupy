@@ -88,12 +88,13 @@ Calibration recomputes medians from the raw timing arrays. It fits separate six-
 A calibration report is validated only when all of the following hold:
 
 - at least three reports from one exact planner host;
-- the same workload set in every report;
+- the same semantic workload fingerprint and tensor-network structural-plan fingerprint for each named workload in every report;
 - at least 18 paired CPU/TN decision workloads;
 - exact CPU/TN agreement no worse than `2e-11` for every workload;
 - each model has held-out median error no worse than `1.5x` and maximum error no worse than `2.0x`;
 - every leave-one-workload-out backend decision matches the measured faster backend;
-- maximum decision regret is no worse than `1.10x`.
+- maximum decision regret is no worse than `1.10x`;
+- dense CPU and TN are each the measured faster candidate on at least three held-out workloads, proving that the evidence covers a real routing boundary rather than a one-backend sweep.
 
 The calibration artifact is evidence, not an execution-policy override. `backend="auto"` remains unchanged until a native planner schema explicitly consumes this evidence and preserves the same fail-closed validation contract.
 
