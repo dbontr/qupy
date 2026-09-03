@@ -510,6 +510,12 @@ private:
                 "unknown classical register '" + classical_register.text + "'"
             );
         }
+        if (condition.has_value()) {
+            fail(
+                classical_register,
+                "conditional whole-register measurement is not supported by the QuPy circuit IR"
+            );
+        }
         expect(TokenKind::Assign, "'=' in measurement assignment");
         expect_identifier("measure");
         const Token& quantum_register = expect(
@@ -530,7 +536,7 @@ private:
             );
         }
         for (std::size_t index = 0U; index < num_qubits_; ++index) {
-            circuit = circuit.measure(index, index, condition);
+            circuit = circuit.measure(index, index);
         }
         return circuit;
     }
