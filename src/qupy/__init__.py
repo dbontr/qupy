@@ -1,10 +1,5 @@
 from importlib.metadata import PackageNotFoundError, version
 
-try:
-    __version__ = version("qupy-compute")
-except PackageNotFoundError:
-    __version__ = "0+unknown"
-
 from ._adaptive import (
     covariance,
     density_matrix,
@@ -182,6 +177,11 @@ from .trajectory import (
     trajectory_expectation,
     trajectory_expectations,
 )
+
+try:
+    __version__ = version("qupy-compute")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
 
 __all__ = [
     "Circuit",
