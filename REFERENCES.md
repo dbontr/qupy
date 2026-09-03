@@ -52,7 +52,7 @@
 ## QPU interchange and distributed execution
 - [OpenQASM 3.1 Specification](https://openqasm.com/versions/3.1/index.html) — OpenQASM contributors, specification 3.1. Used for: portable textual quantum-program interchange, gate calls, measurement, reset, barriers, and classical feed-forward syntax.
 - [QIR Base Profile](https://github.com/qir-alliance/qir-spec/blob/main/specification/profiles/Base_Profile.md) — QIR Alliance. Used for: LLVM-based QIR entry-point, profile, qubit/result, and output-recording requirements.
-- [MPI: A Message-Passing Interface Standard Version 5.0](https://www.mpi-forum.org/docs/mpi-5.0/mpi50-report/mpi50-report.htm) — MPI Forum, MPI 5.0 (2025). Used for: distributed state-vector point-to-point communication, communicator, and initialization semantics.
+- [MPI: A Message-Passing Interface Standard Version 5.0](https://www.mpi-forum.org/docs/mpi-5.0/mpi50-report/mpi50-report.htm) — MPI Forum, MPI 5.0 (2025). Used for: distributed state-vector point-to-point communication, collective broadcast and reduction, communicator topology, and initialization semantics.
 
 ## Quantum error correction
 - [Stim detector error model format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md) — Google Quantum AI, Stim. Used for: detector-event, independent-error-mechanism, and logical-frame-change semantics used by QuPy detector models.

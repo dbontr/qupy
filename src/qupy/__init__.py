@@ -139,6 +139,14 @@ from .compiler import (
     compile,
     compile_circuit,
 )
+from .multi_device import (
+    DistributedTensorNetworkEstimate,
+    DistributedTrajectoryEstimate,
+    DistributedTrajectoryResult,
+    distributed_tensor_network_expectation,
+    distributed_trajectory_expectation,
+    distributed_trajectory_expectations,
+)
 from .provider import (
     ProviderCapabilities,
     ProviderSubmission,
@@ -169,6 +177,9 @@ __all__ = [
     "DetectorSamples",
     "DistributedInfo",
     "DistributedStateVector",
+    "DistributedTensorNetworkEstimate",
+    "DistributedTrajectoryEstimate",
+    "DistributedTrajectoryResult",
     "ExecutionPlan",
     "Expectation",
     "ExpectationBatch",
@@ -238,6 +249,9 @@ __all__ = [
     "depolarizing",
     "distributed_info",
     "distributed_statevector",
+    "distributed_tensor_network_expectation",
+    "distributed_trajectory_expectation",
+    "distributed_trajectory_expectations",
     "estimate_observable",
     "expect",
     "expect_batch",

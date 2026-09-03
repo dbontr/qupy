@@ -6,6 +6,8 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
+void bind_multi_device(nb::module_& module);
+
 void bind_tensor_network(nb::module_& module) {
     nb::class_<qupy::TensorNetworkResult>(module, "TensorNetworkResult")
         .def_ro("value", &qupy::TensorNetworkResult::value)
@@ -26,4 +28,6 @@ void bind_tensor_network(nb::module_& module) {
         "max_tensor_bytes"_a = std::size_t{1} << 30U,
         nb::call_guard<nb::gil_scoped_release>()
     );
+
+    bind_multi_device(module);
 }

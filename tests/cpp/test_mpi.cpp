@@ -1,5 +1,7 @@
 #include "qupy/advanced.hpp"
+#include "qupy/multi_device.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -105,6 +107,105 @@ void test_observable_batch_and_gradient() {
     );
 }
 
+void test_distributed_tensor_network() {
+    const qupy::DistributedInfo info = qupy::distributed_info();
+    const qupy::Program program = distributed_program();
+    const qupy::Observable observable = left_observable();
+    const auto local = qupy::tensor_network_expectation(program, observable);
+    const auto distributed = qupy::distributed_tensor_network_expectation(program, observable);
+
+    require_close(distributed.value, local.value, "distributed tensor-network value mismatch");
+    require(distributed.term_count == observable.terms().size(), "distributed tensor term count mismatch");
+    require(distributed.contractions == local.contractions, "distributed tensor contraction count mismatch");
+    require(distributed.peak_tensor_rank == local.peak_tensor_rank, "distributed tensor peak rank mismatch");
+    require(distributed.peak_tensor_bytes == local.peak_tensor_bytes, "distributed tensor peak bytes mismatch");
+    require(
+        std::abs(distributed.scalar_multiplications - local.scalar_multiplications) < 1e-12,
+        "distributed tensor work mismatch"
+    );
+    require(distributed.world_size == info.world_size, "distributed tensor world size mismatch");
+    require(
+        distributed.active_ranks == std::min(info.world_size, observable.terms().size()),
+        "distributed tensor work did not span expected MPI ranks"
+    );
+    require(distributed.exact, "distributed tensor-network result must be exact");
+    require(distributed.backend == "native-mpi-tn", "distributed tensor backend mismatch");
+    require(
+        distributed.method == "mpi-term-parallel-greedy-contraction",
+        "distributed tensor method mismatch"
+    );
+
+    bool collective_failure = false;
+    try {
+        static_cast<void>(qupy::distributed_tensor_network_expectation(program, observable, 128U));
+    } catch (const std::runtime_error& error) {
+        collective_failure = std::string(error.what()).find("failed on one or more MPI ranks") !=
+            std::string::npos;
+    }
+    require(collective_failure, "rank-local tensor failure was not propagated collectively");
+}
+
+qupy::Observable z_observable() {
+    return qupy::Observable({
+        qupy::PauliTerm(1.0, {{0U, qupy::Pauli::Z}}),
+    });
+}
+
+void test_distributed_trajectories() {
+    const qupy::DistributedInfo info = qupy::distributed_info();
+    qupy::Program excited(1U);
+    excited = qupy::x(excited, 0U);
+    const qupy::Observable z = z_observable();
+
+    const qupy::NoisyProgram deterministic(
+        excited,
+        {{1U, qupy::bit_flip(0U, 1.0)}}
+    );
+    const auto deterministic_result = qupy::distributed_trajectory_expectations(
+        deterministic, {z}, 64U, 17U
+    );
+    require_close(deterministic_result.values.front(), 1.0, "distributed deterministic trajectory mismatch");
+    require_close(deterministic_result.standard_errors.front(), 0.0, "distributed deterministic trajectory error mismatch");
+    require(deterministic_result.world_size == info.world_size, "distributed trajectory world size mismatch");
+    require(deterministic_result.active_ranks == info.world_size, "trajectory ensemble did not use every MPI rank");
+    require(deterministic_result.state_bytes_per_rank == 2U * sizeof(qupy::Complex), "trajectory per-rank state bytes mismatch");
+    require(!deterministic_result.exact, "distributed trajectory result was marked exact");
+    require(deterministic_result.backend == "native-mpi-trajectory", "distributed trajectory backend mismatch");
+    require(deterministic_result.method == "mpi-trajectory-ensemble", "distributed trajectory method mismatch");
+
+    const auto sparse = qupy::distributed_trajectory_expectations(
+        deterministic, {z}, 1U, 17U
+    );
+    require_close(sparse.values.front(), 1.0, "sparse distributed trajectory mismatch");
+    require(std::isnan(sparse.standard_errors.front()), "single distributed trajectory error must be NaN");
+    require(sparse.active_ranks == 1U, "inactive trajectory ranks were reported as active");
+    require(sparse.world_size == info.world_size, "sparse distributed trajectory world size mismatch");
+
+    const double gamma = 0.25;
+    const qupy::NoisyProgram damping(
+        excited,
+        {{1U, qupy::amplitude_damping(0U, gamma)}}
+    );
+    const auto first = qupy::distributed_trajectory_expectations(
+        damping, {z}, 4096U, 123456U
+    );
+    const auto replay = qupy::distributed_trajectory_expectations(
+        damping, {z}, 4096U, 123456U
+    );
+    require(
+        std::abs(first.values.front() - (2.0 * gamma - 1.0)) < 0.05,
+        "distributed trajectory ensemble did not converge"
+    );
+    require(first.standard_errors.front() > 0.0, "distributed stochastic trajectory error missing");
+    require(first.standard_errors.front() < 0.03, "distributed trajectory standard error too large");
+    require(first.values == replay.values, "distributed fixed-seed replay changed values");
+    require(
+        first.standard_errors == replay.standard_errors,
+        "distributed fixed-seed replay changed standard errors"
+    );
+    require(first.seed == 123456U, "distributed trajectory seed mismatch");
+}
+
 }  // namespace
 
 int main() {
@@ -115,6 +216,8 @@ int main() {
         require(info.rank < info.world_size, "MPI rank is outside the world");
         test_observable_reductions();
         test_observable_batch_and_gradient();
+        test_distributed_tensor_network();
+        test_distributed_trajectories();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
