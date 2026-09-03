@@ -33,12 +33,14 @@ Supported instructions are:
 - `rx`, `ry`, `rz` with one finite numeric literal
 - `cx`, `cz`, `swap`
 - indexed measurement assignment such as `c[0] = measure q[0];`
-- whole-register measurement such as `c = measure q;` when the quantum and classical register sizes are equal
+- top-level whole-register measurement such as `c = measure q;` when the quantum and classical register sizes are equal
 - `reset`
 - barriers with zero or more explicitly indexed qubits
 - one supported instruction inside `if (c[index] == 0)` or `if (c[index] == 1)`
 
 Whole-register measurement is lowered deterministically to one indexed `Circuit.measure()` instruction per qubit/classical-bit pair in ascending index order. Unequal register sizes are rejected rather than truncated or broadcast implicitly. This also makes the OpenQASM emitted by `to_openqasm3(program, measure_all=True)` directly importable as a `Circuit`.
+
+Conditional whole-register measurement is intentionally rejected. The current `Circuit` IR stores a condition on each instruction, so expanding one conditional register measurement into multiple condition-bearing measurement instructions could re-evaluate a condition after an earlier measurement changes classical state. QuPy fails instead of changing that block-level semantic.
 
 Both `//` line comments and `/* ... */` block comments are ignored. Decimal and scientific-notation numeric literals are accepted for rotation parameters.
 
@@ -56,6 +58,7 @@ The importer rejects unsupported constructs rather than dropping or rewriting th
 - loops and other control-flow forms
 - nested or multi-instruction conditional blocks
 - conditional barriers, which the current Circuit IR does not represent
+- conditional whole-register measurement
 - symbolic or arithmetic parameter expressions
 - calibration, delay, pulse, and timing constructs
 - invalid or out-of-range qubit/classical references
