@@ -626,17 +626,30 @@ void bind_advanced(nb::module_& module) {
         },
         "qubit"_a,
         "operators"_a
-    );    module.def(
-        "density_matrix",
-        nb::overload_cast<const qupy::Program&>(&qupy::density_matrix),
-        "program"_a,
-        nb::call_guard<nb::gil_scoped_release>()
     );
     module.def(
         "density_matrix",
-        nb::overload_cast<const qupy::NoisyProgram&>(&qupy::density_matrix),
+        [](const qupy::Program& program, const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            nb::gil_scoped_release release;
+            return qupy::density_matrix(program, backend, model);
+        },
         "program"_a,
-        nb::call_guard<nb::gil_scoped_release>()
+        "backend"_a = "auto",
+        "cost_model"_a = nb::none()
+    );
+    module.def(
+        "density_matrix",
+        [](const qupy::NoisyProgram& program, const std::string& backend, nb::object cost_model) {
+            const auto* model = cost_model.is_none()
+                ? nullptr : &nb::cast<const qupy::PlannerCostModel&>(cost_model);
+            nb::gil_scoped_release release;
+            return qupy::density_matrix(program, backend, model);
+        },
+        "program"_a,
+        "backend"_a = "auto",
+        "cost_model"_a = nb::none()
     );
     module.def(
         "lindblad_evolve",

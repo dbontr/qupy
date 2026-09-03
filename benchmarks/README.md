@@ -76,6 +76,19 @@ The observable policy uses 36 non-Clifford workloads spanning expectation, varia
 
 Validation is leave-one-workload-out: each routing decision and model-error sample is predicted by coefficients fitted without that workload. Promotion requires at least three reports with the same host and workload set, exact agreement within `2e-11`, at least 12 decision workloads, zero decisions above 10% regret, a median model factor no worse than `1.5x`, and a maximum model factor no worse than `2.0x`. Schema-v4 promotion requires a validated schema-v3 base and preserves its CUDA state-vector and adaptive-MPS evidence.
 
+Validate noisy density-matrix CPU/CUDA routing with repeated policy reports:
+
+```text
+python -m benchmarks.density_cost --profile policy --warmups 2 --iterations 8 --output density-policy-1.json
+python -m benchmarks.density_cost --profile policy --warmups 2 --iterations 8 --output density-policy-2.json
+python -m benchmarks.density_cost --profile policy --warmups 2 --iterations 8 --output density-policy-3.json
+python -m benchmarks.density_calibrate density-policy-1.json density-policy-2.json density-policy-3.json --base-artifact planner-v4.qpcost --output density-calibration.json --planner-output planner-v5.qpcost
+```
+
+The density policy contains 36 paired workloads covering 4–9 qubits, chain and ladder circuits, and sparse, mixed, and dense noise. It includes built-in channels and a complex custom Kraus channel. CPU/CUDA calls are counterbalanced inside each workload, medians are recomputed from the raw timing arrays, and every workload must agree numerically within `2e-11` before timing evidence is accepted.
+
+Density validation is leave-one-workload-out. The CPU curve is a six-feature log runtime model over qubits, operation work, and Kraus work. The CUDA curve is a seven-feature non-negative additive runtime model over `4^n` density elements, gate work, and one local superoperator per noise event. A separate six-feature log speedup curve is fitted directly to each paired `CPU runtime / CUDA runtime` ratio and owns backend selection. Promotion requires all three curves to satisfy the same `1.5x` median / `2.0x` maximum error limits, at least three reports with the same host and workload set, at least 24 paired workloads, and zero decisions above 10% regret. Schema-v5 promotion requires a validated schema-v4 base and preserves all earlier planner evidence.
+
 Run all compatibility adapters after installing their optional packages:
 
 ```text

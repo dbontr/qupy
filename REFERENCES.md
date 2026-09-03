@@ -11,7 +11,7 @@
 
 ## GPU execution
 - [CUDA Driver API](https://docs.nvidia.com/cuda/cuda-driver-api/) — NVIDIA CUDA 13.x. Used for: runtime CUDA device/context management, module loading, memory operations, and kernel launch without a toolkit build dependency.
-- [Parallel Thread Execution ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/) — NVIDIA PTX ISA 9.3. Used for: embedded portable PTX gate, Pauli-expectation, shared-memory block-reduction, and recursive complex-reduction kernels.
+- [Parallel Thread Execution ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/) — NVIDIA PTX ISA 9.3. Used for: embedded portable PTX gate, density-matrix superoperator, Pauli-expectation, shared-memory block-reduction, and recursive complex-reduction kernels.
 
 ## Program identity
 - [FIPS 180-4 Secure Hash Standard](https://doi.org/10.6028/NIST.FIPS.180-4) — NIST. Used for: portable SHA-256 program and target fingerprints for execution-plan cache identity.

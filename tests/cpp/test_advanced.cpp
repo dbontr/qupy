@@ -124,6 +124,57 @@ void test_custom_kraus_channel() {
     require(std::abs(rho.values[0].real() - gamma) < 1e-12, "Kraus decay probability mismatch");
     require(std::abs(rho.values[3].real() - (1.0 - gamma)) < 1e-12, "Kraus survival probability mismatch");
 }
+
+void test_cuda_density_matrix() {
+    qupy::Program program(3U);
+    program = qupy::h(program, 0U);
+    program = qupy::rz(program, 0.41, 0U);
+    program = qupy::ry(program, -0.27, 1U);
+    program = qupy::rx(program, 0.39, 2U);
+    program = qupy::cx(program, 0U, 1U);
+    program = qupy::cz(program, 1U, 2U);
+    program = qupy::swap(program, 0U, 2U);
+    require(qupy::density_matrix(program).backend == "native-density", "density auto backend changed");
+
+    bool rejected = false;
+    try {
+        static_cast<void>(qupy::density_matrix(program, "invalid"));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "invalid density backend was accepted");
+    if (!qupy::cuda_available()) {
+        return;
+    }
+
+    const auto cpu = qupy::density_matrix(program, "native-cpu");
+    const auto gpu = qupy::density_matrix(program, "native-cuda");
+    require(gpu.backend == "native-cuda-density", "CUDA density backend mismatch");
+    require(gpu.values.size() == cpu.values.size(), "CUDA density shape mismatch");
+    for (std::size_t index = 0U; index < cpu.values.size(); ++index) {
+        require(std::abs(gpu.values[index] - cpu.values[index]) < 3e-12, "CUDA density value mismatch");
+    }
+
+    const qupy::NoisyProgram noisy(
+        program,
+        {
+            {0U, qupy::bit_flip(0U, 0.11)},
+            {2U, qupy::phase_flip(1U, 0.07)},
+            {4U, qupy::depolarizing(2U, 0.09)},
+            {5U, qupy::amplitude_damping(0U, 0.13)},
+            {7U, qupy::pauli_channel(2U, 0.03, 0.04, 0.05)},
+        }
+    );
+    const auto noisy_cpu = qupy::density_matrix(noisy, "native-cpu");
+    const auto noisy_gpu = qupy::density_matrix(noisy, "native-cuda");
+    for (std::size_t index = 0U; index < noisy_cpu.values.size(); ++index) {
+        require(
+            std::abs(noisy_gpu.values[index] - noisy_cpu.values[index]) < 3e-12,
+            "CUDA noisy density value mismatch"
+        );
+    }
+}
+
 void test_qec_interchange_and_distributed_capability() {
     const qupy::DetectorModel model(
         2U,
@@ -198,6 +249,7 @@ int main() {
         test_observable_plan_and_optimizer();
         test_cuda_pauli_reduction();
         test_custom_kraus_channel();
+        test_cuda_density_matrix();
         test_qec_interchange_and_distributed_capability();
         test_provider_plugin();
         return 0;

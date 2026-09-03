@@ -230,10 +230,31 @@ class PlannerCostModel:
     @property
     def observable_auto_validated(self) -> bool: ...
     @property
+    def density_auto_validated(self) -> bool: ...
+    @property
     def mps_policy_version(self) -> int: ...
     @property
     def observable_policy_version(self) -> int: ...
+    @property
+    def density_policy_version(self) -> int: ...
     def predict_ns(self, plan: ExecutionPlan) -> float: ...
+    def predict_density_ns(
+        self,
+        backend: str,
+        qubits: int,
+        single_qubit_operations: int,
+        two_qubit_operations: int,
+        noise_events: int,
+        kraus_evaluations: int,
+    ) -> float: ...
+    def predict_density_speedup(
+        self,
+        qubits: int,
+        single_qubit_operations: int,
+        two_qubit_operations: int,
+        noise_events: int,
+        kraus_evaluations: int,
+    ) -> float: ...
 
 class StateVector:
     @property
@@ -460,6 +481,10 @@ class NoiseChannel:
     def qubit(self) -> int: ...
     @property
     def parameters(self) -> list[float]: ...
+    @property
+    def kraus_operators(self) -> list[complex]: ...
+    @property
+    def kraus_count(self) -> int: ...
 
 
 class NoiseInstruction:
@@ -795,9 +820,17 @@ def kraus_channel(
     operators: list[npt.NDArray[np.complex128]],
 ) -> NoiseChannel: ...
 @overload
-def density_matrix(program: Program) -> DensityMatrix: ...
+def density_matrix(
+    program: Program,
+    backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
+) -> DensityMatrix: ...
 @overload
-def density_matrix(program: NoisyProgram) -> DensityMatrix: ...
+def density_matrix(
+    program: NoisyProgram,
+    backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
+) -> DensityMatrix: ...
 def lindblad_evolve(
     initial: DensityMatrix,
     hamiltonian: npt.NDArray[np.complex128],
