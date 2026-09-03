@@ -7,7 +7,12 @@ import threading
 from os import PathLike
 from pathlib import Path
 
-from ._native import PlannerCostModel, core_version, load_planner_cost_model, planner_host_fingerprint
+from ._native import (
+    PlannerCostModel,
+    core_version,
+    load_planner_cost_model,
+    planner_host_fingerprint,
+)
 
 _ENV_MODEL = "QUPY_PLANNER_COST_MODEL"
 _ENV_CACHE = "QUPY_CACHE_DIR"
