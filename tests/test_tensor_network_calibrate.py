@@ -15,7 +15,7 @@ from benchmarks.tensor_network_calibrate import (
 
 
 _CPU_COEFFICIENTS = (8.1, 0.12, 0.18, 0.25, 0.09, -0.06)
-_TN_COEFFICIENTS = (7.5, 0.21, 0.11, 0.045, 0.075, 0.10)
+_TN_COEFFICIENTS = (7.0, 0.21, 0.11, 0.045, 0.075, 0.10)
 
 
 def _runtime(row: Observation, coefficients: tuple[float, ...]) -> int:
@@ -32,6 +32,7 @@ def _row(index: int, backend: str) -> Observation:
     operation_count = qubits * 2 + 3 + (index * 5) % 11
     two_qubit_operations = qubits - 1 + index % 4
     compiled_steps = qubits + two_qubit_operations + 2 + index % 5
+    complexity_phase = 1 if index < 9 else 4096
     return Observation(
         fingerprint=f"{index + 1:064x}",
         workload=f"synthetic-tensor-network-{index:02d}",
@@ -48,7 +49,9 @@ def _row(index: int, backend: str) -> Observation:
         tn_contractions=24 + index * 7 + (index % 3) * 5,
         tn_peak_tensor_rank=2 + (index * 5) % 7,
         tn_peak_tensor_bytes=32 << ((index * 3) % 8),
-        tn_scalar_multiplications=float((index + 2) ** 3 * (16 + 9 * (index % 4))),
+        tn_scalar_multiplications=float(
+            (index + 2) ** 2 * (16 + 9 * (index % 4)) * complexity_phase
+        ),
         median_ns=1.0,
     )
 
@@ -131,8 +134,8 @@ def test_tensor_network_calibration_uses_raw_samples_and_validates(tmp_path: Pat
     assert baseline.decision.samples == 18
     assert baseline.decision.mistakes == 0
     assert baseline.decision.max_regret <= 1.10
-    assert baseline.decision.cpu_wins >= 3
-    assert baseline.decision.tn_wins >= 3
+    assert baseline.decision.cpu_wins == 9
+    assert baseline.decision.tn_wins == 9
     assert all(model.validated for model in baseline.models)
     assert baseline.models == claimed.models
     assert baseline.decision == claimed.decision
