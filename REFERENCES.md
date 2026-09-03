@@ -50,6 +50,11 @@
 - [General parameter-shift rules for quantum gradients](https://arxiv.org/abs/2107.12390) — David Wierichs, Josh Izaac, Cody Wang, and Cedric Yen-Yu Lin (2021). Used for: higher-order parameter-shift structure and resource analysis.
 - [Efficient calculation of gradients in classical simulations of variational quantum algorithms](https://arxiv.org/abs/2009.02823) — Tyson Jones and Julien Gacon (2020). Used for: reverse/adjoint state-vector gradient architecture.
 
+## Algorithm construction
+- [An approximate Fourier transform useful in quantum factoring](https://arxiv.org/abs/quant-ph/0201067) — Don Coppersmith (1994/2002). Used for: the controlled-phase structure and bit-ordering conventions of the quantum Fourier transform circuit.
+- [Hardware-efficient variational quantum eigensolver for small molecules and quantum magnets](https://doi.org/10.1038/nature23879) — Abhinav Kandala et al., Nature 549 (2017). Used for: layered hardware-efficient rotation-and-entanglement ansatz design.
+- [Simulation of electronic structure Hamiltonians using quantum computers](https://arxiv.org/abs/1001.3855) — James D. Whitfield, Jacob Biamonte, and Alán Aspuru-Guzik (2011). Used for: Pauli-string basis changes, parity accumulation, and exponentiation patterns for Hamiltonian simulation.
+
 ## Open-system dynamics
 - [Completely positive dynamical semigroups of N-level systems](https://doi.org/10.1063/1.522979) — Vittorio Gorini, Andrzej Kossakowski, and E. C. G. Sudarshan, Journal of Mathematical Physics 17 (1976). Used for: the GKSL generator and Markovian open-system evolution.
 - [On the generators of quantum dynamical semigroups](https://doi.org/10.1007/BF01608499) — Goran Lindblad, Communications in Mathematical Physics 48 (1976). Used for: the Lindblad master-equation generator and completely positive dynamics.
