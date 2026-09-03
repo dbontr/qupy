@@ -2,7 +2,6 @@ from enum import Enum
 
 from ._native import Program
 
-
 class CircuitOperationCode(Enum):
     H = ...
     X = ...
