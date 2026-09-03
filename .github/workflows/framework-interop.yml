@@ -1,0 +1,34 @@
+name: Framework interop
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  autodiff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+          check-latest: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+      - name: Install QuPy development environment
+        run: uv sync --frozen --python 3.12
+      - name: Install JAX CPU runtime
+        run: uv pip install --python .venv/bin/python "jax[cpu]==0.11.1"
+      - name: Install PyTorch CPU runtime
+        run: >-
+          uv pip install --python .venv/bin/python
+          --index-url https://download.pytorch.org/whl/cpu
+          --extra-index-url https://pypi.org/simple
+          "torch==2.14.0+cpu"
+      - name: Test framework autodiff adapters
+        run: uv run pytest -q tests/test_interop.py
