@@ -25,7 +25,8 @@
 - [Improved Simulation of Stabilizer Circuits](https://doi.org/10.1103/PhysRevA.70.052328) — Scott Aaronson and Daniel Gottesman, Physical Review A 70, 052328 (2004), arXiv:quant-ph/0406196. Used for: Clifford tableau conjugation, stabilizer-state simulation principles, and exact backward Pauli propagation.
 
 ## Quantum execution architecture and benchmark adapters
-- [Qiskit Target](https://quantum.cloud.ibm.com/docs/en/api/qiskit/2.3/qiskit.transpiler.Target) — IBM Quantum, Qiskit 2.3. Used for: separation of target capability data from execution.
+- [Qiskit Target](https://quantum.cloud.ibm.com/docs/en/api/qiskit/2.3/qiskit.transpiler.Target) — IBM Quantum, Qiskit 2.3. Used for: target-owned operation, qubit, coupling, and instruction-property constraints for hardware compilation architecture comparison.
+- [Transpiler stages](https://quantum.cloud.ibm.com/docs/en/guides/transpiler-stages) — IBM Quantum. Used for: layout, routing, basis-translation, optimization, and scheduling stage boundaries for target-aware compilation architecture comparison.
 - [AerSimulator](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html) — Qiskit Aer. Used for: result-aware simulator architecture and state-vector/stabilizer benchmark adapters.
 - [qsim](https://github.com/quantumlib/qsim) — Google Quantum AI. Used for: native state-vector optimization comparison and the qsim expectation benchmark adapter.
 - [Stim](https://github.com/quantumlib/Stim) — Google Quantum AI. Used for: independent stabilizer/tableau expectation benchmark comparisons.
