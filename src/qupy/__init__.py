@@ -155,7 +155,12 @@ from .provider import (
     submit_circuit,
     submit_compiled_circuit,
 )
-from .tensor_network import TensorNetworkEstimate, tensor_network_expectation
+from .tensor_network import (
+    TensorNetworkEstimate,
+    TensorNetworkPlan,
+    tensor_network_expectation,
+    tensor_network_plan,
+)
 from .trajectory import (
     TrajectoryEstimate,
     TrajectoryResult,
@@ -223,6 +228,7 @@ __all__ = [
     "StateVector",
     "Target",
     "TensorNetworkEstimate",
+    "TensorNetworkPlan",
     "TrajectoryEstimate",
     "TrajectoryResult",
     "Variance",
@@ -302,6 +308,7 @@ __all__ = [
     "submit_compiled_circuit",
     "swap",
     "tensor_network_expectation",
+    "tensor_network_plan",
     "to_openqasm3",
     "to_qir_base_profile",
     "trajectory_expectation",

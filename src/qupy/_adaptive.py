@@ -20,6 +20,17 @@ from ._native import (
     Variance,
 )
 from ._planner import resolve_planner_cost_model
+from .tensor_network import _expect_observable, _expect_observables, _observable_plan
+
+_TENSOR_NETWORK_BACKEND = "native-tn"
+
+
+def _reject_tensor_network_non_expectation(backend: str, operation: str) -> None:
+    if backend == _TENSOR_NETWORK_BACKEND:
+        raise ValueError(
+            f"{operation} is not supported by native-tn; "
+            "the tensor-network backend currently supports observable expectations only"
+        )
 
 
 def plan(
@@ -48,6 +59,7 @@ def variance_plan(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> ExecutionPlan:
+    _reject_tensor_network_non_expectation(backend, "variance planning")
     return _native.variance_plan(
         program, observable, backend, resolve_planner_cost_model(backend, cost_model)
     )
@@ -58,6 +70,7 @@ def statevector(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> StateVector:
+    _reject_tensor_network_non_expectation(backend, "state-vector materialization")
     return _native.statevector(program, backend, resolve_planner_cost_model(backend, cost_model))
 
 
@@ -67,6 +80,8 @@ def observable_plan(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableExecutionPlan:
+    if backend == _TENSOR_NETWORK_BACKEND:
+        return _observable_plan(program, observables)
     return _native.observable_plan(
         program, observables, backend, resolve_planner_cost_model(backend, cost_model)
     )
@@ -78,6 +93,8 @@ def expect_observable(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult:
+    if backend == _TENSOR_NETWORK_BACKEND:
+        return _expect_observable(program, observable)
     function = cast(Any, _native.expect_observable)
     return cast(
         ObservableResult,
@@ -91,6 +108,7 @@ def variance_observable(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult:
+    _reject_tensor_network_non_expectation(backend, "observable variance")
     function = cast(Any, _native.variance_observable)
     return cast(
         ObservableResult,
@@ -105,6 +123,7 @@ def covariance(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult:
+    _reject_tensor_network_non_expectation(backend, "observable covariance")
     function = cast(Any, _native.covariance)
     return cast(
         ObservableResult,
@@ -118,6 +137,8 @@ def expect_observables(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableBatch:
+    if backend == _TENSOR_NETWORK_BACKEND:
+        return _expect_observables(program, observables)
     function = cast(Any, _native.expect_observables)
     return cast(
         ObservableBatch,
@@ -151,9 +172,12 @@ def expect(
 ) -> Expectation | ObservableResult:
     model = resolve_planner_cost_model(backend, cost_model)
     if isinstance(observable, PauliZ):
+        _reject_tensor_network_non_expectation(
+            backend,
+            "PauliZ expectation through the state-vector planner",
+        )
         return _native.expect(program, observable, backend, model)
-    function = cast(Any, _native.expect)
-    return cast(ObservableResult, function(program, observable, backend, model))
+    return expect_observable(program, observable, backend, cost_model)
 
 
 @overload
@@ -180,6 +204,7 @@ def variance(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> Variance | ObservableResult:
+    _reject_tensor_network_non_expectation(backend, "variance")
     model = resolve_planner_cost_model(backend, cost_model)
     if isinstance(observable, PauliZ):
         return _native.variance(program, observable, backend, model)
@@ -208,6 +233,7 @@ def density_matrix(
     backend: str = "auto",
     cost_model: PlannerCostModel | None = None,
 ) -> DensityMatrix:
+    _reject_tensor_network_non_expectation(backend, "density-matrix materialization")
     model = resolve_planner_cost_model(backend, cost_model)
     if isinstance(program, Program):
         return _native.density_matrix(program, backend, model)
