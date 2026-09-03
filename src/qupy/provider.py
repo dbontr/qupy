@@ -63,6 +63,20 @@ def _integer(value: object, name: str) -> int:
     return value
 
 
+def _nonnegative_integer(value: object, name: str) -> int:
+    result = _integer(value, name)
+    if result < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return result
+
+
+def _positive_integer(value: object, name: str) -> int:
+    result = _integer(value, name)
+    if result <= 0:
+        raise ValueError(f"{name} must be positive")
+    return result
+
+
 def _boolean(value: object, name: str, default: bool = False) -> bool:
     if value is None:
         return default
@@ -93,8 +107,12 @@ def _couplings(value: object | None) -> list[Coupling]:
             raise ValueError(f"hardware_target.couplings[{index}] must contain two qubits")
         result.append(
             Coupling(
-                _integer(pair[0], f"hardware_target.couplings[{index}][0]"),
-                _integer(pair[1], f"hardware_target.couplings[{index}][1]"),
+                _nonnegative_integer(
+                    pair[0], f"hardware_target.couplings[{index}][0]"
+                ),
+                _nonnegative_integer(
+                    pair[1], f"hardware_target.couplings[{index}][1]"
+                ),
             )
         )
     return result
@@ -126,7 +144,7 @@ def _hardware_target(value: object) -> HardwareTarget:
         )
     return HardwareTarget(
         _string(target.get("name"), "hardware_target.name"),
-        _integer(target.get("num_qubits"), "hardware_target.num_qubits"),
+        _positive_integer(target.get("num_qubits"), "hardware_target.num_qubits"),
         _operation_list(
             target.get("one_qubit_operations"),
             "hardware_target.one_qubit_operations",
@@ -193,20 +211,31 @@ def provider_program(circuit: Circuit) -> _native.ProviderProgram:
     )
 
 
+def _submit_with_capabilities(
+    plugin: _native.ProviderPlugin,
+    compilation: CompilationResult,
+    shots: int,
+    options_json: str,
+    capabilities: ProviderCapabilities,
+) -> ProviderSubmission:
+    shot_count = _positive_integer(shots, "shots")
+    if "openqasm3" not in capabilities.formats:
+        raise ValueError("provider does not advertise openqasm3 program support")
+    program = provider_program(compilation.circuit)
+    job_id = plugin.submit(program, shot_count, options_json)
+    return ProviderSubmission(job_id=job_id, compilation=compilation, program=program)
+
+
 def submit_compiled_circuit(
     plugin: _native.ProviderPlugin,
     compilation: CompilationResult,
     shots: int,
     options_json: str = "{}",
 ) -> ProviderSubmission:
-    if shots <= 0:
-        raise ValueError("shots must be positive")
     capabilities = provider_capabilities(plugin)
-    if "openqasm3" not in capabilities.formats:
-        raise ValueError("provider does not advertise openqasm3 program support")
-    program = provider_program(compilation.circuit)
-    job_id = plugin.submit(program, shots, options_json)
-    return ProviderSubmission(job_id=job_id, compilation=compilation, program=program)
+    return _submit_with_capabilities(
+        plugin, compilation, shots, options_json, capabilities
+    )
 
 
 def submit_circuit(
@@ -220,7 +249,13 @@ def submit_circuit(
     options_json: str = "{}",
 ) -> ProviderSubmission:
     capabilities = provider_capabilities(plugin)
-    selected_target = target if target is not None else capabilities.hardware_target
+    advertised_target = capabilities.hardware_target
+    if target is not None and advertised_target is not None:
+        if target.fingerprint != advertised_target.fingerprint:
+            raise ValueError(
+                "explicit target does not match the provider-advertised hardware_target"
+            )
+    selected_target = target if target is not None else advertised_target
     if selected_target is None:
         raise ValueError(
             "provider does not advertise a hardware_target; pass target= explicitly"
@@ -231,7 +266,9 @@ def submit_circuit(
         [] if initial_layout is None else initial_layout,
         optimization_level,
     )
-    return submit_compiled_circuit(plugin, compilation, shots, options_json)
+    return _submit_with_capabilities(
+        plugin, compilation, shots, options_json, capabilities
+    )
 
 
 __all__ = [
