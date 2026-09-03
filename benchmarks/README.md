@@ -63,6 +63,19 @@ python -m benchmarks.mps_calibrate mps-policy-1.json mps-policy-2.json mps-polic
 
 The policy profile requires an even iteration count. For each workload, CPU and adaptive execution are counterbalanced as one pair, and MPS and adaptive execution are counterbalanced as a second pair. This prevents a slow baseline from contaminating the timing of the other decision candidate. Promotion recomputes medians and regret from raw samples, requires at least three reports and 16 distinct workloads, requires exact agreement within `2e-11`, and allows no workload above 10% median regret. A schema-v1 or schema-v2 base artifact can be promoted; existing validated CUDA evidence is preserved.
 
+Validate dedicated CPU/CUDA rich-observable routing with repeated policy reports:
+
+```text
+python -m benchmarks.observable_cost --profile policy --warmups 2 --iterations 8 --output observable-policy-1.json
+python -m benchmarks.observable_cost --profile policy --warmups 2 --iterations 8 --output observable-policy-2.json
+python -m benchmarks.observable_cost --profile policy --warmups 2 --iterations 8 --output observable-policy-3.json
+python -m benchmarks.observable_calibrate observable-policy-1.json observable-policy-2.json observable-policy-3.json --base-artifact planner-v3.qpcost --output observable-calibration.json --planner-output planner-v4.qpcost
+```
+
+The observable policy uses 36 non-Clifford workloads spanning expectation, variance, covariance, and multi-observable batches. CPU and CUDA calls are counterbalanced within every workload, and promotion recomputes all medians from the raw timing arrays. CPU work counts dense observable passes. CUDA work counts the unique Pauli masks after the same request-wide deduplication used by the native runtime, including products required by variance and covariance.
+
+Validation is leave-one-workload-out: each routing decision and model-error sample is predicted by coefficients fitted without that workload. Promotion requires at least three reports with the same host and workload set, exact agreement within `2e-11`, at least 12 decision workloads, zero decisions above 10% regret, a median model factor no worse than `1.5x`, and a maximum model factor no worse than `2.0x`. Schema-v4 promotion requires a validated schema-v3 base and preserves its CUDA state-vector and adaptive-MPS evidence.
+
 Run all compatibility adapters after installing their optional packages:
 
 ```text

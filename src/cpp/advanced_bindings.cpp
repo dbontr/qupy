@@ -241,6 +241,7 @@ void bind_advanced(nb::module_& module) {
         .def_ro("query_fingerprint", &qupy::ObservableExecutionPlan::query_fingerprint)
         .def_ro("cache_key", &qupy::ObservableExecutionPlan::cache_key)
         .def_ro("predicted_ns", &qupy::ObservableExecutionPlan::predicted_ns)
+        .def_ro("cost_model_class", &qupy::ObservableExecutionPlan::cost_model_class)
         .def_ro("cost_model_fingerprint", &qupy::ObservableExecutionPlan::cost_model_fingerprint);
 
     nb::class_<qupy::ObservableResult>(module, "ObservableResult")

@@ -61,6 +61,7 @@ struct ObservableExecutionPlan {
     std::string query_fingerprint;
     std::string cache_key;
     std::optional<double> predicted_ns;
+    std::string cost_model_class;
     std::string cost_model_fingerprint;
 };
 struct ObservableResult {

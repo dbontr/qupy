@@ -78,12 +78,15 @@ constexpr int kMaximumOpenMpTeam = 16;
 constexpr std::uint32_t kIrVersion = 1U;
 constexpr std::uint32_t kWorkloadVersion = 1U;
 constexpr std::size_t kStabilizerSamplingMinQubits = 24U;
-constexpr std::uint32_t kPlannerCostSchemaVersion = 3U;
+constexpr std::uint32_t kPlannerCostSchemaVersion = 4U;
 constexpr double kCudaDecisionMaxRegret = 1.10;
 constexpr std::size_t kCudaDecisionMinimumSamples = 8U;
 constexpr std::uint32_t kAdaptiveMpsPolicyVersion = 1U;
 constexpr double kMpsDecisionMaxRegret = 1.10;
 constexpr std::size_t kMpsDecisionMinimumSamples = 16U;
+constexpr std::uint32_t kObservablePolicyVersion = 1U;
+constexpr double kObservableDecisionMaxRegret = 1.10;
+constexpr std::size_t kObservableDecisionMinimumSamples = 12U;
 constexpr std::size_t kAdaptiveMpsMinQubits = 14U;
 constexpr std::size_t kAdaptiveMpsBondLimit = 16U;
 constexpr std::size_t kAdaptiveMpsRoutingMultiplier = 4U;
@@ -889,6 +892,78 @@ void validate_backend(const std::string& backend) {
         return {1.0, log_work, log_work * log_work};
     }
     throw std::invalid_argument("planner cost features do not support class " + cost_class);
+}
+
+[[nodiscard]] std::string observable_cost_class(const ExecutionPlan& state_plan) {
+    if (state_plan.result_mode != ResultMode::StateVector) {
+        throw std::invalid_argument("observable cost prediction requires a state-vector plan");
+    }
+    if (state_plan.backend == "native-cpu" && state_plan.method == "statevector") {
+        return "observable-return-cpu";
+    }
+    if (state_plan.backend == "native-cuda" && state_plan.method == "cuda-statevector") {
+        return "observable-return-cuda";
+    }
+    throw std::invalid_argument(
+        "observable cost prediction does not support backend " + state_plan.backend
+    );
+}
+
+[[nodiscard]] std::vector<double> observable_cost_features(
+    const ExecutionPlan& state_plan,
+    std::size_t term_evaluations,
+    std::size_t state_passes
+) {
+    if (term_evaluations == 0U && state_passes == 0U) {
+        throw std::invalid_argument("observable cost prediction requires non-zero query work");
+    }
+    const std::size_t operations = std::max<std::size_t>(
+        state_plan.single_qubit_operations + state_plan.two_qubit_operations, 1U
+    );
+    const double qubits = static_cast<double>(state_plan.active_qubits);
+    if (state_plan.backend == "native-cuda") {
+        if (state_plan.active_qubits >= std::numeric_limits<std::size_t>::digits) {
+            throw std::length_error("observable CUDA cost exceeds native address space");
+        }
+        const std::size_t dimension_integer = std::size_t{1} << state_plan.active_qubits;
+        const double dimension = static_cast<double>(dimension_integer);
+        const double compiled = static_cast<double>(state_plan.compiled_steps);
+        const double two_qubit = static_cast<double>(state_plan.two_qubit_operations);
+        const double single_qubit = std::max(0.0, compiled - two_qubit);
+        const double terms = static_cast<double>(term_evaluations);
+        std::size_t reduction_count = (dimension_integer + 255U) / 256U;
+        std::size_t kernels_per_term = 1U;
+        while (reduction_count > 1U) {
+            reduction_count = (reduction_count + 255U) / 256U;
+            ++kernels_per_term;
+        }
+        return {
+            1.0,
+            dimension,
+            dimension * (0.5 * single_qubit + two_qubit),
+            compiled,
+            dimension * terms,
+            terms * static_cast<double>(kernels_per_term),
+            terms,
+        };
+    }
+    const double log_steps = std::log(
+        static_cast<double>(std::max<std::size_t>(state_plan.compiled_steps, 1U))
+    );
+    const double log_terms = std::log1p(static_cast<double>(term_evaluations));
+    return {
+        1.0,
+        qubits,
+        log_steps,
+        static_cast<double>(state_plan.two_qubit_operations) / static_cast<double>(operations),
+        log_terms,
+        qubits * log_terms,
+        qubits * qubits,
+        log_terms * log_terms,
+        log_steps * log_steps,
+        static_cast<double>(state_passes),
+        std::log(static_cast<double>(std::max<std::size_t>(state_plan.threads, 1U))),
+    };
 }
 
 [[nodiscard]] ExecutionPlan make_plan(
@@ -2053,8 +2128,21 @@ bool PlannerCostModel::mps_auto_validated() const noexcept {
            mps_decision_max_regret_ <= kMpsDecisionMaxRegret;
 }
 
+bool PlannerCostModel::observable_auto_validated() const noexcept {
+    return schema_version_ >= 4U && observable_policy_version_ == kObservablePolicyVersion &&
+           observable_decision_samples_ >= kObservableDecisionMinimumSamples &&
+           observable_decision_mistakes_ == 0U &&
+           observable_decision_max_regret_ <= kObservableDecisionMaxRegret &&
+           has_cost_class("observable-return-cpu") &&
+           has_cost_class("observable-return-cuda");
+}
+
 std::uint32_t PlannerCostModel::mps_policy_version() const noexcept {
     return mps_policy_version_;
+}
+
+std::uint32_t PlannerCostModel::observable_policy_version() const noexcept {
+    return observable_policy_version_;
 }
 
 double PlannerCostModel::predict_ns(const ExecutionPlan& execution_plan) const {
@@ -2085,6 +2173,40 @@ double PlannerCostModel::predict_ns(const ExecutionPlan& execution_plan) const {
     const double prediction = std::exp(log_runtime);
     if (!std::isfinite(prediction) || prediction <= 0.0) {
         throw std::overflow_error("cost model produced an invalid runtime prediction");
+    }
+    return prediction;
+}
+
+double PlannerCostModel::predict_observable_ns(
+    const ExecutionPlan& state_plan,
+    std::size_t term_evaluations,
+    std::size_t state_passes
+) const {
+    if (state_plan.workload_version != workload_version_) {
+        throw std::invalid_argument("execution plan workload version does not match cost model");
+    }
+    const std::string cost_class = observable_cost_class(state_plan);
+    const auto curve = std::find_if(
+        curves_.begin(), curves_.end(),
+        [&](const Curve& item) { return item.cost_class == cost_class; }
+    );
+    if (curve == curves_.end()) {
+        throw std::invalid_argument("cost model does not contain class " + cost_class);
+    }
+    const std::vector<double> features = observable_cost_features(
+        state_plan, term_evaluations, state_passes
+    );
+    if (features.size() != curve->coefficients.size()) {
+        throw std::logic_error("observable cost model coefficient count does not match features");
+    }
+    double score = 0.0;
+    for (std::size_t index = 0; index < features.size(); ++index) {
+        score += features[index] * curve->coefficients[index];
+    }
+    const double prediction = cost_class == "observable-return-cuda"
+        ? score : std::exp(score);
+    if (!std::isfinite(prediction) || prediction <= 0.0) {
+        throw std::overflow_error("observable cost model produced an invalid runtime prediction");
     }
     return prediction;
 }
@@ -2132,6 +2254,8 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     } else if (line == "qupy-planner-cost 2") {
         schema_version = 2U;
     } else if (line == "qupy-planner-cost 3") {
+        schema_version = 3U;
+    } else if (line == "qupy-planner-cost 4") {
         schema_version = kPlannerCostSchemaVersion;
     } else {
         throw std::invalid_argument("planner cost artifact has an unsupported schema");
@@ -2146,6 +2270,8 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     bool has_cuda_decision = false;
     bool has_mps_policy = false;
     bool has_mps_decision = false;
+    bool has_observable_policy = false;
+    bool has_observable_decision = false;
     bool validated = false;
     std::set<std::string> classes;
     while (std::getline(lines, line)) {
@@ -2178,13 +2304,29 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
             has_cuda_host = true;
         } else if (key == "policy") {
             std::string policy_class;
-            if (schema_version < 3U || has_mps_policy ||
-                !(fields >> policy_class >> model.mps_policy_version_) ||
-                policy_class != "adaptive-mps" ||
-                model.mps_policy_version_ != kAdaptiveMpsPolicyVersion) {
-                throw std::invalid_argument("planner cost artifact has invalid MPS policy metadata");
+            std::uint32_t policy_version = 0U;
+            if (!(fields >> policy_class >> policy_version)) {
+                throw std::invalid_argument("planner cost artifact has malformed policy metadata");
             }
-            has_mps_policy = true;
+            if (policy_class == "adaptive-mps") {
+                if (schema_version < 3U || has_mps_policy ||
+                    policy_version != kAdaptiveMpsPolicyVersion) {
+                    throw std::invalid_argument("planner cost artifact has invalid MPS policy metadata");
+                }
+                model.mps_policy_version_ = policy_version;
+                has_mps_policy = true;
+            } else if (policy_class == "rich-observable") {
+                if (schema_version < 4U || has_observable_policy ||
+                    policy_version != kObservablePolicyVersion) {
+                    throw std::invalid_argument(
+                        "planner cost artifact has invalid observable policy metadata"
+                    );
+                }
+                model.observable_policy_version_ = policy_version;
+                has_observable_policy = true;
+            } else {
+                throw std::invalid_argument("planner cost artifact has an unknown policy class");
+            }
         } else if (key == "decision") {
             std::string decision_class;
             if (!(fields >> decision_class)) {
@@ -2214,6 +2356,21 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                     throw std::invalid_argument("planner cost artifact has invalid MPS decision evidence");
                 }
                 has_mps_decision = true;
+            } else if (decision_class == "rich-observable-auto") {
+                if (schema_version < 4U || has_observable_decision ||
+                    !(fields >> model.observable_decision_samples_ >>
+                      model.observable_decision_mistakes_ >>
+                      model.observable_decision_max_regret_) ||
+                    model.observable_decision_samples_ < kObservableDecisionMinimumSamples ||
+                    model.observable_decision_mistakes_ != 0U ||
+                    !std::isfinite(model.observable_decision_max_regret_) ||
+                    model.observable_decision_max_regret_ < 1.0 ||
+                    model.observable_decision_max_regret_ > kObservableDecisionMaxRegret) {
+                    throw std::invalid_argument(
+                        "planner cost artifact has invalid observable decision evidence"
+                    );
+                }
+                has_observable_decision = true;
             } else {
                 throw std::invalid_argument("planner cost artifact has an unknown decision class");
             }
@@ -2241,6 +2398,10 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                 expected = 5U;
             } else if (curve.cost_class == "statevector-return-cuda") {
                 expected = 4U;
+            } else if (curve.cost_class == "observable-return-cpu") {
+                expected = 11U;
+            } else if (curve.cost_class == "observable-return-cuda") {
+                expected = 7U;
             }
             if (
                 expected == 0U || coefficient_count != expected ||
@@ -2253,6 +2414,18 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
                 if (!(fields >> coefficient) || !std::isfinite(coefficient)) {
                     throw std::invalid_argument("planner cost artifact has an invalid coefficient");
                 }
+            }
+            if (curve.cost_class == "observable-return-cuda" &&
+                (std::any_of(
+                    curve.coefficients.begin(), curve.coefficients.end(),
+                    [](double coefficient) { return coefficient < 0.0; }
+                ) || !std::any_of(
+                    curve.coefficients.begin(), curve.coefficients.end(),
+                    [](double coefficient) { return coefficient > 0.0; }
+                ))) {
+                throw std::invalid_argument(
+                    "planner cost artifact has invalid additive CUDA coefficients"
+                );
             }
             if (!(fields >> curve.holdout_median_factor >> curve.holdout_max_factor) ||
                 !std::isfinite(curve.holdout_median_factor) ||
@@ -2282,6 +2455,15 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
         expected_classes.insert("statevector-return-cpu");
         expected_classes.insert("statevector-return-cuda");
     }
+    const bool has_observable_curves =
+        classes.contains("observable-return-cpu") ||
+        classes.contains("observable-return-cuda");
+    const bool observable_extension =
+        has_observable_policy || has_observable_decision || has_observable_curves;
+    if (schema_version >= 4U || observable_extension) {
+        expected_classes.insert("observable-return-cpu");
+        expected_classes.insert("observable-return-cuda");
+    }
     const bool base_complete = has_engine && has_workload && has_host && validated &&
         classes == expected_classes;
     const bool cuda_complete = schema_version == 1U
@@ -2292,7 +2474,11 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     const bool mps_complete = schema_version < 3U
         ? !has_mps_policy && !has_mps_decision
         : has_mps_policy && has_mps_decision;
-    if (!base_complete || !cuda_complete || !mps_complete) {
+    const bool observable_complete = schema_version < 4U
+        ? !observable_extension
+        : has_observable_policy && has_observable_decision && has_observable_curves &&
+          has_cuda_host && has_cuda_decision;
+    if (!base_complete || !cuda_complete || !mps_complete || !observable_complete) {
         throw std::invalid_argument("planner cost artifact is incomplete");
     }
     if (model.engine_version_ != kCoreVersion) {

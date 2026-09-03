@@ -183,7 +183,9 @@ NB_MODULE(_native, module) {
         .def_prop_ro("cost_classes", &qupy::PlannerCostModel::cost_classes)
         .def_prop_ro("cuda_auto_validated", &qupy::PlannerCostModel::cuda_auto_validated)
         .def_prop_ro("mps_auto_validated", &qupy::PlannerCostModel::mps_auto_validated)
+        .def_prop_ro("observable_auto_validated", &qupy::PlannerCostModel::observable_auto_validated)
         .def_prop_ro("mps_policy_version", &qupy::PlannerCostModel::mps_policy_version)
+        .def_prop_ro("observable_policy_version", &qupy::PlannerCostModel::observable_policy_version)
         .def("predict_ns", &qupy::PlannerCostModel::predict_ns, "plan"_a);
 
     nb::class_<qupy::ExecutionPlan>(module, "ExecutionPlan")

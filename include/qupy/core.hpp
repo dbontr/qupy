@@ -133,8 +133,15 @@ public:
     [[nodiscard]] bool has_cost_class(const std::string& cost_class) const;
     [[nodiscard]] bool cuda_auto_validated() const noexcept;
     [[nodiscard]] bool mps_auto_validated() const noexcept;
+    [[nodiscard]] bool observable_auto_validated() const noexcept;
     [[nodiscard]] std::uint32_t mps_policy_version() const noexcept;
+    [[nodiscard]] std::uint32_t observable_policy_version() const noexcept;
     [[nodiscard]] double predict_ns(const ExecutionPlan& plan) const;
+    [[nodiscard]] double predict_observable_ns(
+        const ExecutionPlan& state_plan,
+        std::size_t term_evaluations,
+        std::size_t state_passes
+    ) const;
 
 private:
     struct Curve {
@@ -159,6 +166,10 @@ private:
     std::size_t mps_decision_samples_ = 0U;
     std::size_t mps_decision_mistakes_ = 0U;
     double mps_decision_max_regret_ = 0.0;
+    std::uint32_t observable_policy_version_ = 0U;
+    std::size_t observable_decision_samples_ = 0U;
+    std::size_t observable_decision_mistakes_ = 0U;
+    double observable_decision_max_regret_ = 0.0;
     std::vector<Curve> curves_;
 };
 
