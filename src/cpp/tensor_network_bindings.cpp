@@ -75,6 +75,40 @@ void bind_tensor_network(nb::module_& module) {
         "max_tensor_bytes"_a = qupy::kTensorNetworkDefaultMaxBytes,
         nb::call_guard<nb::gil_scoped_release>()
     );
+    module.def(
+        "tensor_network_value_and_grad",
+        &qupy::tensor_network_value_and_grad,
+        "program"_a,
+        "observable"_a,
+        "slots"_a,
+        "parameter_values"_a,
+        "method"_a = qupy::GradientMethod::Auto,
+        "epsilon"_a = 1e-7,
+        "max_tensor_bytes"_a = qupy::kTensorNetworkDefaultMaxBytes,
+        nb::call_guard<nb::gil_scoped_release>()
+    );
+    module.def(
+        "tensor_network_jacobian",
+        &qupy::tensor_network_jacobian,
+        "program"_a,
+        "observables"_a,
+        "slots"_a,
+        "parameter_values"_a,
+        "method"_a = qupy::GradientMethod::Auto,
+        "epsilon"_a = 1e-7,
+        "max_tensor_bytes"_a = qupy::kTensorNetworkDefaultMaxBytes,
+        nb::call_guard<nb::gil_scoped_release>()
+    );
+    module.def(
+        "tensor_network_hessian",
+        &qupy::tensor_network_hessian,
+        "program"_a,
+        "observable"_a,
+        "slots"_a,
+        "parameter_values"_a,
+        "max_tensor_bytes"_a = qupy::kTensorNetworkDefaultMaxBytes,
+        nb::call_guard<nb::gil_scoped_release>()
+    );
 
     bind_multi_device(module);
 }
