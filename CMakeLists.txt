@@ -23,6 +23,7 @@ add_library(
     src/cpp/fingerprint.cpp
     src/cpp/mps.cpp
     src/cpp/multi_device.cpp
+    src/cpp/openqasm.cpp
     src/cpp/provider.cpp
     src/cpp/stabilizer.cpp
     src/cpp/tensor_network.cpp

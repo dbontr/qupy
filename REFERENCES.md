@@ -50,7 +50,7 @@
 - [Wave-function approach to dissipative processes in quantum optics](https://doi.org/10.1103/PhysRevLett.68.580) — Jean Dalibard, Yvan Castin, and Klaus Molmer, Physical Review Letters 68, 580 (1992). Used for: Monte Carlo wave-function/quantum-trajectory evolution, stochastic branch selection, normalization, and ensemble-equivalent open-system observables.
 
 ## QPU interchange and distributed execution
-- [OpenQASM 3.1 Specification](https://openqasm.com/versions/3.1/index.html) — OpenQASM contributors, specification 3.1. Used for: portable textual quantum-program interchange, gate calls, measurement, reset, barriers, and classical feed-forward syntax.
+- [OpenQASM 3.1 Specification](https://openqasm.com/versions/3.1/index.html) — OpenQASM contributors, specification 3.1. Used for: supported-subset parsing and serialization of portable gate calls, measurement, reset, barriers, register declarations, and classical feed-forward syntax.
 - [QIR Base Profile](https://github.com/qir-alliance/qir-spec/blob/main/specification/profiles/Base_Profile.md) — QIR Alliance. Used for: LLVM-based QIR entry-point, profile, qubit/result, and output-recording requirements.
 - [MPI: A Message-Passing Interface Standard Version 5.0](https://www.mpi-forum.org/docs/mpi-5.0/mpi50-report/mpi50-report.htm) — MPI Forum, MPI 5.0 (2025). Used for: distributed state-vector point-to-point communication, collective broadcast and reduction, communicator topology, and initialization semantics.
 

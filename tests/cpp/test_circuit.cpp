@@ -4,6 +4,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -76,6 +77,78 @@ void test_dynamic_openqasm() {
     require(circuit.instructions()[3].condition->value, "conditional gate polarity is wrong");
 }
 
+void test_openqasm_round_trip() {
+    qupy::Circuit circuit(3, 2);
+    circuit = circuit.h(0);
+    circuit = circuit.x(1);
+    circuit = circuit.y(2);
+    circuit = circuit.z(0);
+    circuit = circuit.rx(-0.125, 1);
+    circuit = circuit.ry(3.25e-7, 2);
+    circuit = circuit.rz(0.5, 0);
+    circuit = circuit.cx(0, 1);
+    circuit = circuit.cz(1, 2);
+    circuit = circuit.swap(0, 2);
+    circuit = circuit.measure(0, 0);
+    circuit = circuit.measure(1, 1, qupy::ClassicalCondition{0, true});
+    circuit = circuit.x(2, qupy::ClassicalCondition{1, false});
+    circuit = circuit.reset(0, qupy::ClassicalCondition{0, false});
+    circuit = circuit.barrier({0, 2});
+    circuit = circuit.barrier();
+
+    const qupy::Circuit restored = qupy::Circuit::from_openqasm3(circuit.to_openqasm3());
+    require(restored.canonical_text() == circuit.canonical_text(), "OpenQASM round trip changed canonical circuit semantics");
+    require(restored.fingerprint() == circuit.fingerprint(), "OpenQASM round trip changed circuit fingerprint");
+    require(restored.to_openqasm3() == circuit.to_openqasm3(), "OpenQASM round trip changed canonical serialization");
+}
+
+void test_openqasm_comments_and_register_names() {
+    const std::string text =
+        "// QuPy accepts comments and non-default register names\n"
+        "OPENQASM 3;\n"
+        "include \"stdgates.inc\";\n"
+        "/* declaration comment */\n"
+        "qubit[2] data;\n"
+        "bit[1] flag;\n"
+        "rx(-1.25e-2) data[0];\n"
+        "flag[0] = measure data[0];\n"
+        "if (flag[0] == 0) { z data[1]; }\n"
+        "barrier data[0], data[1];\n";
+
+    const qupy::Circuit circuit = qupy::Circuit::from_openqasm3(text);
+    require(circuit.num_qubits() == 2U, "custom OpenQASM quantum register size changed");
+    require(circuit.num_clbits() == 1U, "custom OpenQASM classical register size changed");
+    require(circuit.instructions().size() == 4U, "custom OpenQASM instruction count changed");
+    require(
+        std::abs(circuit.instructions()[0].parameters.front() + 0.0125) < 1e-15,
+        "scientific OpenQASM parameter parsed incorrectly"
+    );
+    require(circuit.instructions()[2].condition.has_value(), "OpenQASM condition was lost");
+    require(!circuit.instructions()[2].condition->value, "OpenQASM condition polarity changed");
+}
+
+void test_openqasm_fails_closed() {
+    const std::vector<std::string> invalid{
+        "OPENQASM 2.0; qubit[1] q; h q[0];",
+        "OPENQASM 3.1; include \"other.inc\"; qubit[1] q; h q[0];",
+        "OPENQASM 3.1; qubit[1] q; qubit[1] r; h q[0];",
+        "OPENQASM 3.1; qubit[1] q; h q[1];",
+        "OPENQASM 3.1; qubit[1] q; t q[0];",
+        "OPENQASM 3.1; qubit[1] q; rx(1e999) q[0];",
+        "OPENQASM 3.1; qubit[1] q; bit[1] c; if (c[0] == 2) { x q[0]; }",
+        "OPENQASM 3.1; qubit[1] q; bit[1] c; if (c[0] == 1) { x q[0]; z q[0]; }",
+        "OPENQASM 3.1; qubit[1] q; bit[1] c; if (c[0] == 1) { barrier q[0]; }",
+        "OPENQASM 3.1; qubit[1] q; gate custom a { x a; } custom q[0];",
+        "OPENQASM 3.1; qubit[1] q; /* unterminated",
+    };
+    for (const std::string& text : invalid) {
+        require_invalid(
+            [&] { static_cast<void>(qupy::Circuit::from_openqasm3(text)); },
+            "unsupported or malformed OpenQASM was accepted: " + text
+        );
+    }
+}
+
 void test_identity_and_validation() {
     const qupy::Circuit first = qupy::Circuit(1, 1).ry(0.375, 0).measure(0, 0);
     const qupy::Circuit second = qupy::Circuit(1, 1).ry(0.375, 0).measure(0, 0);
@@ -135,6 +208,9 @@ void test_dynamic_lowering_fails_closed() {
 int main() {
     test_unitary_lowering_round_trip();
     test_dynamic_openqasm();
+    test_openqasm_round_trip();
+    test_openqasm_comments_and_register_names();
+    test_openqasm_fails_closed();
     test_identity_and_validation();
     test_dynamic_lowering_fails_closed();
     return 0;
