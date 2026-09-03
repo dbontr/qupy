@@ -119,32 +119,66 @@ def _controlled_phase(
     return _native.rz(program, half, target)
 
 
+def _selected_qubits(program: _native.Program, qubits: Sequence[int] | None) -> tuple[int, ...]:
+    selected = tuple(range(program.num_qubits)) if qubits is None else tuple(qubits)
+    if not selected:
+        raise ValueError("qubits must contain at least one qubit")
+    if len(set(selected)) != len(selected):
+        raise ValueError("qubits must be unique")
+    if any(qubit < 0 or qubit >= program.num_qubits for qubit in selected):
+        raise ValueError("qubits contains an index outside the program")
+    return selected
+
+
+def append_qft(
+    program: _native.Program,
+    qubits: Sequence[int] | None = None,
+    *,
+    inverse: bool = False,
+    swaps: bool = True,
+) -> _native.Program:
+    """Append an exact QFT or inverse QFT to selected native Program qubits."""
+    selected = _selected_qubits(program, qubits)
+    size = len(selected)
+
+    if inverse:
+        if swaps:
+            for first in range(size // 2):
+                program = _native.swap(program, selected[first], selected[size - first - 1])
+        for target_index in range(size - 1, -1, -1):
+            target = selected[target_index]
+            for control_index in range(size - 1, target_index, -1):
+                angle = -math.pi / float(1 << (control_index - target_index))
+                program = _controlled_phase(
+                    program,
+                    selected[control_index],
+                    target,
+                    angle,
+                )
+            program = _native.h(program, target)
+        return program
+
+    for target_index, target in enumerate(selected):
+        program = _native.h(program, target)
+        for control_index in range(target_index + 1, size):
+            angle = math.pi / float(1 << (control_index - target_index))
+            program = _controlled_phase(
+                program,
+                selected[control_index],
+                target,
+                angle,
+            )
+    if swaps:
+        for first in range(size // 2):
+            program = _native.swap(program, selected[first], selected[size - first - 1])
+    return program
+
+
 def qft(num_qubits: int, *, inverse: bool = False, swaps: bool = True) -> _native.Program:
     """Construct an exact QFT or inverse-QFT Program using QuPy native gates."""
     if num_qubits <= 0:
         raise ValueError("num_qubits must be positive")
-    program = _native.Program(num_qubits)
-
-    if inverse:
-        if swaps:
-            for first in range(num_qubits // 2):
-                program = _native.swap(program, first, num_qubits - first - 1)
-        for target in range(num_qubits - 1, -1, -1):
-            for control in range(num_qubits - 1, target, -1):
-                angle = -math.pi / float(1 << (control - target))
-                program = _controlled_phase(program, control, target, angle)
-            program = _native.h(program, target)
-        return program
-
-    for target in range(num_qubits):
-        program = _native.h(program, target)
-        for control in range(target + 1, num_qubits):
-            angle = math.pi / float(1 << (control - target))
-            program = _controlled_phase(program, control, target, angle)
-    if swaps:
-        for first in range(num_qubits // 2):
-            program = _native.swap(program, first, num_qubits - first - 1)
-    return program
+    return append_qft(_native.Program(num_qubits), inverse=inverse, swaps=swaps)
 
 
 def append_pauli_evolution(
@@ -179,14 +213,15 @@ def append_pauli_evolution(
             raise ValueError("unsupported Pauli factor")
 
     active_qubits = [factor.qubit for factor in ordered]
-    for first, second in zip(active_qubits, active_qubits[1:], strict=False):
+    edges = list(zip(active_qubits, active_qubits[1:], strict=False))
+    for first, second in edges:
         program = _native.cx(program, first, second)
     program = _native.rz(
         program,
         2.0 * evolution_time * coefficient,
         active_qubits[-1],
     )
-    for first, second in reversed(list(zip(active_qubits, active_qubits[1:], strict=False))):
+    for first, second in reversed(edges):
         program = _native.cx(program, first, second)
 
     for factor in reversed(ordered):
@@ -201,6 +236,7 @@ def append_pauli_evolution(
 __all__ = [
     "VariationalTemplate",
     "append_pauli_evolution",
+    "append_qft",
     "hardware_efficient_ansatz",
     "qft",
 ]
