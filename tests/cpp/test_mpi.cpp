@@ -134,6 +134,15 @@ void test_distributed_tensor_network() {
         distributed.method == "mpi-term-parallel-greedy-contraction",
         "distributed tensor method mismatch"
     );
+
+    bool collective_failure = false;
+    try {
+        static_cast<void>(qupy::distributed_tensor_network_expectation(program, observable, 128U));
+    } catch (const std::runtime_error& error) {
+        collective_failure = std::string(error.what()).find("failed on one or more MPI ranks") !=
+            std::string::npos;
+    }
+    require(collective_failure, "rank-local tensor failure was not propagated collectively");
 }
 
 qupy::Observable z_observable() {
@@ -163,6 +172,14 @@ void test_distributed_trajectories() {
     require(!deterministic_result.exact, "distributed trajectory result was marked exact");
     require(deterministic_result.backend == "native-mpi-trajectory", "distributed trajectory backend mismatch");
     require(deterministic_result.method == "mpi-trajectory-ensemble", "distributed trajectory method mismatch");
+
+    const auto sparse = qupy::distributed_trajectory_expectations(
+        deterministic, {z}, 1U, 17U
+    );
+    require_close(sparse.values.front(), 1.0, "sparse distributed trajectory mismatch");
+    require(std::isnan(sparse.standard_errors.front()), "single distributed trajectory error must be NaN");
+    require(sparse.active_ranks == 1U, "inactive trajectory ranks were reported as active");
+    require(sparse.world_size == info.world_size, "sparse distributed trajectory world size mismatch");
 
     const double gamma = 0.25;
     const qupy::NoisyProgram damping(
