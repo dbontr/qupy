@@ -58,6 +58,7 @@ public:
         const Program& program,
         std::size_t num_clbits = 0U
     );
+    [[nodiscard]] static Circuit from_openqasm3(const std::string& text);
 
     [[nodiscard]] Circuit h(
         std::size_t qubit,
