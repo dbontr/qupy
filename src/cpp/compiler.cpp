@@ -7,13 +7,12 @@
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
-#include <limits>
 #include <locale>
 #include <optional>
 #include <queue>
 #include <sstream>
 #include <stdexcept>
-#include <string_view>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -85,19 +84,19 @@ constexpr std::uint32_t kHardwareTargetVersion = 1U;
     }
 }
 
+[[nodiscard]] bool code_less(CircuitOperationCode left, CircuitOperationCode right) noexcept {
+    return static_cast<std::uint8_t>(left) < static_cast<std::uint8_t>(right);
+}
+
 [[nodiscard]] bool contains_code(
     const std::vector<CircuitOperationCode>& values,
     CircuitOperationCode code
 ) noexcept {
-    return std::binary_search(values.begin(), values.end(), code, [](auto left, auto right) {
-        return static_cast<std::uint8_t>(left) < static_cast<std::uint8_t>(right);
-    });
+    return std::binary_search(values.begin(), values.end(), code, code_less);
 }
 
 void sort_codes(std::vector<CircuitOperationCode>& values) {
-    std::sort(values.begin(), values.end(), [](auto left, auto right) {
-        return static_cast<std::uint8_t>(left) < static_cast<std::uint8_t>(right);
-    });
+    std::sort(values.begin(), values.end(), code_less);
     values.erase(std::unique(values.begin(), values.end()), values.end());
 }
 
@@ -261,6 +260,30 @@ void sort_codes(std::vector<CircuitOperationCode>& values) {
     return circuit_from_instructions(circuit.num_qubits(), circuit.num_clbits(), optimized);
 }
 
+[[nodiscard]] bool requires_mid_circuit_measurement(const Circuit& circuit) noexcept {
+    const auto& instructions = circuit.instructions();
+    for (std::size_t index = 0; index < instructions.size(); ++index) {
+        if (instructions[index].code != CircuitOperationCode::Measure) {
+            continue;
+        }
+        if (instructions[index].condition.has_value()) {
+            return true;
+        }
+        for (std::size_t later = index + 1U; later < instructions.size(); ++later) {
+            const CircuitInstruction& instruction = instructions[later];
+            if (instruction.code == CircuitOperationCode::Barrier) {
+                continue;
+            }
+            if (instruction.code == CircuitOperationCode::Measure &&
+                !instruction.condition.has_value()) {
+                continue;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] std::vector<std::size_t> default_layout(
     const Circuit& circuit,
     const HardwareTarget& target
@@ -275,7 +298,7 @@ void sort_codes(std::vector<CircuitOperationCode>& values) {
 
     std::vector<std::size_t> physical_degree(target.num_qubits(), 0U);
     if (target.couplings().empty()) {
-        const std::size_t degree = target.num_qubits() > 0U ? target.num_qubits() - 1U : 0U;
+        const std::size_t degree = target.num_qubits() - 1U;
         std::fill(physical_degree.begin(), physical_degree.end(), degree);
     } else {
         for (const Coupling& coupling : target.couplings()) {
@@ -402,10 +425,12 @@ struct RoutingResult {
     }
     std::size_t inserted_swaps = 0U;
 
-    const auto append_routing_swap = [&](Circuit current, std::size_t first, std::size_t second,
-                                         std::optional<ClassicalCondition> condition) {
-        return current.swap(first, second, condition);
-    };
+    const auto append_routing_swap = [](
+        Circuit current,
+        std::size_t first,
+        std::size_t second,
+        std::optional<ClassicalCondition> condition
+    ) { return current.swap(first, second, condition); };
 
     for (const CircuitInstruction& instruction : source.instructions()) {
         if (instruction.code == CircuitOperationCode::Barrier) {
@@ -568,7 +593,7 @@ struct RoutingResult {
     }
 
     if (instruction.code == CircuitOperationCode::Measure) {
-        throw std::invalid_argument("hardware target does not support mid-circuit measurement");
+        throw std::invalid_argument("hardware target does not support measurement");
     }
     if (instruction.code == CircuitOperationCode::Reset) {
         throw std::invalid_argument("hardware target does not support reset");
@@ -686,6 +711,28 @@ struct ScheduleResult {
     return {total, std::move(schedule)};
 }
 
+[[nodiscard]] bool duration_code_supported(
+    CircuitOperationCode code,
+    const std::vector<CircuitOperationCode>& one_qubit_operations,
+    const std::vector<CircuitOperationCode>& two_qubit_operations,
+    bool measurement,
+    bool reset
+) noexcept {
+    if (is_one_qubit_unitary(code)) {
+        return contains_code(one_qubit_operations, code);
+    }
+    if (is_two_qubit_unitary(code)) {
+        return contains_code(two_qubit_operations, code);
+    }
+    if (code == CircuitOperationCode::Measure) {
+        return measurement;
+    }
+    if (code == CircuitOperationCode::Reset) {
+        return reset;
+    }
+    return false;
+}
+
 }  // namespace
 
 HardwareTarget::HardwareTarget(
@@ -694,6 +741,7 @@ HardwareTarget::HardwareTarget(
     std::vector<CircuitOperationCode> one_qubit_operations,
     std::vector<CircuitOperationCode> two_qubit_operations,
     std::vector<Coupling> couplings,
+    bool measurement,
     bool mid_circuit_measurement,
     bool reset,
     bool dynamic_control,
@@ -704,6 +752,7 @@ HardwareTarget::HardwareTarget(
       one_qubit_operations_(std::move(one_qubit_operations)),
       two_qubit_operations_(std::move(two_qubit_operations)),
       couplings_(std::move(couplings)),
+      measurement_(measurement),
       mid_circuit_measurement_(mid_circuit_measurement),
       reset_(reset),
       dynamic_control_(dynamic_control),
@@ -714,14 +763,21 @@ HardwareTarget::HardwareTarget(
     if (num_qubits_ == 0U) {
         throw std::invalid_argument("hardware target must contain at least one qubit");
     }
+    if (mid_circuit_measurement_ && !measurement_) {
+        throw std::invalid_argument("mid-circuit measurement requires measurement support");
+    }
     for (const CircuitOperationCode code : one_qubit_operations_) {
         if (!is_one_qubit_unitary(code)) {
-            throw std::invalid_argument("one_qubit_operations contains a non-unitary or wrong-arity operation");
+            throw std::invalid_argument(
+                "one_qubit_operations contains a non-unitary or wrong-arity operation"
+            );
         }
     }
     for (const CircuitOperationCode code : two_qubit_operations_) {
         if (!is_two_qubit_unitary(code)) {
-            throw std::invalid_argument("two_qubit_operations contains a non-unitary or wrong-arity operation");
+            throw std::invalid_argument(
+                "two_qubit_operations contains a non-unitary or wrong-arity operation"
+            );
         }
     }
     sort_codes(one_qubit_operations_);
@@ -742,28 +798,43 @@ HardwareTarget::HardwareTarget(
         return std::pair{left.first, left.second} < std::pair{right.first, right.second};
     });
     couplings_.erase(
-        std::unique(couplings_.begin(), couplings_.end(), [](const Coupling& left, const Coupling& right) {
-            return left.first == right.first && left.second == right.second;
-        }),
+        std::unique(
+            couplings_.begin(),
+            couplings_.end(),
+            [](const Coupling& left, const Coupling& right) {
+                return left.first == right.first && left.second == right.second;
+            }
+        ),
         couplings_.end()
     );
 
-    std::sort(durations_.begin(), durations_.end(), [](const OperationDuration& left,
-                                                        const OperationDuration& right) {
-        return static_cast<std::uint8_t>(left.code) < static_cast<std::uint8_t>(right.code);
-    });
+    std::sort(
+        durations_.begin(),
+        durations_.end(),
+        [](const OperationDuration& left, const OperationDuration& right) {
+            return code_less(left.code, right.code);
+        }
+    );
     for (std::size_t index = 0; index < durations_.size(); ++index) {
         const OperationDuration& duration = durations_[index];
-        if (duration.code == CircuitOperationCode::Barrier ||
-            (!is_unitary(duration.code) && duration.code != CircuitOperationCode::Measure &&
-             duration.code != CircuitOperationCode::Reset)) {
-            throw std::invalid_argument("duration references an unsupported operation kind");
+        if (!duration_code_supported(
+                duration.code,
+                one_qubit_operations_,
+                two_qubit_operations_,
+                measurement_,
+                reset_
+            )) {
+            throw std::invalid_argument(
+                "operation duration references an operation not supported by the hardware target"
+            );
         }
         if (!std::isfinite(duration.nanoseconds) || duration.nanoseconds <= 0.0) {
             throw std::invalid_argument("operation durations must be finite and positive");
         }
         if (index != 0U && durations_[index - 1U].code == duration.code) {
-            throw std::invalid_argument("operation durations must contain at most one value per operation");
+            throw std::invalid_argument(
+                "operation durations must contain at most one value per operation"
+            );
         }
     }
 }
@@ -777,6 +848,7 @@ const std::vector<CircuitOperationCode>& HardwareTarget::two_qubit_operations() 
     return two_qubit_operations_;
 }
 const std::vector<Coupling>& HardwareTarget::couplings() const noexcept { return couplings_; }
+bool HardwareTarget::measurement() const noexcept { return measurement_; }
 bool HardwareTarget::mid_circuit_measurement() const noexcept { return mid_circuit_measurement_; }
 bool HardwareTarget::reset() const noexcept { return reset_; }
 bool HardwareTarget::dynamic_control() const noexcept { return dynamic_control_; }
@@ -792,28 +864,9 @@ bool HardwareTarget::adjacent(std::size_t first, std::size_t second) const noexc
     if (second < first) {
         std::swap(first, second);
     }
-    return std::binary_search(
-        couplings_.begin(),
-        couplings_.end(),
-        std::pair{first, second},
-        [](const auto& left, const auto& right) {
-            const auto left_pair = [&]() {
-                if constexpr (std::is_same_v<std::decay_t<decltype(left)>, Coupling>) {
-                    return std::pair{left.first, left.second};
-                } else {
-                    return left;
-                }
-            }();
-            const auto right_pair = [&]() {
-                if constexpr (std::is_same_v<std::decay_t<decltype(right)>, Coupling>) {
-                    return std::pair{right.first, right.second};
-                } else {
-                    return right;
-                }
-            }();
-            return left_pair < right_pair;
-        }
-    );
+    return std::any_of(couplings_.begin(), couplings_.end(), [&](const Coupling& coupling) {
+        return coupling.first == first && coupling.second == second;
+    });
 }
 
 bool HardwareTarget::supports(
@@ -829,7 +882,7 @@ bool HardwareTarget::supports(
         return true;
     }
     if (code == CircuitOperationCode::Measure) {
-        return mid_circuit_measurement_ && qubits.size() == 1U;
+        return measurement_ && qubits.size() == 1U;
     }
     if (code == CircuitOperationCode::Reset) {
         return reset_ && qubits.size() == 1U;
@@ -846,8 +899,11 @@ bool HardwareTarget::supports(
 
 std::optional<double> HardwareTarget::duration_ns(CircuitOperationCode code) const noexcept {
     const auto found = std::lower_bound(
-        durations_.begin(), durations_.end(), code, [](const OperationDuration& duration, auto value) {
-            return static_cast<std::uint8_t>(duration.code) < static_cast<std::uint8_t>(value);
+        durations_.begin(),
+        durations_.end(),
+        code,
+        [](const OperationDuration& duration, CircuitOperationCode value) {
+            return code_less(duration.code, value);
         }
     );
     if (found == durations_.end() || found->code != code) {
@@ -880,7 +936,8 @@ std::string HardwareTarget::canonical_text() const {
     for (const Coupling& coupling : couplings_) {
         output << "edge " << coupling.first << ' ' << coupling.second << '\n';
     }
-    output << "measurement " << (mid_circuit_measurement_ ? 1 : 0) << '\n';
+    output << "measurement " << (measurement_ ? 1 : 0) << '\n';
+    output << "mid-circuit-measurement " << (mid_circuit_measurement_ ? 1 : 0) << '\n';
     output << "reset " << (reset_ ? 1 : 0) << '\n';
     output << "dynamic " << (dynamic_control_ ? 1 : 0) << '\n';
     for (const OperationDuration& duration : durations_) {
@@ -904,6 +961,9 @@ CompilationResult compile_circuit(
     if (circuit.num_qubits() > target.num_qubits()) {
         throw std::invalid_argument("circuit requires more qubits than the hardware target provides");
     }
+    if (requires_mid_circuit_measurement(circuit) && !target.mid_circuit_measurement()) {
+        throw std::invalid_argument("hardware target does not support mid-circuit measurement");
+    }
 
     const Circuit optimized = optimize_logical(circuit, optimization_level);
     std::vector<std::size_t> layout = requested_layout.empty()
@@ -913,24 +973,28 @@ CompilationResult compile_circuit(
     const std::vector<std::size_t> initial_layout = layout;
 
     RoutingResult routed = route_circuit(optimized, target, layout);
+    const std::size_t routed_operations = routed.circuit.instructions().size();
     TranslationResult translated = translate_circuit(routed.circuit, target);
+    const std::size_t compiled_operations = translated.circuit.instructions().size();
     const std::size_t depth = circuit_depth(translated.circuit);
     ScheduleResult schedule = schedule_circuit(translated.circuit, target);
+    const std::string target_fingerprint = target.fingerprint();
+    Circuit compiled = std::move(translated.circuit);
 
     return {
-        std::move(translated.circuit),
+        std::move(compiled),
         initial_layout,
         std::move(routed.final_layout),
         circuit.instructions().size(),
         optimized.instructions().size(),
-        routed.circuit.instructions().size(),
-        translated.circuit.instructions().size(),
+        routed_operations,
+        compiled_operations,
         routed.inserted_swaps,
         translated.decompositions,
         depth,
         schedule.duration_ns,
         std::move(schedule.schedule),
-        target.fingerprint(),
+        target_fingerprint,
     };
 }
 
