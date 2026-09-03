@@ -27,6 +27,8 @@ add_library(
     src/cpp/provider.cpp
     src/cpp/stabilizer.cpp
     src/cpp/tensor_network.cpp
+    src/cpp/tensor_network_observable.cpp
+    src/cpp/tensor_network_plan.cpp
     src/cpp/trajectory.cpp
 )
 target_compile_features(qupy_core PUBLIC cxx_std_20)
