@@ -22,6 +22,15 @@ def hardware_efficient_ansatz(
 ) -> VariationalTemplate: ...
 
 
+def append_qft(
+    program: Program,
+    qubits: Sequence[int] | None = None,
+    *,
+    inverse: bool = False,
+    swaps: bool = True,
+) -> Program: ...
+
+
 def qft(num_qubits: int, *, inverse: bool = False, swaps: bool = True) -> Program: ...
 
 
