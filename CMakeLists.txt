@@ -22,6 +22,7 @@ add_library(
     src/cpp/distributed.cpp
     src/cpp/fingerprint.cpp
     src/cpp/mps.cpp
+    src/cpp/multi_device.cpp
     src/cpp/provider.cpp
     src/cpp/stabilizer.cpp
     src/cpp/tensor_network.cpp
@@ -76,6 +77,7 @@ if(QUPY_BUILD_PYTHON)
         src/cpp/advanced_bindings.cpp
         src/cpp/circuit_bindings.cpp
         src/cpp/compiler_bindings.cpp
+        src/cpp/multi_device_bindings.cpp
         src/cpp/tensor_network_bindings.cpp
         src/cpp/trajectory_bindings.cpp
     )
