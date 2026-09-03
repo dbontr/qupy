@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 
 from . import _native
 
@@ -213,7 +214,7 @@ def append_pauli_evolution(
             raise ValueError("unsupported Pauli factor")
 
     active_qubits = [factor.qubit for factor in ordered]
-    edges = list(zip(active_qubits, active_qubits[1:], strict=False))
+    edges = list(pairwise(active_qubits))
     for first, second in edges:
         program = _native.cx(program, first, second)
     program = _native.rz(
