@@ -40,3 +40,15 @@ def test_whole_register_measurement_rejects_mismatched_register_sizes() -> None:
             c = measure q;
             """
         )
+
+
+def test_conditional_whole_register_measurement_fails_closed() -> None:
+    with pytest.raises(ValueError, match="conditional whole-register measurement"):
+        qp.Circuit.from_openqasm3(
+            """
+            OPENQASM 3.1;
+            qubit[2] q;
+            bit[2] c;
+            if (c[0] == 1) { c = measure q; }
+            """
+        )
