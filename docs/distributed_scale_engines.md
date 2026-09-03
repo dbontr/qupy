@@ -41,7 +41,10 @@ This method is useful when an observable contains enough independent terms to ke
 import qupy as qp
 
 program = qp.x(qp.Program(1), 0)
-noisy = qp.NoisyProgram(program, [(1, qp.amplitude_damping(0, 0.2))])
+noisy = qp.NoisyProgram(
+    program,
+    [qp.NoiseInstruction(1, qp.amplitude_damping(0, 0.2))],
+)
 observable = qp.observable_from_z(qp.Z(0))
 
 result = qp.distributed_trajectory_expectation(
