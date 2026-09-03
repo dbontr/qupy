@@ -11,7 +11,10 @@ def _observable() -> qp.Observable:
 
 def _noisy_program() -> qp.NoisyProgram:
     program = qp.x(qp.Program(1), 0)
-    return qp.NoisyProgram(program, [(1, qp.bit_flip(0, 0.25))])
+    return qp.NoisyProgram(
+        program,
+        [qp.NoiseInstruction(1, qp.bit_flip(0, 0.25))],
+    )
 
 
 def test_distributed_scale_bindings_require_multiple_ranks() -> None:
