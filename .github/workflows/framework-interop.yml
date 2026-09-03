@@ -27,8 +27,6 @@ jobs:
       - name: Install PyTorch CPU runtime
         run: >-
           uv pip install --python .venv/bin/python
-          --index-url https://download.pytorch.org/whl/cpu
-          --extra-index-url https://pypi.org/simple
-          "torch==2.14.0+cpu"
+          "https://download.pytorch.org/whl/cpu/torch-2.14.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl"
       - name: Test framework autodiff adapters
         run: uv run pytest -q tests/test_interop.py
