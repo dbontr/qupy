@@ -13,7 +13,6 @@ from benchmarks.tensor_network_calibrate import (
     calibrate_files,
 )
 
-
 _CPU_COEFFICIENTS = (8.1, 0.12, 0.18, 0.25, 0.09, -0.06)
 _TN_COEFFICIENTS = (7.0, 0.21, 0.11, 0.045, 0.075, 0.10)
 
