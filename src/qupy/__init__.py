@@ -139,6 +139,7 @@ from .compiler import (
     compile,
     compile_circuit,
 )
+from .interop import make_jax_expectation, make_torch_expectation
 from .multi_device import (
     DistributedTensorNetworkEstimate,
     DistributedTrajectoryEstimate,
@@ -273,6 +274,8 @@ __all__ = [
     "kraus_channel",
     "lindblad_evolve",
     "load_planner_cost_model",
+    "make_jax_expectation",
+    "make_torch_expectation",
     "measurement_groups",
     "mpi_compiled",
     "mps_target",
