@@ -27,6 +27,8 @@ enum class CircuitOperationCode : std::uint8_t {
 };
 
 struct ClassicalCondition {
+    ClassicalCondition(std::size_t bit_, bool value_) : bit(bit_), value(value_) {}
+
     std::size_t bit;
     bool value;
 };
