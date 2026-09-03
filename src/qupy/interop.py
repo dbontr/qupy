@@ -8,7 +8,6 @@ import numpy as np
 
 from . import _native
 
-
 _FLOAT_DTYPES = {np.dtype(np.float32), np.dtype(np.float64)}
 
 
