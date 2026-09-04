@@ -84,7 +84,12 @@ def test_provider_conformance_exercises_success_lifecycle_without_raw_identifier
         ]
     )
 
-    report = qp.check_provider_conformance(_plugin(fake), shots=3, max_polls=4)
+    report = qp.check_provider_conformance(
+        _plugin(fake),
+        shots=3,
+        max_polls=4,
+        poll_interval_seconds=0.0,
+    )
 
     assert report.provider_name == "conformance-fixture"
     assert report.formats == ("openqasm3",)
@@ -117,7 +122,11 @@ def test_provider_conformance_accepts_repeated_nonterminal_states() -> None:
         ]
     )
 
-    report = qp.check_provider_conformance(_plugin(fake), max_polls=5)
+    report = qp.check_provider_conformance(
+        _plugin(fake),
+        max_polls=5,
+        poll_interval_seconds=0.0,
+    )
     assert report.poll_states[-1] == "succeeded"
     assert fake.poll_calls == 5
 
@@ -127,7 +136,11 @@ def test_provider_conformance_rejects_state_regression_and_terminal_failure() ->
         [qp.ProviderJobState.RUNNING, qp.ProviderJobState.QUEUED]
     )
     with pytest.raises(RuntimeError, match="regressed"):
-        qp.check_provider_conformance(_plugin(regressing), max_polls=2)
+        qp.check_provider_conformance(
+            _plugin(regressing),
+            max_polls=2,
+            poll_interval_seconds=0.0,
+        )
 
     failed = _LifecyclePlugin([qp.ProviderJobState.FAILED])
     with pytest.raises(RuntimeError, match="failed state"):
@@ -141,7 +154,11 @@ def test_provider_conformance_rejects_state_regression_and_terminal_failure() ->
 def test_provider_conformance_rejects_timeout_and_invalid_result_json() -> None:
     pending = _LifecyclePlugin([qp.ProviderJobState.QUEUED])
     with pytest.raises(TimeoutError, match="within 2 polls"):
-        qp.check_provider_conformance(_plugin(pending), max_polls=2)
+        qp.check_provider_conformance(
+            _plugin(pending),
+            max_polls=2,
+            poll_interval_seconds=0.0,
+        )
 
     invalid_result = _LifecyclePlugin(
         [qp.ProviderJobState.SUCCEEDED],
