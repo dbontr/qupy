@@ -9,7 +9,7 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
-void bind_tensor_network(nb::module_& module);
+void bind_qec(nb::module_& module);
 
 namespace {
 
@@ -61,5 +61,5 @@ void bind_trajectory(nb::module_& module) {
         nb::call_guard<nb::gil_scoped_release>()
     );
 
-    bind_tensor_network(module);
+    bind_qec(module);
 }
