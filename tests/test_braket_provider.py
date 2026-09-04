@@ -66,6 +66,27 @@ def _target() -> qp.HardwareTarget:
     )
 
 
+def test_braket_optional_sdk_failure_is_precise(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing_braket(name: str) -> object:
+        raise ModuleNotFoundError("No module named 'braket'", name="braket")
+
+    monkeypatch.setattr(braket_provider, "import_module", missing_braket)
+
+    with pytest.raises(ImportError, match="amazon-braket-sdk"):
+        qp.BraketProvider.local_simulator()
+
+
+def test_braket_does_not_mask_transitive_import_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_braket(name: str) -> object:
+        raise ModuleNotFoundError("No module named 'boto3'", name="boto3")
+
+    monkeypatch.setattr(braket_provider, "import_module", broken_braket)
+
+    with pytest.raises(ModuleNotFoundError) as raised:
+        qp.BraketProvider.local_simulator()
+    assert raised.value.name == "boto3"
+
+
 def test_braket_capabilities_round_trip_the_configured_target() -> None:
     provider = qp.BraketProvider(_FakeDevice(_FakeTask(["COMPLETED"])), target=_target())
 

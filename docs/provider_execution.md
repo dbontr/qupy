@@ -103,7 +103,7 @@ If the provider advertises a target, an explicitly supplied target must have the
 
 ## Amazon Braket
 
-`BraketProvider` is a first-party Python adapter for Amazon Braket gate-model execution. The Amazon Braket SDK is optional and imported only when a Braket device is constructed or a task is submitted. It is not a `qupy-compute` runtime dependency.
+`BraketProvider` is a first-party Python adapter for Amazon Braket gate-model execution. The Amazon Braket SDK is optional and imported only when a Braket device is constructed or a task is submitted. It is not a `qupy-compute` runtime dependency. If the SDK itself is absent, construction raises `ImportError` with the package name; import failures from dependencies inside an installed SDK are preserved instead of being masked as a missing Braket installation.
 
 Credential-free local execution uses the Braket `LocalSimulator`:
 
