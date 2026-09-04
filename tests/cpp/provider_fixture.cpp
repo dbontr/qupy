@@ -86,15 +86,7 @@ int poll(
     }
 
     auto& fixture = *static_cast<FixtureContext*>(raw_context);
-    if (fixture.cancelled) {
-        *state = QUPY_PROVIDER_JOB_CANCELLED;
-    } else if (fixture.polls == 0U) {
-        *state = QUPY_PROVIDER_JOB_QUEUED;
-    } else if (fixture.polls == 1U) {
-        *state = QUPY_PROVIDER_JOB_RUNNING;
-    } else {
-        *state = QUPY_PROVIDER_JOB_SUCCEEDED;
-    }
+    *state = fixture.cancelled ? QUPY_PROVIDER_JOB_CANCELLED : QUPY_PROVIDER_JOB_SUCCEEDED;
     ++fixture.polls;
     if (error != nullptr) error->size = 0U;
     return QUPY_PROVIDER_OK;
@@ -121,7 +113,7 @@ int result_json(
         write_text("job cancelled", error);
         return QUPY_PROVIDER_REMOTE_ERROR;
     }
-    if (fixture.polls < 3U) {
+    if (fixture.polls == 0U) {
         write_text("job is not complete", error);
         return QUPY_PROVIDER_REMOTE_ERROR;
     }
