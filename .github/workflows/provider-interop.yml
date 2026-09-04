@@ -32,3 +32,28 @@ jobs:
           tests/test_braket_provider.py
           tests/test_provider.py
           tests/test_provider_conformance.py
+
+  qiskit-aer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+          check-latest: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+      - name: Install QuPy development environment
+        run: uv sync --frozen --python 3.12
+      - name: Install Qiskit Aer
+        run: >-
+          uv pip install --python .venv/bin/python
+          "qiskit==2.5.2"
+          "qiskit-aer==0.17.2"
+      - name: Test Qiskit Aer provider adapter
+        run: >-
+          uv run --no-sync pytest -q
+          tests/test_qiskit_provider.py
+          tests/test_provider.py
+          tests/test_provider_conformance.py
