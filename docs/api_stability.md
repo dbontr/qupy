@@ -28,6 +28,22 @@ QuPy checks the Python/native pair during import when distribution metadata is a
 
 Standalone C++ builds do not have Python distribution metadata. Their core version remains the native build identity.
 
+## Release artifact verification
+
+Building an artifact is not sufficient release evidence. CI installs each built platform wheel into a fresh virtual environment with source-tree Python paths removed, then imports and executes QuPy from that environment.
+
+The isolated verification requires:
+
+- `qupy` and its native extension to resolve from the fresh environment rather than the repository checkout;
+- the distribution, Python package, and native core versions to agree;
+- the native extension to report C++20 and the expected program/circuit IR versions;
+- the installed package to contain its `py.typed` marker; and
+- a Bell-state statevector and probability calculation to execute correctly through the installed native wheel.
+
+The Linux Python 3.12 release lane additionally rebuilds the generated source distribution into a wheel in an isolated build environment and applies the same installation/runtime checks to that rebuilt wheel. This catches source-distribution omissions that a direct source-tree wheel build can miss.
+
+The verifier lives at `tools/verify_wheel.py` and intentionally has no QuPy import in its driver process. The QuPy import occurs only inside the isolated child environment.
+
 ## Pre-1.0 policy
 
 Before 1.0, QuPy may make incompatible API changes when they materially improve correctness or the long-term design. Such changes must not be silent. They require:
