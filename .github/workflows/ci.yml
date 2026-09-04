@@ -117,9 +117,14 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - run: uv sync --frozen --python ${{ matrix.python-version }}
       - run: uv run pytest -q
-      - run: uv run ruff check src tests benchmarks
+      - run: uv run ruff check src tests benchmarks tools
       - run: uv run mypy src/qupy
       - run: uv build
+      - name: Verify built wheel in isolation
+        run: uv run python tools/verify_wheel.py --dist-dir dist
+      - name: Verify source distribution round trip
+        if: ${{ matrix.python-version == '3.12' }}
+        run: uv run python tools/verify_wheel.py --dist-dir dist --rebuild-sdist
       - name: Confirm native runtime
         run: >-
           uv run python -c "import qupy; assert qupy.core_language() == 'C++20';
@@ -142,6 +147,8 @@ jobs:
       - run: uv sync --frozen --python 3.12
       - run: uv run pytest -q
       - run: uv build
+      - name: Verify built wheel in isolation
+        run: uv run python tools/verify_wheel.py --dist-dir dist
       - name: Confirm native runtime
         run: >-
           uv run python -c "import qupy; assert qupy.core_language() == 'C++20';
