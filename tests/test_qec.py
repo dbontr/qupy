@@ -150,5 +150,8 @@ def test_bp_osd_rejects_impossible_syndrome_and_invalid_inputs() -> None:
         decoder.decode_batch([0, 1])
     with pytest.raises(ValueError, match="columns must match"):
         decoder.decode_batch(np.zeros((2, 3), dtype=np.int8))
+    for invalid in ([0, 2], [0.5, 1.0], [0, 256]):
+        with pytest.raises(ValueError, match="zero or one"):
+            decoder.decode(invalid)
     with pytest.raises(ValueError, match="zero or one"):
-        decoder.decode([0, 2])
+        decoder.decode_batch([[0, 1], [1, 0.5]])
