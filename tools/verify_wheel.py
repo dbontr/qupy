@@ -14,6 +14,7 @@ _VERIFY_CODE = r'''
 import importlib.machinery
 import importlib.metadata
 import importlib.resources
+import importlib.util
 import json
 import math
 import sys
@@ -47,6 +48,31 @@ assert console_scripts["qupy-provider-conformance"] == "qupy.provider_conformanc
 
 marker = importlib.resources.files("qupy").joinpath("py.typed")
 assert marker.is_file(), marker
+
+for optional_module in ("jax", "torch", "braket"):
+    assert importlib.util.find_spec(optional_module) is None, optional_module
+    assert optional_module not in sys.modules, optional_module
+
+parameterized = qp.ry(qp.Program(1), 0.0, 0)
+parameterized_observable = qp.observable_from_z(qp.Z(0))
+parameterized_slots = [qp.ParameterSlot(0, 0)]
+for factory, dependency in (
+    (qp.make_jax_expectation, "jax"),
+    (qp.make_torch_expectation, "torch"),
+):
+    try:
+        factory(parameterized, parameterized_observable, parameterized_slots)
+    except ImportError as exc:
+        assert dependency in str(exc), (dependency, exc)
+    else:
+        raise AssertionError(f"{dependency} adapter did not fail without its optional dependency")
+
+try:
+    qp.BraketProvider.local_simulator()
+except ImportError as exc:
+    assert "amazon-braket-sdk" in str(exc), exc
+else:
+    raise AssertionError("Amazon Braket adapter did not fail without its optional dependency")
 
 program = qp.Program(2)
 program = qp.h(program, 0)

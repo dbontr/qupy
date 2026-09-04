@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import qupy as qp
+from qupy import interop
 
 
 def _objective() -> tuple[qp.Program, qp.Observable, list[qp.ParameterSlot]]:
@@ -14,6 +15,47 @@ def _objective() -> tuple[qp.Program, qp.Observable, list[qp.ParameterSlot]]:
         [qp.PauliTerm(1.0, [qp.PauliFactor(0, qp.Pauli.Z)])]
     )
     return program, observable, [qp.ParameterSlot(0, 0)]
+
+
+@pytest.mark.parametrize(
+    ("factory_name", "missing_module"),
+    [
+        ("make_jax_expectation", "jax"),
+        ("make_torch_expectation", "torch"),
+    ],
+)
+def test_optional_framework_factories_report_missing_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    factory_name: str,
+    missing_module: str,
+) -> None:
+    def missing_import(name: str) -> object:
+        if name == missing_module:
+            raise ModuleNotFoundError(f"No module named '{name}'", name=name)
+        raise AssertionError(f"unexpected optional import {name!r}")
+
+    monkeypatch.setattr(interop.importlib, "import_module", missing_import)
+    program, observable, slots = _objective()
+    factory = getattr(qp, factory_name)
+
+    with pytest.raises(ImportError, match=f"{missing_module} is required"):
+        factory(program, observable, slots)
+
+
+def test_framework_adapter_does_not_mask_transitive_import_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_jax(name: str) -> object:
+        if name == "jax":
+            raise ModuleNotFoundError("No module named 'jaxlib'", name="jaxlib")
+        raise AssertionError(f"unexpected optional import {name!r}")
+
+    monkeypatch.setattr(interop.importlib, "import_module", broken_jax)
+    program, observable, slots = _objective()
+
+    with pytest.raises(ModuleNotFoundError) as raised:
+        qp.make_jax_expectation(program, observable, slots)
+    assert raised.value.name == "jaxlib"
 
 
 def test_jax_expectation_supports_grad_jit_jvp_and_vmap() -> None:

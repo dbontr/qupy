@@ -2,7 +2,7 @@
 
 QuPy can expose a parameterized quantum expectation as a scalar function understood by JAX or PyTorch while keeping QuPy's native execution and gradient engines authoritative.
 
-The framework packages are optional. Installing `qupy-compute` does not install or import JAX or PyTorch. A framework is imported only when its adapter factory is called.
+The framework packages are optional. Installing `qupy-compute` does not install or import JAX or PyTorch. A framework is imported only when its adapter factory is called. If that framework is absent, the factory raises `ImportError` with an install hint; import failures from dependencies inside an installed framework are preserved rather than being misreported as a missing framework.
 
 ## Parameterized QuPy objective
 
