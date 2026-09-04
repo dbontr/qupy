@@ -3,6 +3,7 @@
 BpOsdDecodeBatch
 BpOsdDecodeResult
 BpOsdDecoder
+BraketProvider
 Circuit
 CircuitInstruction
 CircuitOperationCode
@@ -49,6 +50,7 @@ PauliZ
 PlannerCostModel
 Probabilities
 Program
+ProviderBackend
 ProviderCapabilities
 ProviderConformanceReport
 ProviderJobState
@@ -76,6 +78,7 @@ amplitude_damping
 append_pauli_evolution
 append_qft
 bit_flip
+braket_local_simulator_target
 check_provider_conformance
 circuit_ir_version
 commuting_groups
