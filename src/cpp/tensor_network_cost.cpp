@@ -609,32 +609,36 @@ ObservableExecutionPlan tensor_network_auto_observable_plan(
     std::size_t peak_tensor_bytes = 0U;
     double scalar_multiplications = 0.0;
     std::string tensor_plan_identity;
-    for (const Observable& observable : observables) {
-        const TensorNetworkPlan tensor_plan = tensor_network_plan(
-            program,
-            observable,
-            max_tensor_bytes
-        );
-        contractions = checked_sum(
-            contractions,
-            tensor_plan.contractions,
-            "tensor-network contraction count"
-        );
-        peak_tensor_rank = std::max(
-            peak_tensor_rank,
-            tensor_plan.peak_tensor_rank
-        );
-        peak_tensor_bytes = std::max(
-            peak_tensor_bytes,
-            tensor_plan.peak_tensor_bytes
-        );
-        scalar_multiplications += tensor_plan.scalar_multiplications;
-        if (!std::isfinite(scalar_multiplications)) {
-            throw std::overflow_error(
-                "tensor-network scalar multiplication work exceeds native range"
+    try {
+        for (const Observable& observable : observables) {
+            const TensorNetworkPlan tensor_plan = tensor_network_plan(
+                program,
+                observable,
+                max_tensor_bytes
             );
+            contractions = checked_sum(
+                contractions,
+                tensor_plan.contractions,
+                "tensor-network contraction count"
+            );
+            peak_tensor_rank = std::max(
+                peak_tensor_rank,
+                tensor_plan.peak_tensor_rank
+            );
+            peak_tensor_bytes = std::max(
+                peak_tensor_bytes,
+                tensor_plan.peak_tensor_bytes
+            );
+            scalar_multiplications += tensor_plan.scalar_multiplications;
+            if (!std::isfinite(scalar_multiplications)) {
+                throw std::overflow_error(
+                    "tensor-network scalar multiplication work exceeds native range"
+                );
+            }
+            tensor_plan_identity += tensor_plan.plan_fingerprint + "\n";
         }
-        tensor_plan_identity += tensor_plan.plan_fingerprint + "\n";
+    } catch (const std::length_error&) {
+        return cpu_query;
     }
 
     const std::size_t operation_count = program.operations().size();
