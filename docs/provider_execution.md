@@ -16,7 +16,7 @@ The hardware path is:
 
 `qp.submit_circuit()` performs steps 2 through 6. It returns a `ProviderSubmission` containing the provider job identifier, the complete `CompilationResult`, and the exact `ProviderProgram` submitted to the backend.
 
-`Circuit.to_openqasm3()` remains the standalone OpenQASM 3.1 serializer. The provider bridge uses the syntax-compatible OpenQASM 3.0 profile because major provider APIs, including Amazon Braket, advertise OpenQASM 3.0. QuPy's current hardware-capable subset does not use 3.1-only syntax, so the provider transport changes only the declared language version.
+`Circuit.to_openqasm3()` remains the standalone OpenQASM 3.1 serializer. The generic provider bridge uses the syntax-compatible OpenQASM 3.0 profile because major provider APIs, including Amazon Braket, advertise OpenQASM 3.0. QuPy's current hardware-capable subset does not use 3.1-only syntax, so this generic bridge changes only the declared language version. A provider adapter can apply a documented vendor-specific lowering after the generic provider boundary when required by that provider's OpenQASM dialect.
 
 ```python
 import qupy as qp
@@ -124,7 +124,9 @@ print(provider.poll(submission.job_id))
 print(provider.result_json(submission.job_id))
 ```
 
-`braket_local_simulator_target()` advertises the QuPy gate subset exercised by the integration suite, all-to-all connectivity, and terminal measurement. It deliberately does not advertise reset, mid-circuit measurement, or dynamic control.
+The generic QuPy `ProviderProgram` remains the canonical OpenQASM 3.0 provider-boundary artifact and contains the standard `include "stdgates.inc";` prelude plus QuPy's `cx` spelling. Before constructing `braket.ir.openqasm.Program`, `BraketProvider` performs exactly two Braket dialect mappings: it removes that canonical include because the Braket interface exposes the supported standard gates directly, and it maps controlled-X calls from `cx` to Braket's `cnot` spelling. The adapter does not alter qubit declarations, gate parameters, other gate calls, measurements, or classical conditions. An unexpected prelude fails closed instead of being rewritten heuristically.
+
+`braket_local_simulator_target()` advertises the QuPy gate subset exercised by the real SDK integration suite, all-to-all connectivity, and terminal measurement. It deliberately does not advertise reset, mid-circuit measurement, or dynamic control. The interoperability test submits H, X, Y, Z, RX, RY, RZ, CX/CNOT, CZ, and SWAP through the actual Braket `LocalSimulator`, so the advertised local gate set is tied to executable vendor evidence rather than inferred from documentation alone.
 
 Cloud execution uses the caller's configured Amazon Braket SDK and AWS credential environment:
 
@@ -173,7 +175,7 @@ print(report.to_json())
 
 The checker requires advertised OpenQASM 3 support and either an advertised `hardware_target` or an explicit trusted target. It compiles and submits one single-qubit terminal-measurement circuit, then accepts repeated `queued` or `running` states while rejecting a regression from `running` back to `queued`. `failed`, `cancelled`, timeout, malformed result JSON, and capability/target inconsistencies fail closed.
 
-The Amazon Braket interoperability workflow applies this same checker to the real Braket `LocalSimulator`. That proves SDK import, OpenQASM submission, task lifecycle mapping, result normalization, generic QuPy submission, and provider-conformance composition without requiring cloud credentials or spending QPU quota.
+The Amazon Braket interoperability workflow applies this same checker to the real Braket `LocalSimulator`. That proves SDK import, deterministic OpenQASM dialect lowering, task submission, lifecycle mapping, result normalization, generic QuPy submission, and provider-conformance composition without requiring cloud credentials or spending QPU quota.
 
 For native command-line provider adapters that advertise their target, the packaged wheel installs:
 
