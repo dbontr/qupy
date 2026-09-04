@@ -36,6 +36,8 @@ _STATE_MAP = {
     "FAILED": _native.ProviderJobState.FAILED,
     "CANCELLED": _native.ProviderJobState.CANCELLED,
 }
+_PROVIDER_HEADER = "OPENQASM 3.0;\n"
+_STDGATES_INCLUDE = 'include "stdgates.inc";\n'
 
 
 def _braket_module(name: str) -> object:
@@ -45,6 +47,15 @@ def _braket_module(name: str) -> object:
         raise RuntimeError(
             "Amazon Braket support requires the optional amazon-braket-sdk package"
         ) from exc
+
+
+def _braket_openqasm_source(source: str) -> str:
+    if not source.startswith(_PROVIDER_HEADER):
+        raise ValueError("Amazon Braket adapter requires the OpenQASM 3.0 transport profile")
+    body = source[len(_PROVIDER_HEADER) :]
+    if not body.startswith(_STDGATES_INCLUDE):
+        raise ValueError("Amazon Braket adapter expected QuPy's stdgates.inc provider prelude")
+    return _PROVIDER_HEADER + body[len(_STDGATES_INCLUDE) :]
 
 
 def _openqasm_program(source: str) -> object:
@@ -246,12 +257,11 @@ class BraketProvider:
         _options(options_json)
         if program.format != "openqasm3":
             raise ValueError("Amazon Braket requires an openqasm3 provider program")
-        if not program.text.startswith("OPENQASM 3.0;"):
-            raise ValueError("Amazon Braket adapter requires the OpenQASM 3.0 transport profile")
         if self._target is not None and program.num_qubits > self._target.num_qubits:
             raise ValueError("provider program exceeds the configured Amazon Braket target")
 
-        task = self._device.run(_openqasm_program(program.text), shots=shot_count)
+        source = _braket_openqasm_source(program.text)
+        task = self._device.run(_openqasm_program(source), shots=shot_count)
         job_id = task.id
         if not isinstance(job_id, str) or not job_id:
             raise RuntimeError("Amazon Braket returned an invalid quantum task identifier")
