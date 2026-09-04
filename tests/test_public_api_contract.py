@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import tomllib
 from importlib.metadata import version
 from pathlib import Path
-import tomllib
 
 import qupy as qp
 
