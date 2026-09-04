@@ -96,6 +96,21 @@ class _NativeQecModule(Protocol):
     ) -> _NativeBpOsdDecoder: ...
 
 
+def _binary_int8_array(
+    values: npt.ArrayLike,
+    *,
+    ndim: int,
+    name: str,
+) -> npt.NDArray[np.int8]:
+    array = np.asarray(values)
+    if array.ndim != ndim:
+        dimension = "one-dimensional" if ndim == 1 else "two-dimensional"
+        raise ValueError(f"{name} must be a {dimension} array")
+    if not bool(np.all(np.isin(array, (0, 1)))):
+        raise ValueError(f"{name} values must be zero or one")
+    return np.ascontiguousarray(array, dtype=np.int8)
+
+
 class BpOsdDecodeResult:
     """One syndrome-consistent BP+OSD-0 detector-model decoding result."""
 
@@ -222,15 +237,11 @@ class BpOsdDecoder:
         return self._native.active_error_count
 
     def decode(self, syndrome: npt.ArrayLike) -> BpOsdDecodeResult:
-        values = np.asarray(syndrome, dtype=np.int8, order="C")
-        if values.ndim != 1:
-            raise ValueError("syndrome must be a one-dimensional array")
+        values = _binary_int8_array(syndrome, ndim=1, name="syndrome")
         return BpOsdDecodeResult(self._native.decode(values))
 
     def decode_batch(self, syndromes: npt.ArrayLike) -> BpOsdDecodeBatch:
-        values = np.asarray(syndromes, dtype=np.int8, order="C")
-        if values.ndim != 2:
-            raise ValueError("syndromes must be a two-dimensional array")
+        values = _binary_int8_array(syndromes, ndim=2, name="syndromes")
         return BpOsdDecodeBatch(self._native.decode_batch(values))
 
 
