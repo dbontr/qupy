@@ -66,6 +66,21 @@ def _append_rotation(program: _native.Program, axis: str, angle: float, qubit: i
     raise ValueError(f"unsupported rotation axis {axis!r}")
 
 
+def _positive_integer(value: int, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def _finite_values(values: Sequence[float], name: str) -> tuple[float, ...]:
+    converted = tuple(float(value) for value in values)
+    if not all(math.isfinite(value) for value in converted):
+        raise ValueError(f"{name} must contain only finite values")
+    return converted
+
+
 def hardware_efficient_ansatz(
     num_qubits: int,
     layers: int,
@@ -234,10 +249,146 @@ def append_pauli_evolution(
     return program
 
 
+def append_hamiltonian_evolution(
+    program: _native.Program,
+    hamiltonian: _native.Observable,
+    time: float,
+    *,
+    steps: int = 1,
+    order: int = 1,
+) -> _native.Program:
+    """Append a first- or second-order product formula for a Pauli Hamiltonian."""
+    evolution_time = float(time)
+    if not math.isfinite(evolution_time):
+        raise ValueError("time must be finite")
+    step_count = _positive_integer(steps, "steps")
+    if isinstance(order, bool) or not isinstance(order, int):
+        raise TypeError("order must be an integer")
+    if order not in (1, 2):
+        raise ValueError("order must be 1 or 2")
+
+    terms = tuple(hamiltonian.terms)
+    if not terms or evolution_time == 0.0:
+        return program
+
+    step_time = evolution_time / float(step_count)
+    if order == 1:
+        for _ in range(step_count):
+            for term in terms:
+                program = append_pauli_evolution(program, term, step_time)
+        return program
+
+    half_step = step_time / 2.0
+    for _ in range(step_count):
+        for term in terms[:-1]:
+            program = append_pauli_evolution(program, term, half_step)
+        program = append_pauli_evolution(program, terms[-1], step_time)
+        for term in reversed(terms[:-1]):
+            program = append_pauli_evolution(program, term, half_step)
+    return program
+
+
+def _maxcut_edges(
+    num_qubits: int,
+    edges: Sequence[tuple[int, int]],
+    weights: Sequence[float] | None,
+) -> tuple[tuple[int, int, float], ...]:
+    qubit_count = _positive_integer(num_qubits, "num_qubits")
+    pairs = tuple(edges)
+    edge_weights = (
+        tuple(1.0 for _ in pairs)
+        if weights is None
+        else _finite_values(weights, "weights")
+    )
+    if len(edge_weights) != len(pairs):
+        raise ValueError("weights must contain exactly one value per edge")
+
+    normalized: list[tuple[int, int, float]] = []
+    seen: set[tuple[int, int]] = set()
+    for index, (first, second) in enumerate(pairs):
+        if isinstance(first, bool) or not isinstance(first, int):
+            raise TypeError(f"edges[{index}][0] must be an integer")
+        if isinstance(second, bool) or not isinstance(second, int):
+            raise TypeError(f"edges[{index}][1] must be an integer")
+        if first < 0 or first >= qubit_count or second < 0 or second >= qubit_count:
+            raise ValueError(f"edges[{index}] contains a qubit outside num_qubits")
+        if first == second:
+            raise ValueError(f"edges[{index}] must connect two distinct qubits")
+        weight = edge_weights[index]
+        if weight < 0.0:
+            raise ValueError("weights must be non-negative")
+        edge = (min(first, second), max(first, second))
+        if edge in seen:
+            raise ValueError(f"duplicate undirected edge {edge}")
+        seen.add(edge)
+        normalized.append((edge[0], edge[1], weight))
+    normalized.sort(key=lambda item: (item[0], item[1]))
+    return tuple(normalized)
+
+
+def maxcut_hamiltonian(
+    num_qubits: int,
+    edges: Sequence[tuple[int, int]],
+    *,
+    weights: Sequence[float] | None = None,
+) -> _native.Observable:
+    """Construct the weighted MaxCut objective sum w_ij (I - Z_i Z_j) / 2."""
+    normalized = _maxcut_edges(num_qubits, edges, weights)
+    terms: list[_native.PauliTerm] = []
+    constant = sum(weight for _, _, weight in normalized) / 2.0
+    if constant != 0.0:
+        terms.append(_native.PauliTerm(constant, []))
+    for first, second, weight in normalized:
+        if weight == 0.0:
+            continue
+        terms.append(
+            _native.PauliTerm(
+                -weight / 2.0,
+                [
+                    _native.PauliFactor(first, _native.Pauli.Z),
+                    _native.PauliFactor(second, _native.Pauli.Z),
+                ],
+            )
+        )
+    return _native.Observable(terms)
+
+
+def qaoa_maxcut_program(
+    num_qubits: int,
+    edges: Sequence[tuple[int, int]],
+    gammas: Sequence[float],
+    betas: Sequence[float],
+    *,
+    weights: Sequence[float] | None = None,
+) -> _native.Program:
+    """Construct a standard X-mixer QAOA Program for weighted MaxCut."""
+    qubit_count = _positive_integer(num_qubits, "num_qubits")
+    gamma_values = _finite_values(gammas, "gammas")
+    beta_values = _finite_values(betas, "betas")
+    if not gamma_values:
+        raise ValueError("gammas and betas must contain at least one layer")
+    if len(gamma_values) != len(beta_values):
+        raise ValueError("gammas and betas must have the same length")
+
+    cost = maxcut_hamiltonian(qubit_count, edges, weights=weights)
+    program = _native.Program(qubit_count)
+    for qubit in range(qubit_count):
+        program = _native.h(program, qubit)
+
+    for gamma, beta in zip(gamma_values, beta_values, strict=True):
+        program = append_hamiltonian_evolution(program, cost, gamma, steps=1, order=1)
+        for qubit in range(qubit_count):
+            program = _native.rx(program, 2.0 * beta, qubit)
+    return program
+
+
 __all__ = [
     "VariationalTemplate",
+    "append_hamiltonian_evolution",
     "append_pauli_evolution",
     "append_qft",
     "hardware_efficient_ansatz",
+    "maxcut_hamiltonian",
+    "qaoa_maxcut_program",
     "qft",
 ]
