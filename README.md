@@ -25,7 +25,7 @@ uv sync
 uv run pytest -q
 ```
 
-QuPy requires Python 3.12+ and a C++20 compiler. NumPy is the only required Python runtime dependency. JAX, PyTorch, and Amazon Braket integration are optional and loaded lazily.
+QuPy requires Python 3.12+ and a C++20 compiler. NumPy is the only required Python runtime dependency. JAX, PyTorch, Amazon Braket, Qiskit, and Qiskit Aer integration are optional and loaded lazily.
 
 ## Quick start
 
@@ -118,7 +118,7 @@ print(state.values)
 Python API
     |
     +-- algorithms / optional JAX + PyTorch adapters
-    +-- provider adapters / optional Amazon Braket SDK
+    +-- provider adapters / optional Amazon Braket + Qiskit SDKs
     |
     v
 nanobind extension
@@ -454,7 +454,7 @@ The largest remaining engineering work is integration and scale:
 
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
 - add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
-- extend first-party provider coverage beyond Amazon Braket and add direct device-capability translation only where vendor conformance evidence supports it;
+- extend first-party provider coverage beyond Amazon Braket and Qiskit Aer, and add direct device-capability translation only where vendor conformance evidence supports it;
 - broaden chemistry, simulation, and optimization applications beyond the current Hamiltonian-evolution and MaxCut/QAOA primitives while reusing the native execution and differentiation contracts;
 - broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
 - finish the compatibility review needed to turn the checked pre-1.0 API manifest, isolated release-artifact gates, and documented version contracts into a future 1.0 commitment.

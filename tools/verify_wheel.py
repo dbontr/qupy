@@ -49,7 +49,7 @@ assert console_scripts["qupy-provider-conformance"] == "qupy.provider_conformanc
 marker = importlib.resources.files("qupy").joinpath("py.typed")
 assert marker.is_file(), marker
 
-for optional_module in ("jax", "torch", "braket"):
+for optional_module in ("jax", "torch", "braket", "qiskit", "qiskit_aer"):
     assert importlib.util.find_spec(optional_module) is None, optional_module
     assert optional_module not in sys.modules, optional_module
 
@@ -73,6 +73,13 @@ except ImportError as exc:
     assert "amazon-braket-sdk" in str(exc), exc
 else:
     raise AssertionError("Amazon Braket adapter did not fail without its optional dependency")
+
+try:
+    qp.QiskitProvider.aer_simulator()
+except ImportError as exc:
+    assert "qiskit-aer" in str(exc), exc
+else:
+    raise AssertionError("Qiskit Aer adapter did not fail without its optional dependency")
 
 program = qp.Program(2)
 program = qp.h(program, 0)
