@@ -55,6 +55,23 @@ public:
     [[nodiscard]] std::size_t tensor_network_wins() const noexcept;
     [[nodiscard]] bool auto_validated() const noexcept;
 
+    [[nodiscard]] bool cpu_in_domain(
+        std::size_t active_qubits,
+        std::size_t compiled_steps,
+        std::size_t two_qubit_operations,
+        std::size_t operation_count,
+        std::size_t term_count,
+        std::size_t threads
+    ) const noexcept;
+
+    [[nodiscard]] bool tensor_network_in_domain(
+        std::size_t contractions,
+        std::size_t peak_tensor_rank,
+        std::size_t peak_tensor_bytes,
+        double scalar_multiplications,
+        std::size_t term_count
+    ) const noexcept;
+
     [[nodiscard]] double predict_cpu_ns(
         std::size_t active_qubits,
         std::size_t compiled_steps,
@@ -87,10 +104,16 @@ private:
     std::size_t tensor_network_wins_ = 0U;
     std::array<double, 6> cpu_coefficients_{};
     std::array<double, 6> tensor_network_coefficients_{};
+    std::array<double, 6> cpu_feature_min_{};
+    std::array<double, 6> cpu_feature_max_{};
+    std::array<double, 6> tensor_network_feature_min_{};
+    std::array<double, 6> tensor_network_feature_max_{};
     double cpu_holdout_median_factor_ = 0.0;
     double cpu_holdout_max_factor_ = 0.0;
     double tensor_network_holdout_median_factor_ = 0.0;
     double tensor_network_holdout_max_factor_ = 0.0;
+    bool has_cpu_domain_ = false;
+    bool has_tensor_network_domain_ = false;
     bool validated_ = false;
 
     friend TensorNetworkCostModel load_tensor_network_cost_model(const std::string& path);
