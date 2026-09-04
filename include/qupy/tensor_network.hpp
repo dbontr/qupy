@@ -158,4 +158,32 @@ private:
     std::size_t max_tensor_bytes = kTensorNetworkDefaultMaxBytes
 );
 
+[[nodiscard]] GradientResult tensor_network_value_and_grad(
+    const Program& program,
+    const Observable& observable,
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& parameter_values,
+    GradientMethod method = GradientMethod::Auto,
+    double epsilon = 1e-7,
+    std::size_t max_tensor_bytes = kTensorNetworkDefaultMaxBytes
+);
+
+[[nodiscard]] JacobianResult tensor_network_jacobian(
+    const Program& program,
+    const std::vector<Observable>& observables,
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& parameter_values,
+    GradientMethod method = GradientMethod::Auto,
+    double epsilon = 1e-7,
+    std::size_t max_tensor_bytes = kTensorNetworkDefaultMaxBytes
+);
+
+[[nodiscard]] HessianResult tensor_network_hessian(
+    const Program& program,
+    const Observable& observable,
+    const std::vector<ParameterSlot>& slots,
+    const std::vector<double>& parameter_values,
+    std::size_t max_tensor_bytes = kTensorNetworkDefaultMaxBytes
+);
+
 }  // namespace qupy

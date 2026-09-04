@@ -28,9 +28,38 @@ plan = qp.observable_plan(program, [observable], backend="native-tn")
 result = qp.expect_observable(program, observable, backend="native-tn")
 ```
 
-`qp.expect(program, observable, backend="native-tn")` and `qp.expect_observables(...)` use the same explicit backend. The backend currently owns rich observable expectations only. State vectors, density matrices, variances, and covariances fail explicitly instead of silently changing execution method.
+`qp.expect(program, observable, backend="native-tn")` and `qp.expect_observables(...)` use the same explicit backend. The backend owns rich observable expectations and expectation differentiation. State vectors, density matrices, variances, and covariances fail explicitly instead of silently changing execution method.
 
 Automatic selection is available only when a validated host-scoped tensor-network policy artifact is installed or configured. Explicit backends never depend on that artifact.
+
+## Tensor-network differentiation
+
+The standard differentiation surface accepts the same explicit backend without creating a second tensor-network-specific user API:
+
+```python
+import numpy as np
+import qupy as qp
+
+program = qp.ry(qp.Program(2), 0.0, 0)
+program = qp.rx(program, 0.0, 1)
+program = qp.cx(program, 0, 1)
+observable = qp.observable_from_z(qp.Z(0))
+slots = [qp.ParameterSlot(0), qp.ParameterSlot(1)]
+parameters = np.array([0.37, -0.21], dtype=np.float64)
+result = qp.value_and_grad(
+    program,
+    observable,
+    slots,
+    parameters,
+    backend="native-tn",
+)
+```
+
+`qp.value_and_grad()`, `qp.grad()`, `qp.jacobian()`, and `qp.hessian()` evaluate their expectation queries through exact tensor-network contraction when `backend="native-tn"` is explicit. `GradientMethod.AUTO` selects analytic parameter shift for this backend. Explicit finite differences remain available with a positive finite `epsilon`; adjoint differentiation fails explicitly because the current adjoint implementation requires the native CPU state-vector backend.
+
+This is expectation-based differentiation rather than reverse-mode contraction-tree differentiation: each shifted circuit is contracted independently under the standard 1 GiB tensor-intermediate policy. The reported backend remains `native-tn` and the method reports `parameter-shift` or `finite-difference` as appropriate.
+
+Automatic tensor-network policy remains calibrated on expectation workloads, not on the multiplied evaluation cost of gradients, Jacobians, or Hessians. Therefore `backend="auto"` differentiation keeps the established differentiation planner instead of silently applying the expectation-only TN cost model. Gradient-aware automatic TN routing requires its own held-out timing evidence.
 
 ## Structural preflight
 
@@ -206,6 +235,7 @@ QuPy also supports MPI term-parallel tensor-network execution through `distribut
 ## Current boundary
 
 - rich Pauli-sum expectation values
+- explicit parameter-shift and finite-difference gradients, Jacobians, and parameter-shift Hessians through the standard differentiation API
 - binary qubit tensor indices
 - deterministic greedy pair contraction
 - CPU execution per contraction

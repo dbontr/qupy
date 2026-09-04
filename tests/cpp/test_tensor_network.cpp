@@ -186,6 +186,89 @@ void test_batch_adapter() {
     );
 }
 
+void test_unified_gradient_uses_tensor_backend() {
+    qupy::Program program(2U);
+    program = qupy::ry(program, 0.0, 0U);
+    program = qupy::rx(program, 0.0, 1U);
+    program = qupy::cx(program, 0U, 1U);
+    const std::vector<qupy::ParameterSlot> slots = {{0U, 0U}, {1U, 0U}};
+    const std::vector<double> parameters = {0.37, -0.21};
+    const qupy::Observable observable({
+        qupy::PauliTerm(0.7, {{0U, qupy::Pauli::Z}}),
+        qupy::PauliTerm(0.4, {{0U, qupy::Pauli::X}, {1U, qupy::Pauli::X}}),
+    });
+
+    const qupy::GradientResult dense = qupy::value_and_grad(
+        program, observable, slots, parameters, "native-cpu", qupy::GradientMethod::ParameterShift
+    );
+    const qupy::GradientResult tensor = qupy::value_and_grad(
+        program, observable, slots, parameters, "native-tn", qupy::GradientMethod::Auto
+    );
+    require(tensor.backend == "native-tn", "unified gradient did not retain tensor backend");
+    require(tensor.method == "parameter-shift", "tensor auto gradient did not select parameter shift");
+    require(std::abs(tensor.value - dense.value) < 2e-12, "tensor gradient value disagrees with dense execution");
+    require(tensor.gradient.size() == dense.gradient.size(), "tensor gradient shape mismatch");
+    for (std::size_t index = 0U; index < tensor.gradient.size(); ++index) {
+        require(
+            std::abs(tensor.gradient[index] - dense.gradient[index]) < 2e-12,
+            "tensor gradient disagrees with dense parameter shift"
+        );
+    }
+    require_invalid(
+        [&] {
+            static_cast<void>(qupy::value_and_grad(
+                program, observable, slots, parameters, "native-tn", qupy::GradientMethod::Adjoint
+            ));
+        },
+        "tensor-network adjoint differentiation was accepted"
+    );
+}
+
+void test_unified_jacobian_and_hessian_use_tensor_backend() {
+    qupy::Program program(2U);
+    program = qupy::ry(program, 0.0, 0U);
+    program = qupy::rx(program, 0.0, 1U);
+    program = qupy::cx(program, 0U, 1U);
+    const std::vector<qupy::ParameterSlot> slots = {{0U, 0U}, {1U, 0U}};
+    const std::vector<double> parameters = {0.37, -0.21};
+    const qupy::Observable first({qupy::PauliTerm(1.0, {{0U, qupy::Pauli::Z}})});
+    const qupy::Observable second({
+        qupy::PauliTerm(0.5, {{0U, qupy::Pauli::X}, {1U, qupy::Pauli::X}}),
+        qupy::PauliTerm(-0.2, {{1U, qupy::Pauli::Z}}),
+    });
+
+    const qupy::JacobianResult dense_jacobian = qupy::jacobian(
+        program, {first, second}, slots, parameters, "native-cpu",
+        qupy::GradientMethod::ParameterShift
+    );
+    const qupy::JacobianResult tensor_jacobian = qupy::jacobian(
+        program, {first, second}, slots, parameters, "native-tn", qupy::GradientMethod::Auto
+    );
+    require(tensor_jacobian.backend == "native-tn", "tensor Jacobian backend mismatch");
+    require(tensor_jacobian.method == "parameter-shift", "tensor Jacobian method mismatch");
+    require(tensor_jacobian.values.size() == dense_jacobian.values.size(), "tensor Jacobian value shape mismatch");
+    require(tensor_jacobian.jacobian.size() == dense_jacobian.jacobian.size(), "tensor Jacobian shape mismatch");
+    for (std::size_t index = 0U; index < tensor_jacobian.values.size(); ++index) {
+        require(std::abs(tensor_jacobian.values[index] - dense_jacobian.values[index]) < 2e-12, "tensor Jacobian value mismatch");
+    }
+    for (std::size_t index = 0U; index < tensor_jacobian.jacobian.size(); ++index) {
+        require(std::abs(tensor_jacobian.jacobian[index] - dense_jacobian.jacobian[index]) < 2e-12, "tensor Jacobian derivative mismatch");
+    }
+
+    const qupy::HessianResult dense_hessian = qupy::hessian(
+        program, second, slots, parameters, "native-cpu"
+    );
+    const qupy::HessianResult tensor_hessian = qupy::hessian(
+        program, second, slots, parameters, "native-tn"
+    );
+    require(tensor_hessian.backend == "native-tn", "tensor Hessian backend mismatch");
+    require(tensor_hessian.method == "parameter-shift", "tensor Hessian method mismatch");
+    require(tensor_hessian.hessian.size() == dense_hessian.hessian.size(), "tensor Hessian shape mismatch");
+    for (std::size_t index = 0U; index < tensor_hessian.hessian.size(); ++index) {
+        require(std::abs(tensor_hessian.hessian[index] - dense_hessian.hessian[index]) < 3e-12, "tensor Hessian mismatch");
+    }
+}
+
 void test_memory_guard_and_validation() {
     qupy::Program entangled(2U);
     entangled = qupy::cx(entangled, 0U, 1U);
@@ -242,6 +325,8 @@ int main() {
     test_matches_dense_rich_observable();
     test_large_product_circuit_without_statevector();
     test_batch_adapter();
+    test_unified_gradient_uses_tensor_backend();
+    test_unified_jacobian_and_hessian_use_tensor_backend();
     test_memory_guard_and_validation();
     test_zero_observable_short_circuit();
     return 0;
