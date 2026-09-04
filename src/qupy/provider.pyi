@@ -1,6 +1,23 @@
-from ._native import ProviderPlugin, ProviderProgram
+from typing import Protocol
+
+from ._native import ProviderJobState, ProviderProgram
 from .circuit import Circuit
 from .compiler import CompilationResult, HardwareTarget
+
+class ProviderBackend(Protocol):
+    @property
+    def name(self) -> str: ...
+    def capabilities_json(self) -> str: ...
+    def submit(
+        self,
+        program: ProviderProgram,
+        shots: int,
+        options_json: str = "{}",
+    ) -> str: ...
+    def poll(self, job_id: str) -> ProviderJobState: ...
+    def result_json(self, job_id: str) -> str: ...
+    def cancel(self, job_id: str) -> None: ...
+
 
 class ProviderCapabilities:
     @property
@@ -22,19 +39,19 @@ class ProviderSubmission:
     def options_json(self) -> str: ...
 
 
-def provider_capabilities(plugin: ProviderPlugin) -> ProviderCapabilities: ...
+def provider_capabilities(plugin: ProviderBackend) -> ProviderCapabilities: ...
 
 def provider_program(circuit: Circuit) -> ProviderProgram: ...
 
 def submit_compiled_circuit(
-    plugin: ProviderPlugin,
+    plugin: ProviderBackend,
     compilation: CompilationResult,
     shots: int,
     options_json: str = "{}",
 ) -> ProviderSubmission: ...
 
 def submit_circuit(
-    plugin: ProviderPlugin,
+    plugin: ProviderBackend,
     circuit: Circuit,
     shots: int,
     *,
