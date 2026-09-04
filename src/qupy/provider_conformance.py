@@ -145,12 +145,12 @@ def check_provider_conformance(
             raise RuntimeError("provider returned an unsupported job state") from None
         state_names.append(state_name)
 
-        if state is _native.ProviderJobState.SUCCEEDED:
+        if state == _native.ProviderJobState.SUCCEEDED:
             succeeded = True
             break
-        if state is _native.ProviderJobState.FAILED:
+        if state == _native.ProviderJobState.FAILED:
             raise RuntimeError("provider conformance job entered the failed state")
-        if state is _native.ProviderJobState.CANCELLED:
+        if state == _native.ProviderJobState.CANCELLED:
             raise RuntimeError("provider conformance job entered the cancelled state")
 
         rank = _NONTERMINAL_STATE_RANK[state]
