@@ -184,6 +184,7 @@ from .qec import (
     BpOsdDecodeResult,
     decode_detector_model_bp_osd,
 )
+from .qiskit_provider import QiskitProvider, qiskit_aer_target
 from .tensor_network import (
     TensorNetworkCostModel,
     TensorNetworkEstimate,
@@ -268,6 +269,7 @@ __all__ = [
     "ProviderPlugin",
     "ProviderProgram",
     "ProviderSubmission",
+    "QiskitProvider",
     "ResultMode",
     "Samples",
     "SamplesBatch",
@@ -360,6 +362,7 @@ __all__ = [
     "provider_program",
     "qaoa_maxcut_program",
     "qft",
+    "qiskit_aer_target",
     "remove_planner_cost_model",
     "remove_tensor_network_cost_model",
     "repetition_code_detector_model",
