@@ -163,3 +163,132 @@ def test_pauli_evolution_validates_time_and_program_extent() -> None:
         qp.append_pauli_evolution(qp.Program(1), term, 0.1)
     with pytest.raises(ValueError, match="finite"):
         qp.append_pauli_evolution(qp.Program(2), term, float("inf"))
+
+
+def test_hamiltonian_evolution_matches_single_pauli_exactly() -> None:
+    time = 0.63
+    term = qp.PauliTerm(-0.37, [qp.PauliFactor(0, qp.Pauli.Y)])
+    hamiltonian = qp.Observable([term])
+
+    reference = qp.append_pauli_evolution(qp.Program(1), term, time)
+    evolved = qp.hamiltonian_evolution(
+        1,
+        hamiltonian,
+        time,
+        steps=7,
+        order=2,
+    )
+
+    np.testing.assert_allclose(
+        qp.statevector(evolved, backend="native-cpu").values,
+        qp.statevector(reference, backend="native-cpu").values,
+        atol=2e-12,
+    )
+
+
+def test_lie_trotter_is_exact_for_commuting_pauli_terms() -> None:
+    terms = [
+        qp.PauliTerm(0.31, [qp.PauliFactor(0, qp.Pauli.Z)]),
+        qp.PauliTerm(-0.23, [qp.PauliFactor(1, qp.Pauli.Z)]),
+        qp.PauliTerm(
+            0.17,
+            [qp.PauliFactor(0, qp.Pauli.Z), qp.PauliFactor(1, qp.Pauli.Z)],
+        ),
+    ]
+    hamiltonian = qp.Observable(terms)
+    time = 0.71
+    prepared = qp.h(qp.h(qp.Program(2), 0), 1)
+
+    reference = prepared
+    for term in terms:
+        reference = qp.append_pauli_evolution(reference, term, time)
+    evolved = qp.append_hamiltonian_evolution(
+        prepared,
+        hamiltonian,
+        time,
+        steps=5,
+        order=1,
+    )
+
+    np.testing.assert_allclose(
+        qp.statevector(evolved, backend="native-cpu").values,
+        qp.statevector(reference, backend="native-cpu").values,
+        atol=5e-12,
+    )
+
+
+def test_second_order_suzuki_improves_noncommuting_evolution_error() -> None:
+    x_term = qp.PauliTerm(1.0, [qp.PauliFactor(0, qp.Pauli.X)])
+    z_term = qp.PauliTerm(1.0, [qp.PauliFactor(0, qp.Pauli.Z)])
+    hamiltonian = qp.Observable([x_term, z_term])
+    time = 0.7
+    magnitude = math.sqrt(2.0)
+    sine = math.sin(magnitude * time) / magnitude
+    exact = np.asarray(
+        [
+            math.cos(magnitude * time) - 1j * sine,
+            -1j * sine,
+        ],
+        dtype=np.complex128,
+    )
+
+    first = qp.hamiltonian_evolution(1, hamiltonian, time, steps=4, order=1)
+    second = qp.hamiltonian_evolution(1, hamiltonian, time, steps=4, order=2)
+    first_error = np.linalg.norm(qp.statevector(first, backend="native-cpu").values - exact)
+    second_error = np.linalg.norm(qp.statevector(second, backend="native-cpu").values - exact)
+
+    assert second_error < first_error
+    assert second_error < 0.01
+
+
+def test_second_order_hamiltonian_evolution_inverts_with_negative_time() -> None:
+    hamiltonian = qp.Observable(
+        [
+            qp.PauliTerm(0.8, [qp.PauliFactor(0, qp.Pauli.X)]),
+            qp.PauliTerm(-0.6, [qp.PauliFactor(0, qp.Pauli.Z)]),
+        ]
+    )
+    prepared = qp.ry(qp.h(qp.Program(1), 0), -0.39, 0)
+    reference = qp.statevector(prepared, backend="native-cpu").values.copy()
+
+    forward = qp.append_hamiltonian_evolution(
+        prepared,
+        hamiltonian,
+        0.83,
+        steps=6,
+        order=2,
+    )
+    restored = qp.append_hamiltonian_evolution(
+        forward,
+        hamiltonian,
+        -0.83,
+        steps=6,
+        order=2,
+    )
+
+    np.testing.assert_allclose(
+        qp.statevector(restored, backend="native-cpu").values,
+        reference,
+        atol=5e-12,
+    )
+
+
+def test_hamiltonian_evolution_validates_formula_configuration() -> None:
+    hamiltonian = qp.Observable(
+        [qp.PauliTerm(1.0, [qp.PauliFactor(0, qp.Pauli.X)])]
+    )
+
+    with pytest.raises(ValueError, match="finite"):
+        qp.hamiltonian_evolution(1, hamiltonian, float("nan"))
+    with pytest.raises(ValueError, match="steps must be positive"):
+        qp.hamiltonian_evolution(1, hamiltonian, 0.1, steps=0)
+    with pytest.raises(TypeError, match="steps must be an integer"):
+        qp.hamiltonian_evolution(1, hamiltonian, 0.1, steps=True)
+    with pytest.raises(ValueError, match="order must be 1 or 2"):
+        qp.hamiltonian_evolution(1, hamiltonian, 0.1, order=3)
+    with pytest.raises(TypeError, match="order must be an integer"):
+        qp.hamiltonian_evolution(1, hamiltonian, 0.1, order=True)
+    with pytest.raises(ValueError, match="num_qubits must be positive"):
+        qp.hamiltonian_evolution(0, hamiltonian, 0.1)
+    with pytest.raises(TypeError, match="num_qubits must be an integer"):
+        qp.hamiltonian_evolution(True, hamiltonian, 0.1)
