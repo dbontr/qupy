@@ -136,7 +136,7 @@ The current Braket adapter accepts the empty provider options object only. Vendo
 
 ## Qiskit and Aer
 
-`QiskitProvider` is a first-party adapter for Qiskit Backend-style jobs. Qiskit and Qiskit Aer are optional and lazily imported; neither package is a `qupy-compute` runtime dependency. Credential-free interoperability uses the real `AerSimulator`:
+`QiskitProvider` is a first-party adapter for Qiskit Backend-style jobs. Qiskit and Qiskit Aer are optional and lazily imported; neither package is a `qupy-compute` runtime dependency. If an SDK package itself is absent, adapter construction raises `ImportError` with the optional package requirement; import failures from dependencies inside an installed Qiskit stack are preserved rather than being masked as a missing SDK. Credential-free interoperability uses the real `AerSimulator`:
 
 ```python
 import qupy as qp
@@ -159,7 +159,7 @@ The Qiskit adapter deliberately does not depend on Qiskit's optional OpenQASM im
 
 `qiskit_aer_target()` advertises H, X, Y, Z, RX, RY, RZ, CX, CZ, SWAP, all-to-all connectivity, and terminal measurement. Reset, mid-circuit measurement, and classical feed-forward remain unadvertised and are rejected by the adapter. The provider interoperability workflow submits a Bell circuit, every advertised unitary gate, and the generic QuPy provider-conformance circuit through Qiskit Aer itself.
 
-Qiskit job states map to the portable lifecycle as follows: `INITIALIZING`, `QUEUED`, and `VALIDATING` map to queued; `RUNNING` maps to running; `DONE` maps to succeeded; `ERROR` maps to failed; and both `CANCELLED` and the alternate spelling `CANCELED` map to cancelled. Unknown status objects or names fail closed. Successful result retrieval normalizes measurement counts and shot count into deterministic JSON.
+Qiskit job states map to the portable lifecycle as follows: `INITIALIZING`, `QUEUED`, and `VALIDATING` map to queued; `RUNNING` maps to running; `DONE` maps to succeeded; `ERROR` maps to failed; and both `CANCELLED` and the alternate spelling `CANCELED` map to cancelled. Aer jobs are still treated as asynchronous jobs: callers poll until a terminal state rather than assuming local simulation completes before the first poll. Unknown status objects or names fail closed. Successful result retrieval normalizes measurement counts and shot count into deterministic JSON.
 
 A caller can also wrap another Qiskit Backend-style object directly:
 

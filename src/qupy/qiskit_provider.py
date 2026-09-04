@@ -67,10 +67,13 @@ _STATE_MAP = {
 def _qiskit_module(name: str) -> ModuleType:
     try:
         return import_module(name)
-    except ImportError as exc:
-        raise RuntimeError(
-            "Qiskit provider support requires the optional qiskit and qiskit-aer packages"
-        ) from exc
+    except ModuleNotFoundError as exc:
+        missing = exc.name
+        if missing is not None and (name == missing or name.startswith(f"{missing}.")):
+            raise ImportError(
+                "Qiskit provider support requires the optional qiskit and qiskit-aer packages"
+            ) from exc
+        raise
 
 
 def _positive_integer(value: int, name: str) -> int:
@@ -225,7 +228,7 @@ def _qiskit_circuit(program: _native.ProviderProgram) -> _QiskitCircuit:
 class QiskitProvider:
     """First-party QuPy provider adapter for Qiskit Backend-style execution."""
 
-    __slots__ = ("_backend", "_name", "_target", "_jobs")
+    __slots__ = ("_backend", "_jobs", "_name", "_target")
 
     def __init__(
         self,

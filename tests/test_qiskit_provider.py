@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from enum import Enum
 
@@ -66,6 +67,27 @@ class _FakeBackend:
         return self.job
 
 
+_TERMINAL_STATES = {
+    qp.ProviderJobState.SUCCEEDED,
+    qp.ProviderJobState.FAILED,
+    qp.ProviderJobState.CANCELLED,
+}
+
+
+def _poll_to_terminal(
+    provider: qp.QiskitProvider,
+    job_id: str,
+    *,
+    max_polls: int = 100,
+) -> qp.ProviderJobState:
+    for _ in range(max_polls):
+        state = provider.poll(job_id)
+        if state in _TERMINAL_STATES:
+            return state
+        time.sleep(0.01)
+    raise AssertionError(f"Qiskit job {job_id!r} did not reach a terminal state")
+
+
 class _FakeQuantumCircuit:
     def __init__(self, num_qubits: int, num_clbits: int) -> None:
         self.num_qubits = num_qubits
@@ -121,6 +143,29 @@ def _target() -> qp.HardwareTarget:
         [qp.CircuitOperationCode.CX],
         measurement=True,
     )
+
+
+def test_qiskit_optional_sdk_failure_is_precise(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing_qiskit(name: str) -> object:
+        raise ModuleNotFoundError(f"No module named '{name}'", name=name)
+
+    monkeypatch.setattr(qiskit_provider, "import_module", missing_qiskit)
+
+    with pytest.raises(ImportError, match="qiskit-aer"):
+        qp.QiskitProvider.aer_simulator()
+
+
+def test_qiskit_does_not_mask_transitive_import_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_qiskit(name: str) -> object:
+        raise ModuleNotFoundError("No module named 'rustworkx'", name="rustworkx")
+
+    monkeypatch.setattr(qiskit_provider, "import_module", broken_qiskit)
+
+    with pytest.raises(ModuleNotFoundError) as raised:
+        qp.QiskitProvider.aer_simulator()
+    assert raised.value.name == "rustworkx"
 
 
 def test_qiskit_capabilities_round_trip_the_configured_target() -> None:
@@ -318,7 +363,7 @@ def test_qiskit_aer_real_sdk_integration() -> None:
         optimization_level=0,
     )
 
-    assert provider.poll(submission.job_id) is qp.ProviderJobState.SUCCEEDED
+    assert _poll_to_terminal(provider, submission.job_id) is qp.ProviderJobState.SUCCEEDED
     result = json.loads(provider.result_json(submission.job_id))
     assert result["shots"] == 64
     assert sum(result["measurement_counts"].values()) == 64
@@ -336,7 +381,7 @@ def test_qiskit_aer_real_sdk_integration() -> None:
         initial_layout=[0, 1],
         optimization_level=0,
     )
-    assert provider.poll(gate_submission.job_id) is qp.ProviderJobState.SUCCEEDED
+    assert _poll_to_terminal(provider, gate_submission.job_id) is qp.ProviderJobState.SUCCEEDED
     gate_result = json.loads(provider.result_json(gate_submission.job_id))
     assert gate_result["shots"] == 8
     assert sum(gate_result["measurement_counts"].values()) == 8
@@ -344,8 +389,8 @@ def test_qiskit_aer_real_sdk_integration() -> None:
     report = qp.check_provider_conformance(
         provider,
         shots=4,
-        max_polls=2,
-        poll_interval_seconds=0.0,
+        max_polls=100,
+        poll_interval_seconds=0.01,
     )
     assert report.poll_states[-1] == "succeeded"
     assert report.target_name == "qiskit-aer-simulator"
