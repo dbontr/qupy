@@ -10,11 +10,9 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace qupy {
@@ -29,7 +27,8 @@ constexpr std::size_t kMinimumBackendWins = 3U;
 constexpr double kMaximumDecisionRegret = 1.10;
 constexpr double kMaximumHoldoutMedianFactor = 1.5;
 constexpr double kMaximumHoldoutFactor = 2.0;
-constexpr std::size_t kCoefficientCount = 6U;
+constexpr std::size_t kFeatureCount = 6U;
+using Features = std::array<double, kFeatureCount>;
 
 void strip_trailing_carriage_return(std::string& line) {
     if (!line.empty() && line.back() == '\r') {
@@ -57,9 +56,62 @@ void validate_holdout(double median_factor, double max_factor) {
     }
 }
 
+[[nodiscard]] Features cpu_features(
+    std::size_t active_qubits,
+    std::size_t compiled_steps,
+    std::size_t two_qubit_operations,
+    std::size_t operation_count,
+    std::size_t term_count,
+    std::size_t threads
+) {
+    const double operation_denominator = static_cast<double>(
+        std::max<std::size_t>(operation_count, 1U)
+    );
+    return {
+        1.0,
+        static_cast<double>(active_qubits),
+        std::log1p(static_cast<double>(compiled_steps)),
+        static_cast<double>(two_qubit_operations) / operation_denominator,
+        std::log1p(static_cast<double>(term_count)),
+        std::log(static_cast<double>(threads)),
+    };
+}
+
+[[nodiscard]] Features tensor_network_features(
+    std::size_t contractions,
+    std::size_t peak_tensor_rank,
+    std::size_t peak_tensor_bytes,
+    double scalar_multiplications,
+    std::size_t term_count
+) {
+    return {
+        1.0,
+        std::log1p(scalar_multiplications),
+        std::log1p(static_cast<double>(contractions)),
+        static_cast<double>(peak_tensor_rank),
+        std::log1p(static_cast<double>(peak_tensor_bytes)),
+        std::log1p(static_cast<double>(term_count)),
+    };
+}
+
+[[nodiscard]] bool features_in_domain(
+    const Features& features,
+    const Features& minimum,
+    const Features& maximum
+) noexcept {
+    for (std::size_t index = 0U; index < features.size(); ++index) {
+        if (!std::isfinite(features[index]) ||
+            features[index] < minimum[index] ||
+            features[index] > maximum[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] double evaluate_log_model(
-    const std::array<double, kCoefficientCount>& coefficients,
-    const std::array<double, kCoefficientCount>& features
+    const Features& coefficients,
+    const Features& features
 ) {
     double score = 0.0;
     for (std::size_t index = 0U; index < coefficients.size(); ++index) {
@@ -136,7 +188,7 @@ std::size_t TensorNetworkCostModel::tensor_network_wins() const noexcept {
 }
 
 bool TensorNetworkCostModel::auto_validated() const noexcept {
-    return validated_ &&
+    return validated_ && has_cpu_domain_ && has_tensor_network_domain_ &&
            schema_version_ == kTensorNetworkCostSchemaVersion &&
            policy_version_ == kTensorNetworkPolicyVersion &&
            workload_version_ == kTensorNetworkWorkloadVersion &&
@@ -158,6 +210,56 @@ bool TensorNetworkCostModel::auto_validated() const noexcept {
            tensor_network_holdout_max_factor_ <= kMaximumHoldoutFactor;
 }
 
+bool TensorNetworkCostModel::cpu_in_domain(
+    std::size_t active_qubits,
+    std::size_t compiled_steps,
+    std::size_t two_qubit_operations,
+    std::size_t operation_count,
+    std::size_t term_count,
+    std::size_t threads
+) const noexcept {
+    if (!auto_validated() || term_count == 0U || threads == 0U ||
+        two_qubit_operations > operation_count) {
+        return false;
+    }
+    return features_in_domain(
+        cpu_features(
+            active_qubits,
+            compiled_steps,
+            two_qubit_operations,
+            operation_count,
+            term_count,
+            threads
+        ),
+        cpu_feature_min_,
+        cpu_feature_max_
+    );
+}
+
+bool TensorNetworkCostModel::tensor_network_in_domain(
+    std::size_t contractions,
+    std::size_t peak_tensor_rank,
+    std::size_t peak_tensor_bytes,
+    double scalar_multiplications,
+    std::size_t term_count
+) const noexcept {
+    if (!auto_validated() || term_count == 0U ||
+        !std::isfinite(scalar_multiplications) || scalar_multiplications < 0.0) {
+        return false;
+    }
+    return features_in_domain(
+        tensor_network_features(
+            contractions,
+            peak_tensor_rank,
+            peak_tensor_bytes,
+            scalar_multiplications,
+            term_count
+        ),
+        tensor_network_feature_min_,
+        tensor_network_feature_max_
+    );
+}
+
 double TensorNetworkCostModel::predict_cpu_ns(
     std::size_t active_qubits,
     std::size_t compiled_steps,
@@ -166,24 +268,29 @@ double TensorNetworkCostModel::predict_cpu_ns(
     std::size_t term_count,
     std::size_t threads
 ) const {
-    if (!auto_validated()) {
-        throw std::invalid_argument("tensor-network cost model is not validated");
+    if (!cpu_in_domain(
+            active_qubits,
+            compiled_steps,
+            two_qubit_operations,
+            operation_count,
+            term_count,
+            threads
+        )) {
+        throw std::invalid_argument(
+            "tensor-network CPU prediction is outside the calibrated domain"
+        );
     }
-    if (term_count == 0U || threads == 0U || two_qubit_operations > operation_count) {
-        throw std::invalid_argument("tensor-network CPU prediction received invalid work");
-    }
-    const double operation_denominator = static_cast<double>(
-        std::max<std::size_t>(operation_count, 1U)
+    return evaluate_log_model(
+        cpu_coefficients_,
+        cpu_features(
+            active_qubits,
+            compiled_steps,
+            two_qubit_operations,
+            operation_count,
+            term_count,
+            threads
+        )
     );
-    const std::array<double, kCoefficientCount> features = {
-        1.0,
-        static_cast<double>(active_qubits),
-        std::log1p(static_cast<double>(compiled_steps)),
-        static_cast<double>(two_qubit_operations) / operation_denominator,
-        std::log1p(static_cast<double>(term_count)),
-        std::log(static_cast<double>(threads)),
-    };
-    return evaluate_log_model(cpu_coefficients_, features);
 }
 
 double TensorNetworkCostModel::predict_tensor_network_ns(
@@ -193,22 +300,27 @@ double TensorNetworkCostModel::predict_tensor_network_ns(
     double scalar_multiplications,
     std::size_t term_count
 ) const {
-    if (!auto_validated()) {
-        throw std::invalid_argument("tensor-network cost model is not validated");
+    if (!tensor_network_in_domain(
+            contractions,
+            peak_tensor_rank,
+            peak_tensor_bytes,
+            scalar_multiplications,
+            term_count
+        )) {
+        throw std::invalid_argument(
+            "tensor-network prediction is outside the calibrated domain"
+        );
     }
-    if (term_count == 0U || !std::isfinite(scalar_multiplications) ||
-        scalar_multiplications < 0.0) {
-        throw std::invalid_argument("tensor-network prediction received invalid work");
-    }
-    const std::array<double, kCoefficientCount> features = {
-        1.0,
-        std::log1p(scalar_multiplications),
-        std::log1p(static_cast<double>(contractions)),
-        static_cast<double>(peak_tensor_rank),
-        std::log1p(static_cast<double>(peak_tensor_bytes)),
-        std::log1p(static_cast<double>(term_count)),
-    };
-    return evaluate_log_model(tensor_network_coefficients_, features);
+    return evaluate_log_model(
+        tensor_network_coefficients_,
+        tensor_network_features(
+            contractions,
+            peak_tensor_rank,
+            peak_tensor_bytes,
+            scalar_multiplications,
+            term_count
+        )
+    );
 }
 
 TensorNetworkCostModel load_tensor_network_cost_model(const std::string& path) {
@@ -314,12 +426,12 @@ TensorNetworkCostModel load_tensor_network_cost_model(const std::string& path) {
             std::string cost_class;
             std::size_t coefficient_count = 0U;
             if (!(fields >> cost_class >> coefficient_count) ||
-                coefficient_count != kCoefficientCount) {
+                coefficient_count != kFeatureCount) {
                 throw std::invalid_argument(
                     "tensor-network cost artifact has an invalid model class"
                 );
             }
-            std::array<double, kCoefficientCount>* coefficients = nullptr;
+            Features* coefficients = nullptr;
             double* holdout_median = nullptr;
             double* holdout_max = nullptr;
             if (cost_class == "tensor-network-baseline-cpu" && !has_cpu_model) {
@@ -351,6 +463,44 @@ TensorNetworkCostModel load_tensor_network_cost_model(const std::string& path) {
                 );
             }
             validate_holdout(*holdout_median, *holdout_max);
+        } else if (key == "domain") {
+            std::string cost_class;
+            std::size_t feature_count = 0U;
+            Features* minimum = nullptr;
+            Features* maximum = nullptr;
+            bool* present = nullptr;
+            if (!(fields >> cost_class >> feature_count) ||
+                feature_count != kFeatureCount) {
+                throw std::invalid_argument(
+                    "tensor-network cost artifact has an invalid domain class"
+                );
+            }
+            if (cost_class == "tensor-network-baseline-cpu" &&
+                !model.has_cpu_domain_) {
+                minimum = &model.cpu_feature_min_;
+                maximum = &model.cpu_feature_max_;
+                present = &model.has_cpu_domain_;
+            } else if (cost_class == "tensor-network-return-cpu" &&
+                       !model.has_tensor_network_domain_) {
+                minimum = &model.tensor_network_feature_min_;
+                maximum = &model.tensor_network_feature_max_;
+                present = &model.has_tensor_network_domain_;
+            } else {
+                throw std::invalid_argument(
+                    "tensor-network cost artifact has an invalid domain class"
+                );
+            }
+            for (std::size_t index = 0U; index < kFeatureCount; ++index) {
+                if (!(fields >> (*minimum)[index] >> (*maximum)[index]) ||
+                    !std::isfinite((*minimum)[index]) ||
+                    !std::isfinite((*maximum)[index]) ||
+                    (*minimum)[index] > (*maximum)[index]) {
+                    throw std::invalid_argument(
+                        "tensor-network cost artifact has invalid feature bounds"
+                    );
+                }
+            }
+            *present = true;
         } else if (key == "validated") {
             int value = 0;
             if (has_validated || !(fields >> value) || value != 1) {
@@ -370,7 +520,8 @@ TensorNetworkCostModel load_tensor_network_cost_model(const std::string& path) {
 
     if (!has_engine || !has_workload || !has_host || !has_policy ||
         !has_reports || !has_decision || !has_cpu_model ||
-        !has_tensor_network_model || !has_validated) {
+        !has_tensor_network_model || !model.has_cpu_domain_ ||
+        !model.has_tensor_network_domain_ || !has_validated) {
         throw std::invalid_argument("tensor-network cost artifact is incomplete");
     }
     if (model.engine_version_ != core_version()) {
@@ -486,11 +637,30 @@ ObservableExecutionPlan tensor_network_auto_observable_plan(
         tensor_plan_identity += tensor_plan.plan_fingerprint + "\n";
     }
 
+    const std::size_t operation_count = program.operations().size();
+    if (!cost_model.cpu_in_domain(
+            cpu_query.active_qubits,
+            cpu_state.compiled_steps,
+            two_qubit_operations,
+            operation_count,
+            term_count,
+            cpu_state.threads
+        ) ||
+        !cost_model.tensor_network_in_domain(
+            contractions,
+            peak_tensor_rank,
+            peak_tensor_bytes,
+            scalar_multiplications,
+            term_count
+        )) {
+        return cpu_query;
+    }
+
     const double cpu_prediction = cost_model.predict_cpu_ns(
         cpu_query.active_qubits,
         cpu_state.compiled_steps,
         two_qubit_operations,
-        program.operations().size(),
+        operation_count,
         term_count,
         cpu_state.threads
     );
