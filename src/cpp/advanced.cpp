@@ -15,6 +15,7 @@
 #include <locale>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -490,14 +491,17 @@ public:
         return index;
     }
 
-    [[nodiscard]] std::vector<Complex> evaluate(const Program& program) const {
+    [[nodiscard]] std::vector<Complex> evaluate(
+        const Program& program,
+        std::size_t device
+    ) const {
         if (masks_.empty()) {
-            if (!detail::cuda_available()) {
-                throw std::runtime_error(detail::cuda_unavailable_reason());
+            if (!detail::cuda_available(device)) {
+                throw std::runtime_error(detail::cuda_unavailable_reason(device));
             }
             return {};
         }
-        return detail::cuda_pauli_expectations(program, masks_);
+        return detail::cuda_pauli_expectations(program, masks_, device);
     }
 
     [[nodiscard]] std::size_t size() const noexcept { return masks_.size(); }
@@ -679,7 +683,20 @@ struct MpiLinearTerm {
 }
 
 [[nodiscard]] bool explicit_cuda_backend(const std::string& backend) {
-    return backend == "cuda" || backend == "native-cuda";
+    return detail::cuda_backend_device(backend).has_value();
+}
+
+[[nodiscard]] bool explicit_default_cuda_backend(const std::string& backend) {
+    const std::optional<std::size_t> device = detail::cuda_backend_device(backend);
+    return device.has_value() && *device == 0U;
+}
+
+[[nodiscard]] std::size_t cuda_device_for_execution(const std::string& backend) noexcept {
+    return detail::cuda_backend_device(backend).value_or(0U);
+}
+
+[[nodiscard]] std::string cuda_backend_for_execution(const std::string& backend) {
+    return detail::cuda_backend_name(cuda_device_for_execution(backend));
 }
 
 [[nodiscard]] std::size_t checked_term_sum(std::size_t left, std::size_t right) {
@@ -748,7 +765,8 @@ struct ObservableCostWork {
                );
     }
     const ExecutionPlan candidate = plan(program, ResultMode::StateVector, "auto", cost_model);
-    return candidate.backend == "native-cuda" && candidate.method == "cuda-statevector";
+    return detail::cuda_backend_device(candidate.backend).has_value() &&
+        candidate.method == "cuda-statevector";
 }
 
 [[nodiscard]] bool use_rich_pauli_propagation(const Program& program, const std::string& backend) {
@@ -1672,12 +1690,12 @@ ObservableExecutionPlan observable_plan(
         reduced.program, ResultMode::StateVector, initial_backend, cost_model
     );
     std::optional<double> predicted =
-        base.backend == "native-cuda" ? std::nullopt : base.predicted_ns;
+        detail::cuda_backend_device(base.backend).has_value() ? std::nullopt : base.predicted_ns;
     std::string cost_class = base.cost_model_class;
     std::string cost_fingerprint = base.cost_model_fingerprint;
     if (observable_policy &&
         (backend == "auto" || backend == "native-cpu" || backend == "cpu" ||
-         explicit_cuda_backend(backend))) {
+         explicit_default_cuda_backend(backend))) {
         const ExecutionPlan cpu = plan(reduced.program, ResultMode::StateVector, "native-cpu");
         const double cpu_prediction = cost_model->predict_observable_ns(cpu, term_count, 0U);
         base = cpu;
@@ -1704,7 +1722,8 @@ ObservableExecutionPlan observable_plan(
         cost_fingerprint = cost_model->artifact_fingerprint();
     }
     const bool cuda_reduction =
-        base.backend == "native-cuda" && base.method == "cuda-statevector";
+        detail::cuda_backend_device(base.backend).has_value() &&
+        base.method == "cuda-statevector";
     const std::string method = cuda_reduction
         ? "cuda-pauli-reduction" : base.method + "-observable";
     const std::string cache_key = fingerprint_text(
@@ -1919,12 +1938,12 @@ ObservableResult expect_observable(
         if (!cuda_query_ready) {
             cuda_indexed = index_observable(cuda_query, reduced.observables.front());
         }
-        const std::vector<Complex> values = cuda_query.evaluate(reduced.program);
+        const std::vector<Complex> values = cuda_query.evaluate(reduced.program, cuda_device_for_execution(backend));
         return {
             hermitian_cuda_value(
                 evaluate_cuda_linear(values, cuda_indexed), "observable expectation"
             ),
-            "native-cuda",
+            cuda_backend_for_execution(backend),
             reduced.active_qubits,
             cuda_query.size(),
         };
@@ -1999,7 +2018,7 @@ ObservableResult variance_observable(
             cuda_indexed = index_observable(cuda_query, observable_value);
             cuda_squared = index_observable_product(cuda_query, observable_value, observable_value);
         }
-        const std::vector<Complex> values = cuda_query.evaluate(reduced.program);
+        const std::vector<Complex> values = cuda_query.evaluate(reduced.program, cuda_device_for_execution(backend));
         const double mean = hermitian_cuda_value(
             evaluate_cuda_linear(values, cuda_indexed), "observable expectation"
         );
@@ -2008,7 +2027,12 @@ ObservableResult variance_observable(
         );
         double result = second - mean * mean;
         if (result < 0.0 && result > -1e-12) result = 0.0;
-        return {result, "native-cuda", reduced.active_qubits, cuda_query.size()};
+        return {
+            result,
+            cuda_backend_for_execution(backend),
+            reduced.active_qubits,
+            cuda_query.size(),
+        };
     }
     StateVector state = statevector(reduced.program, backend, cost_model);
     std::vector<Complex> applied;
@@ -2101,7 +2125,7 @@ ObservableResult covariance_observable(
                 cuda_query, reduced.observables[0], reduced.observables[1]
             );
         }
-        const std::vector<Complex> values = cuda_query.evaluate(reduced.program);
+        const std::vector<Complex> values = cuda_query.evaluate(reduced.program, cuda_device_for_execution(backend));
         const double left_mean = hermitian_cuda_value(
             evaluate_cuda_linear(values, cuda_left), "left observable expectation"
         );
@@ -2111,7 +2135,7 @@ ObservableResult covariance_observable(
         const Complex product = evaluate_cuda_linear(values, cuda_product);
         return {
             product.real() - left_mean * right_mean,
-            "native-cuda",
+            cuda_backend_for_execution(backend),
             reduced.active_qubits,
             cuda_query.size(),
         };
@@ -2191,13 +2215,18 @@ ObservableBatch expect_observables(
                 cuda_indexed.push_back(index_observable(cuda_query, value));
             }
         }
-        const std::vector<Complex> gpu_values = cuda_query.evaluate(reduced.program);
+        const std::vector<Complex> gpu_values = cuda_query.evaluate(reduced.program, cuda_device_for_execution(backend));
         for (const auto& terms : cuda_indexed) {
             results.push_back(hermitian_cuda_value(
                 evaluate_cuda_linear(gpu_values, terms), "observable expectation"
             ));
         }
-        return {std::move(results), values.size(), "native-cuda", reduced.active_qubits};
+        return {
+            std::move(results),
+            values.size(),
+            cuda_backend_for_execution(backend),
+            reduced.active_qubits,
+        };
     }
     StateVector state = statevector(reduced.program, backend, cost_model);
     for (const Observable& value : reduced.observables) {
@@ -2541,7 +2570,14 @@ NoiseChannel kraus_channel(
     return {NoiseChannelCode::Kraus, qubit, {}, std::move(flattened), operators.size()};
 }
 [[nodiscard]] bool cuda_density_backend(const std::string& backend) {
-    return backend == "cuda" || backend == "native-cuda";
+    return detail::cuda_backend_device(backend).has_value();
+}
+
+[[nodiscard]] std::string cuda_density_backend_for_execution(const std::string& backend) {
+    const std::size_t device = cuda_device_for_execution(backend);
+    return device == 0U
+        ? "native-cuda-density"
+        : "native-cuda-density:" + std::to_string(device);
 }
 
 void validate_density_backend(const std::string& backend) {
@@ -2568,16 +2604,19 @@ DensityMatrix density_matrix(
     validate_density_backend(backend);
     const std::size_t dimension = density_dimension(program);
     if (cuda_density_backend(backend)) {
-        if (!detail::cuda_available()) {
-            throw std::runtime_error(detail::cuda_unavailable_reason());
+        const std::size_t device = cuda_device_for_execution(backend);
+        if (!detail::cuda_available(device)) {
+            throw std::runtime_error(detail::cuda_unavailable_reason(device));
         }
         std::vector<Complex> values = detail::cuda_density_matrix(
-            program.num_qubits(), cuda_density_steps(program)
+            program.num_qubits(), cuda_density_steps(program), device
         );
         if (values.size() != dimension * dimension) {
             throw std::logic_error("CUDA density matrix returned an invalid dimension");
         }
-        return {std::move(values), dimension, "native-cuda-density"};
+        return {
+            std::move(values), dimension, cuda_density_backend_for_execution(backend)
+        };
     }
 
     StateVector state = statevector(program, "native-cpu");
@@ -2631,6 +2670,7 @@ DensityMatrix density_matrix(
     const Program& program = noisy.program();
     const std::size_t dimension = density_dimension(program);
     const std::size_t density_values = dimension * dimension;
+    const std::size_t cuda_device = cuda_device_for_execution(backend);
     bool use_cuda = cuda_density_backend(backend);
     if (
         backend == "auto" && cost_model != nullptr && cost_model->density_auto_validated() &&
@@ -2646,16 +2686,18 @@ DensityMatrix density_matrix(
         }
     }
     if (use_cuda) {
-        if (!detail::cuda_available()) {
-            throw std::runtime_error(detail::cuda_unavailable_reason());
+        if (!detail::cuda_available(cuda_device)) {
+            throw std::runtime_error(detail::cuda_unavailable_reason(cuda_device));
         }
         std::vector<Complex> values = detail::cuda_density_matrix(
-            program.num_qubits(), cuda_density_steps(noisy)
+            program.num_qubits(), cuda_density_steps(noisy), cuda_device
         );
         if (values.size() != dimension * dimension) {
             throw std::logic_error("CUDA density matrix returned an invalid dimension");
         }
-        return {std::move(values), dimension, "native-cuda-density"};
+        return {
+            std::move(values), dimension, cuda_density_backend_for_execution(backend)
+        };
     }
 
     std::vector<Complex> rho(dimension * dimension, Complex{0.0, 0.0});

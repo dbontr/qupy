@@ -8,6 +8,8 @@ MPI is optional. QuPy builds without an MPI implementation and keeps the same Py
 
 The MPI launcher owns process placement. A rank can represent a process on the same host or a process on another node. QuPy reports MPI participation; it does not claim a physical accelerator mapping that the launcher did not establish.
 
+CUDA device ownership is separately explicit within each process. `cuda_device_count()` reports CUDA-driver-visible ordinals, and an explicit backend such as `native-cuda:1` selects a per-device runtime/context without changing process-global device state. This is a prerequisite for future rank-to-GPU mapping, not evidence that the current MPI state-vector shards live on GPUs.
+
 ## Tensor-network expectation distribution
 
 `distributed_tensor_network_expectation()` partitions Pauli terms across ranks by term index. Each active rank contracts its assigned terms with the exact general tensor-network engine, using the same deterministic greedy contraction path and the same per-intermediate `max_tensor_bytes` ceiling as local execution.
@@ -75,4 +77,4 @@ QuPy has three distinct MPI execution structures:
 - distributed Pauli reduction evaluates observables against that sharded state;
 - distributed scale engines divide independent tensor-network terms or trajectory samples across ranks.
 
-The appropriate structure depends on the workload. The independent-work APIs in this document do not replace state-vector sharding, and they do not imply multi-GPU CUDA execution. GPU-aware rank placement and direct multi-GPU kernels require separate device-specific evidence and runtime support.
+The appropriate structure depends on the workload. The independent-work APIs in this document do not replace state-vector sharding, and they do not imply multi-GPU CUDA execution. QuPy's explicit per-process CUDA ordinal selection provides the device-ownership primitive for later rank-to-GPU mapping, but the current MPI state-vector shards remain host-resident. GPU-resident rank-local shards, device-aware nonlocal-gate exchange, and direct multi-GPU kernels still require separate implementation and evidence.

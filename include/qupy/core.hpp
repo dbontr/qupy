@@ -252,10 +252,11 @@ struct Variance {
 };
 
 [[nodiscard]] Target native_target();
-[[nodiscard]] bool cuda_available() noexcept;
-[[nodiscard]] std::string cuda_unavailable_reason();
-[[nodiscard]] std::string cuda_device_name();
-[[nodiscard]] Target cuda_target();
+[[nodiscard]] std::size_t cuda_device_count() noexcept;
+[[nodiscard]] bool cuda_available(std::size_t device = 0U) noexcept;
+[[nodiscard]] std::string cuda_unavailable_reason(std::size_t device = 0U);
+[[nodiscard]] std::string cuda_device_name(std::size_t device = 0U);
+[[nodiscard]] Target cuda_target(std::size_t device = 0U);
 [[nodiscard]] Target mps_target();
 [[nodiscard]] Target adaptive_mps_target();
 [[nodiscard]] std::string planner_host_fingerprint();

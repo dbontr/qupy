@@ -92,6 +92,7 @@ core_language
 core_version
 covariance
 cuda_available
+cuda_device_count
 cuda_device_name
 cuda_target
 cuda_unavailable_reason

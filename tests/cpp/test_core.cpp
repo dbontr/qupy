@@ -929,6 +929,29 @@ void test_cuda_statevector_backend() {
     program = qupy::cz(program, 1U, 2U);
     program = qupy::swap(program, 0U, 1U);
 
+    const std::size_t device_count = qupy::cuda_device_count();
+    require(
+        qupy::cuda_available() == qupy::cuda_available(0U),
+        "default CUDA availability is not device zero"
+    );
+    bool malformed_rejected = false;
+    try {
+        static_cast<void>(qupy::plan(program, qupy::ResultMode::StateVector, "native-cuda:x"));
+    } catch (const std::invalid_argument&) {
+        malformed_rejected = true;
+    }
+    require(malformed_rejected, "malformed CUDA device backend was accepted");
+    if (device_count != 0U) {
+        require(!qupy::cuda_available(device_count), "out-of-range CUDA device was available");
+        bool ordinal_rejected = false;
+        try {
+            static_cast<void>(qupy::cuda_target(device_count));
+        } catch (const std::invalid_argument&) {
+            ordinal_rejected = true;
+        }
+        require(ordinal_rejected, "out-of-range CUDA target did not fail closed");
+    }
+
     if (!qupy::cuda_available()) {
         require(!qupy::cuda_unavailable_reason().empty(), "missing CUDA failure reason");
         bool rejected = false;
@@ -942,7 +965,13 @@ void test_cuda_statevector_backend() {
     }
 
     const auto target = qupy::cuda_target();
+    const auto zero_target = qupy::cuda_target(0U);
     require(target.name == "native-cuda", "CUDA target name is wrong");
+    require(zero_target.name == target.name, "explicit CUDA device zero changed target identity");
+    require(
+        qupy::cuda_device_name() == qupy::cuda_device_name(0U),
+        "explicit CUDA device zero changed device identity"
+    );
     require(target.simulator && target.state_access, "CUDA target capabilities are wrong");
     require(!target.parameter_batches, "CUDA target exposed unsupported parameter batches");
     require(target.supports(qupy::ResultMode::StateVector), "CUDA target lacks statevector result");
@@ -974,6 +1003,24 @@ void test_cuda_statevector_backend() {
     const auto gpu_variance = qupy::variance(program, observable, "native-cuda");
     require_close(gpu_expectation.value, cpu_expectation.value, "CUDA expectation diverged from CPU");
     require_close(gpu_variance.value, cpu_variance.value, "CUDA variance diverged from CPU");
+
+    if (device_count > 1U && qupy::cuda_available(1U)) {
+        const qupy::Target second_target = qupy::cuda_target(1U);
+        require(second_target.name == "native-cuda:1", "second CUDA target identity is wrong");
+        const qupy::ExecutionPlan second_plan = qupy::plan(
+            program, qupy::ResultMode::StateVector, "cuda:1"
+        );
+        require(second_plan.backend == "native-cuda:1", "second CUDA plan identity is wrong");
+        require(!second_plan.predicted_ns.has_value(), "device-zero cost evidence leaked to device one");
+        const qupy::StateVector second = qupy::statevector(program, "native-cuda:1");
+        require(second.values.size() == cpu.values.size(), "second CUDA state dimension is wrong");
+        for (std::size_t index = 0U; index < cpu.values.size(); ++index) {
+            require_close(
+                second.values[index], cpu.values[index],
+                "second CUDA statevector diverged from CPU"
+            );
+        }
+    }
 
     bool rejected = false;
     try {

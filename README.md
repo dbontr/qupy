@@ -76,6 +76,7 @@ print(state.values)
 ### GPU and open-system execution
 
 - toolkit-free CUDA Driver API loading with embedded PTX JIT;
+- explicit CUDA device inventory and per-device runtime/context ownership, with `native-cuda:<device>` selecting a visible nonzero ordinal;
 - GPU-resident state-vector execution and arbitrary-Pauli reduction;
 - exact CPU/CUDA density-matrix execution;
 - bit flip, phase flip, depolarizing, amplitude damping, phase damping, Pauli, and validated single-qubit Kraus channels;
@@ -148,7 +149,7 @@ The C++ core is independently buildable and directly tested with CTest. Python i
 | Backend / method | Main role | Exactness / current boundary |
 | --- | --- | --- |
 | `native-cpu` | General dense execution and observables | Exact subject to floating-point roundoff |
-| `native-cuda` | CUDA state vectors, Pauli reduction, density/noise | Exact; requires compatible NVIDIA driver |
+| `native-cuda` / `native-cuda:<device>` | CUDA state vectors, Pauli reduction, density/noise on an explicit visible device | Exact; requires compatible NVIDIA driver; device zero canonicalizes to `native-cuda` |
 | stabilizer | Large Clifford sampling | Exact; planner-selected for eligible workloads |
 | `native-mps` / adaptive MPS | Low-entanglement exact execution | No user-visible bond truncation |
 | `native-tn` | General tensor-network rich-observable expectations and explicit expectation derivatives | Exact greedy contraction; auto expectation routing only with promoted in-domain CPU/TN evidence |
@@ -157,7 +158,9 @@ The C++ core is independently buildable and directly tested with CTest. Python i
 | trajectories | Noisy wave-function Monte Carlo | Statistical estimator; seedable |
 | density matrix | Exact open-system matrix evolution | CPU/CUDA; exponential state size |
 
-QuPy does not silently reinterpret an explicit backend. Unsupported result modes or capabilities fail instead of falling back behind the caller's back.
+QuPy does not silently reinterpret an explicit backend. Unsupported result modes or capabilities fail instead of falling back behind the caller's back. `cuda_device_count()` reports CUDA-driver-visible devices, while `cuda_available(device)` reports whether QuPy can initialize that ordinal. `cuda`, `native-cuda`, and ordinal zero all canonicalize to `native-cuda`; `cuda:1` and `native-cuda:1` canonicalize to `native-cuda:1`, and similarly for higher ordinals. Each ordinal owns an independent lazily initialized CUDA primary context and QuPy workspace.
+
+Automatic CUDA planning remains scoped to device zero because promoted planner artifacts are bound to that measured host/device fingerprint. Explicit nonzero CUDA devices execute without borrowing device-zero timing evidence.
 
 ## Evidence-gated automatic planning
 
@@ -376,7 +379,7 @@ print(info.available, info.world_size, info.rank)
 
 Distributed tensor-network and trajectory APIs use collective failure propagation: a rank-local failure is surfaced collectively rather than leaving peers blocked in mismatched MPI collectives.
 
-Multi-GPU CUDA execution is **not** implied by MPI support. The current distributed scale engines distribute work/rank ownership; physical GPU placement remains a separate execution concern.
+Multi-GPU state sharding is **not** implied by MPI support. QuPy now has explicit per-process CUDA device ownership (`native-cuda:<device>`), so a launcher can assign different visible ordinals to independent processes without global device mutation. The current MPI state-vector shards still live in host memory, however; moving those shards onto rank-local GPUs and exchanging nonlocal-gate data device-to-device remains a separate distributed CUDA execution path.
 
 ## Quantum error correction
 
@@ -471,7 +474,7 @@ Benchmark and calibration tooling lives under [`benchmarks/`](benchmarks/). The 
 The largest remaining engineering work is integration and scale:
 
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
-- add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
+- move MPI state-vector shards onto explicit rank-local CUDA devices and add device-aware nonlocal-gate exchange for true multi-GPU / multi-node accelerator execution;
 - extend first-party provider coverage beyond Amazon Braket and Qiskit Aer, and add direct device-capability translation only where vendor conformance evidence supports it;
 - broaden chemistry beyond the dependency-free spin-orbital Jordan-Wigner/Hartree-Fock foundation, and broaden simulation and optimization applications while reusing the native execution and differentiation contracts;
 - broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;

@@ -944,7 +944,7 @@ REDUCE_RETURN:
 
 class CudaRuntime {
 public:
-    CudaRuntime();
+    explicit CudaRuntime(std::size_t device_ordinal);
     ~CudaRuntime();
     CudaRuntime(const CudaRuntime&) = delete;
     CudaRuntime& operator=(const CudaRuntime&) = delete;
@@ -1029,7 +1029,7 @@ private:
     std::size_t reduction_workspace_bytes_ = 0U;
 };
 
-CudaRuntime::CudaRuntime()
+CudaRuntime::CudaRuntime(std::size_t device_ordinal)
     : cu_init_(load_symbol<CuInit>(library_, "cuInit")),
       cu_driver_get_version_(load_symbol<CuDriverGetVersion>(library_, "cuDriverGetVersion")),
       cu_device_get_(load_symbol<CuDeviceGet>(library_, "cuDeviceGet")),
@@ -1056,7 +1056,13 @@ CudaRuntime::CudaRuntime()
     int device_count = 0;
     check(cu_device_get_count_(&device_count), "cuDeviceGetCount");
     if (device_count < 1) throw std::runtime_error("CUDA driver reports no devices");
-    check(cu_device_get_(&device_, 0), "cuDeviceGet");
+    if (device_ordinal >= static_cast<std::size_t>(device_count)) {
+        throw std::invalid_argument(
+            "CUDA device ordinal " + std::to_string(device_ordinal) +
+            " is outside the visible device range"
+        );
+    }
+    check(cu_device_get_(&device_, static_cast<int>(device_ordinal)), "cuDeviceGet");
     std::array<char, 256> name{};
     check(cu_device_get_name_(name.data(), static_cast<int>(name.size()), device_), "cuDeviceGetName");
     device_name_ = name.data();
@@ -1458,27 +1464,92 @@ void CudaRuntime::ensure_reduction_workspace(std::size_t bytes, bool need_second
     return result;
 }
 
-struct RuntimeHolder {
-    RuntimeHolder() noexcept {
+struct InventoryHolder {
+    InventoryHolder() noexcept {
         try {
-            runtime = std::make_unique<CudaRuntime>();
+            DynamicLibrary library;
+            const CuInit cu_init = load_symbol<CuInit>(library, "cuInit");
+            const CuDeviceGetCount cu_device_get_count =
+                load_symbol<CuDeviceGetCount>(library, "cuDeviceGetCount");
+            if (cu_init(0U) != kCudaSuccess) {
+                throw std::runtime_error("cuInit failed while enumerating CUDA devices");
+            }
+            int count = 0;
+            if (cu_device_get_count(&count) != kCudaSuccess) {
+                throw std::runtime_error("cuDeviceGetCount failed");
+            }
+            if (count <= 0) {
+                reason = "CUDA driver reports no devices";
+                return;
+            }
+            device_count = static_cast<std::size_t>(count);
+        } catch (const std::exception& error) {
+            reason = error.what();
+        } catch (...) {
+            reason = "CUDA device enumeration failed with an unknown error";
+        }
+    }
+
+    std::size_t device_count = 0U;
+    std::string reason;
+};
+
+InventoryHolder& inventory() {
+    static InventoryHolder instance;
+    return instance;
+}
+
+struct RuntimeSlot {
+    explicit RuntimeSlot(std::size_t device) noexcept {
+        try {
+            runtime = std::make_unique<CudaRuntime>(device);
         } catch (const std::exception& error) {
             reason = error.what();
         } catch (...) {
             reason = "CUDA initialization failed with an unknown error";
         }
     }
+
     std::unique_ptr<CudaRuntime> runtime;
     std::string reason;
 };
 
-RuntimeHolder& holder() {
-    static RuntimeHolder instance;
+struct RuntimeRegistry {
+    std::mutex mutex;
+    std::vector<std::unique_ptr<RuntimeSlot>> slots;
+};
+
+RuntimeRegistry& registry() {
+    static RuntimeRegistry instance;
     return instance;
 }
 
-[[maybe_unused]] CudaRuntime& runtime() {
-    RuntimeHolder& state = holder();
+[[nodiscard]] RuntimeSlot& runtime_slot(std::size_t device) {
+    const InventoryHolder& devices = inventory();
+    if (devices.device_count == 0U) {
+        throw std::runtime_error(
+            devices.reason.empty() ? "CUDA runtime is not available" : devices.reason
+        );
+    }
+    if (device >= devices.device_count) {
+        throw std::invalid_argument(
+            "CUDA device ordinal " + std::to_string(device) +
+            " is outside the visible device range"
+        );
+    }
+    RuntimeRegistry& runtimes = registry();
+    std::scoped_lock lock(runtimes.mutex);
+    if (runtimes.slots.size() < devices.device_count) {
+        runtimes.slots.resize(devices.device_count);
+    }
+    if (runtimes.slots[device] == nullptr) {
+        runtimes.slots[device] = std::make_unique<RuntimeSlot>(device);
+    }
+    return *runtimes.slots[device];
+}
+
+[[maybe_unused]] CudaRuntime& runtime(std::size_t device) {
+    RuntimeSlot& state = runtime_slot(device);
     if (state.runtime == nullptr) {
         throw std::runtime_error(
             state.reason.empty() ? "CUDA runtime is not available" : state.reason
@@ -1489,84 +1560,148 @@ RuntimeHolder& holder() {
 
 }  // namespace
 
-bool cuda_available() noexcept {
+std::optional<std::size_t> cuda_backend_device(const std::string& backend) noexcept {
+    std::string_view suffix;
+    if (backend == "cuda" || backend == "native-cuda") {
+        return 0U;
+    }
+    if (backend.starts_with("cuda:")) {
+        suffix = std::string_view(backend).substr(5U);
+    } else if (backend.starts_with("native-cuda:")) {
+        suffix = std::string_view(backend).substr(12U);
+    } else {
+        return std::nullopt;
+    }
+    if (suffix.empty()) {
+        return std::nullopt;
+    }
+    std::size_t device = 0U;
+    for (const char character : suffix) {
+        if (character < '0' || character > '9') {
+            return std::nullopt;
+        }
+        const std::size_t digit = static_cast<std::size_t>(character - '0');
+        if (device > (std::numeric_limits<std::size_t>::max() - digit) / 10U) {
+            return std::nullopt;
+        }
+        device = device * 10U + digit;
+    }
+    return device;
+}
+
+std::string cuda_backend_name(std::size_t device) {
+    return device == 0U ? "native-cuda" : "native-cuda:" + std::to_string(device);
+}
+
+std::size_t cuda_device_count() noexcept {
 #ifdef QUPY_SANITIZER_BUILD
+    return 0U;
+#else
+    return inventory().device_count;
+#endif
+}
+
+bool cuda_available(std::size_t device) noexcept {
+#ifdef QUPY_SANITIZER_BUILD
+    static_cast<void>(device);
     return false;
 #else
-    return holder().runtime != nullptr;
+    try {
+        return runtime_slot(device).runtime != nullptr;
+    } catch (...) {
+        return false;
+    }
 #endif
 }
 
-std::string cuda_unavailable_reason() {
+std::string cuda_unavailable_reason(std::size_t device) {
 #ifdef QUPY_SANITIZER_BUILD
+    static_cast<void>(device);
     return std::string(kSanitizerCudaDisabled);
 #else
-    return holder().reason;
+    const InventoryHolder& devices = inventory();
+    if (devices.device_count == 0U) {
+        return devices.reason.empty() ? "CUDA runtime is not available" : devices.reason;
+    }
+    if (device >= devices.device_count) {
+        return "CUDA device ordinal " + std::to_string(device) +
+            " is outside the visible device range";
+    }
+    return runtime_slot(device).reason;
 #endif
 }
 
-std::string cuda_device_name() {
+std::string cuda_device_name(std::size_t device) {
 #ifdef QUPY_SANITIZER_BUILD
+    static_cast<void>(device);
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
-    return runtime().device_name();
+    return runtime(device).device_name();
 #endif
 }
 
-int cuda_driver_version() {
+int cuda_driver_version(std::size_t device) {
 #ifdef QUPY_SANITIZER_BUILD
+    static_cast<void>(device);
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
-    return runtime().driver_version();
+    return runtime(device).driver_version();
 #endif
 }
 
-std::size_t cuda_total_memory_bytes() {
+std::size_t cuda_total_memory_bytes(std::size_t device) {
 #ifdef QUPY_SANITIZER_BUILD
+    static_cast<void>(device);
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
-    return runtime().total_memory();
+    return runtime(device).total_memory();
 #endif
 }
 
 std::vector<Complex> cuda_statevector(
     std::size_t num_qubits,
-    const std::vector<CudaStep>& steps
+    const std::vector<CudaStep>& steps,
+    std::size_t device
 ) {
 #ifdef QUPY_SANITIZER_BUILD
     static_cast<void>(num_qubits);
     static_cast<void>(steps);
+    static_cast<void>(device);
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
-    return runtime().statevector(num_qubits, steps);
+    return runtime(device).statevector(num_qubits, steps);
 #endif
 }
 
 std::vector<Complex> cuda_density_matrix(
     std::size_t num_qubits,
-    const std::vector<CudaDensityStep>& steps
+    const std::vector<CudaDensityStep>& steps,
+    std::size_t device
 ) {
 #ifdef QUPY_SANITIZER_BUILD
     static_cast<void>(num_qubits);
     static_cast<void>(steps);
+    static_cast<void>(device);
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
-    return runtime().density_matrix(num_qubits, steps);
+    return runtime(device).density_matrix(num_qubits, steps);
 #endif
 }
 
 std::vector<Complex> cuda_pauli_expectations(
     std::size_t num_qubits,
     const std::vector<CudaStep>& steps,
-    const std::vector<CudaPauliMask>& terms
+    const std::vector<CudaPauliMask>& terms,
+    std::size_t device
 ) {
 #ifdef QUPY_SANITIZER_BUILD
     static_cast<void>(num_qubits);
     static_cast<void>(steps);
     static_cast<void>(terms);
+    static_cast<void>(device);
     throw std::runtime_error(std::string(kSanitizerCudaDisabled));
 #else
-    return runtime().pauli_expectations(num_qubits, steps, terms);
+    return runtime(device).pauli_expectations(num_qubits, steps, terms);
 #endif
 }
 

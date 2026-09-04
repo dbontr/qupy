@@ -48,6 +48,7 @@ def test_checked_compatibility_contract_is_current() -> None:
         "native-tn",
         "native-mpi",
     ]
+    assert contract["parameterized_backends"] == ["native-cuda:<device>"]
     assert contract["optional_python_modules"] == [
         "jax",
         "torch",
@@ -167,6 +168,7 @@ def test_explicit_backend_names_and_fail_closed_behavior() -> None:
         "native-tn",
         "native-mpi",
     ]
+    assert contract["parameterized_backends"] == ["native-cuda:<device>"]
 
     program = qp.ry(qp.Program(1), 0.37, 0)
     observable = _observable()

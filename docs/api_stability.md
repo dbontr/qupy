@@ -90,7 +90,7 @@ The v0 review covers:
 1. exported top-level names and native signatures;
 2. representative result types, array shapes, NumPy dtypes, mutability, and ownership;
 3. representative exception classes and fail-closed validation boundaries;
-4. explicit backend names and unavailable-backend behavior;
+4. fixed and parameterized explicit backend names and unavailable-backend behavior;
 5. program, circuit, provider, and interchange version boundaries;
 6. optional-dependency behavior when JAX, PyTorch, Amazon Braket, Qiskit, Qiskit Aer, CUDA, or MPI support is absent;
 7. wheel import/runtime behavior on every supported Python and operating-system target plus the source-distribution round trip; and
