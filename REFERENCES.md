@@ -56,6 +56,7 @@
 - [An approximate Fourier transform useful in quantum factoring](https://arxiv.org/abs/quant-ph/0201067) — Don Coppersmith (1994/2002). Used for: the controlled-phase structure and bit-ordering conventions of the quantum Fourier transform circuit.
 - [Hardware-efficient variational quantum eigensolver for small molecules and quantum magnets](https://doi.org/10.1038/nature23879) — Abhinav Kandala et al., Nature 549 (2017). Used for: layered hardware-efficient rotation-and-entanglement ansatz design.
 - [Simulation of electronic structure Hamiltonians using quantum computers](https://arxiv.org/abs/1001.3855) — James D. Whitfield, Jacob Biamonte, and Alán Aspuru-Guzik (2011). Used for: Pauli-string basis changes, parity accumulation, and exponentiation patterns for Hamiltonian simulation.
+- [Fractal decomposition of exponential operators with applications to many-body theories and Monte Carlo simulations](https://doi.org/10.1016/0375-9601(90)90962-N) — Masuo Suzuki, Physics Letters A 146(6), 319–323 (1990). Used for: symmetric second-order product-formula decomposition of noncommuting Hamiltonian evolution.
 
 ## Open-system dynamics
 - [Completely positive dynamical semigroups of N-level systems](https://doi.org/10.1063/1.522979) — Vittorio Gorini, Andrzej Kossakowski, and E. C. G. Sudarshan, Journal of Mathematical Physics 17 (1976). Used for: the GKSL generator and Markovian open-system evolution.
