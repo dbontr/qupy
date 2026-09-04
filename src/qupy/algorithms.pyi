@@ -1,6 +1,6 @@
 from collections.abc import Mapping, Sequence
 
-from ._native import ParameterSlot, PauliTerm, Program
+from ._native import Observable, ParameterSlot, PauliTerm, Program
 
 class VariationalTemplate:
     program: Program
@@ -34,3 +34,31 @@ def qft(num_qubits: int, *, inverse: bool = False, swaps: bool = True) -> Progra
 
 
 def append_pauli_evolution(program: Program, term: PauliTerm, time: float) -> Program: ...
+
+
+def append_hamiltonian_evolution(
+    program: Program,
+    hamiltonian: Observable,
+    time: float,
+    *,
+    steps: int = 1,
+    order: int = 1,
+) -> Program: ...
+
+
+def maxcut_hamiltonian(
+    num_qubits: int,
+    edges: Sequence[tuple[int, int]],
+    *,
+    weights: Sequence[float] | None = None,
+) -> Observable: ...
+
+
+def qaoa_maxcut_program(
+    num_qubits: int,
+    edges: Sequence[tuple[int, int]],
+    gammas: Sequence[float],
+    betas: Sequence[float],
+    *,
+    weights: Sequence[float] | None = None,
+) -> Program: ...
