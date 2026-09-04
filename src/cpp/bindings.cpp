@@ -305,10 +305,13 @@ NB_MODULE(_native, module) {
     module.def("Z", &qupy::pauli_z, "qubit"_a);
 
     module.def("native_target", &qupy::native_target);
-    module.def("cuda_available", &qupy::cuda_available);
-    module.def("cuda_unavailable_reason", &qupy::cuda_unavailable_reason);
-    module.def("cuda_device_name", &qupy::cuda_device_name);
-    module.def("cuda_target", &qupy::cuda_target);
+    module.def("cuda_device_count", &qupy::cuda_device_count);
+    module.def("cuda_available", &qupy::cuda_available, "device"_a = 0U);
+    module.def(
+        "cuda_unavailable_reason", &qupy::cuda_unavailable_reason, "device"_a = 0U
+    );
+    module.def("cuda_device_name", &qupy::cuda_device_name, "device"_a = 0U);
+    module.def("cuda_target", &qupy::cuda_target, "device"_a = 0U);
     module.def("mps_target", &qupy::mps_target);
     module.def("adaptive_mps_target", &qupy::adaptive_mps_target);
     module.def("planner_host_fingerprint", &qupy::planner_host_fingerprint);

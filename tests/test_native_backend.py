@@ -406,6 +406,11 @@ def test_cuda_statevector_backend_is_explicit_and_fail_closed() -> None:
 
     plan = qp.plan(program, qp.ResultMode.STATEVECTOR, backend="native-cuda")
     assert plan.backend == "native-cuda"
+    assert qp.plan(program, qp.ResultMode.STATEVECTOR, backend="cuda:0").backend == "native-cuda"
+    assert (
+        qp.plan(program, qp.ResultMode.STATEVECTOR, backend="native-cuda:0").backend
+        == "native-cuda"
+    )
     assert plan.method == "cuda-statevector"
     assert plan.threads == 1
     assert plan.predicted_ns is None
@@ -431,6 +436,76 @@ def test_cuda_statevector_backend_is_explicit_and_fail_closed() -> None:
 
     with pytest.raises(ValueError, match="requested result mode"):
         qp.sample(program, backend="native-cuda")
+
+
+def test_cuda_device_inventory_and_backend_identity_are_explicit() -> None:
+    device_count = qp.cuda_device_count()
+    assert device_count >= 0
+    assert qp.cuda_available() == qp.cuda_available(0)
+
+    if device_count == 0:
+        assert not qp.cuda_available(0)
+    else:
+        if qp.cuda_available(0):
+            assert qp.cuda_device_name() == qp.cuda_device_name(0)
+            assert qp.cuda_target().name == qp.cuda_target(0).name == "native-cuda"
+        assert not qp.cuda_available(device_count)
+        assert "outside the visible device range" in qp.cuda_unavailable_reason(device_count)
+        with pytest.raises(ValueError, match="outside the visible device range"):
+            qp.cuda_target(device_count)
+
+    program = qp.h(qp.Program(1), 0)
+    for backend in (
+        "cuda:",
+        "native-cuda:",
+        "cuda:-1",
+        "native-cuda:x",
+        "native-cuda:1x",
+        "native-cuda:184467440737095516160",
+    ):
+        with pytest.raises(ValueError, match="unknown backend"):
+            qp.plan(program, qp.ResultMode.STATEVECTOR, backend=backend)
+
+
+def test_second_cuda_device_preserves_numerical_semantics_when_available() -> None:
+    if qp.cuda_device_count() < 2 or not qp.cuda_available(1):
+        pytest.skip("a second usable CUDA device is not available")
+
+    program = bell_program()
+    backend = "native-cuda:1"
+    assert qp.cuda_target(1).name == backend
+    assert qp.cuda_device_name(1)
+
+    execution_plan = qp.plan(program, qp.ResultMode.STATEVECTOR, backend="cuda:1")
+    assert execution_plan.backend == backend
+    assert execution_plan.method == "cuda-statevector"
+    assert execution_plan.predicted_ns is None
+    assert execution_plan.cost_model_class == ""
+
+    cpu_state = qp.statevector(program, backend="native-cpu")
+    gpu_state = qp.statevector(program, backend="cuda:1")
+    assert gpu_state.backend == backend
+    np.testing.assert_allclose(gpu_state.values, cpu_state.values, atol=2e-12, rtol=2e-12)
+
+    cpu_expectation = qp.expect(program, qp.Z(0), backend="native-cpu")
+    gpu_expectation = qp.expect(program, qp.Z(0), backend="cuda:1")
+    assert gpu_expectation.backend == backend
+    assert gpu_expectation.value == pytest.approx(cpu_expectation.value, abs=2e-12)
+
+    observable = qp.observable_from_z(qp.Z(0))
+    rich_plan = qp.observable_plan(program, [observable], backend="cuda:1")
+    assert rich_plan.backend == backend
+    assert rich_plan.method == "cuda-pauli-reduction"
+    assert rich_plan.predicted_ns is None
+    cpu_rich = qp.expect_observable(program, observable, backend="native-cpu")
+    gpu_rich = qp.expect_observable(program, observable, backend="cuda:1")
+    assert gpu_rich.backend == backend
+    assert gpu_rich.value == pytest.approx(cpu_rich.value, abs=2e-12)
+
+    cpu_density = qp.density_matrix(program, backend="native-cpu")
+    gpu_density = qp.density_matrix(program, backend="cuda:1")
+    assert gpu_density.backend == "native-cuda-density:1"
+    np.testing.assert_allclose(gpu_density.values, cpu_density.values, atol=2e-12, rtol=2e-12)
 
 
 def test_native_cost_model_is_inspectable_without_changing_selection(tmp_path) -> None:

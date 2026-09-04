@@ -828,7 +828,15 @@ void materialize_parameterized_steps(
     return indices;
 }
 [[nodiscard]] bool is_cuda_backend(const std::string& backend) {
-    return backend == "cuda" || backend == "native-cuda";
+    return detail::cuda_backend_device(backend).has_value();
+}
+
+[[nodiscard]] std::size_t cuda_device_for_backend(const std::string& backend) {
+    const std::optional<std::size_t> device = detail::cuda_backend_device(backend);
+    if (!device.has_value()) {
+        throw std::logic_error("CUDA backend device requested for a non-CUDA backend");
+    }
+    return *device;
 }
 
 [[nodiscard]] bool is_mps_backend(const std::string& backend) {
@@ -1300,10 +1308,11 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         return {std::move(cpu_plan), std::move(steps)};
     }
     const bool cuda_backend = is_cuda_backend(backend);
+    const std::size_t cuda_device = cuda_backend ? cuda_device_for_backend(backend) : 0U;
     const bool mps_backend = is_mps_backend(backend);
     const bool adaptive_mps_backend = is_adaptive_mps_backend(backend);
     const Target target = cuda_backend
-        ? cuda_target()
+        ? cuda_target(cuda_device)
         : (mps_backend ? mps_target()
                        : (adaptive_mps_backend ? adaptive_mps_target() : native_target()));
     target.validate(program, result_mode);
@@ -1335,7 +1344,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
         ExecutionPlan execution_plan = make_plan(
             program, target, result_mode, program.operations().size(), program.operations(),
             steps.size(), program.num_qubits(), state_memory_bytes(program.num_qubits()),
-            "cuda-statevector", {}, collect_workload_fingerprint, cost_model
+            "cuda-statevector", {}, collect_workload_fingerprint,
+            cuda_device == 0U ? cost_model : nullptr
         );
         return {std::move(execution_plan), std::move(steps)};
     }
@@ -1458,15 +1468,16 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     }
     validate_backend(backend);
     ReducedExpectation reduced = reduce_expectation(program, observable);
-    const bool pauli_propagation = !is_cuda_backend(backend) &&
+    const std::optional<std::size_t> cuda_device = detail::cuda_backend_device(backend);
+    const bool pauli_propagation = !cuda_device.has_value() &&
         supports_pauli_propagation(reduced.operations);
     const bool mps_backend = is_mps_backend(backend);
     const bool adaptive_backend = is_adaptive_mps_backend(backend);
     const bool auto_adaptive = backend == "auto" && !pauli_propagation &&
         reduced.active_qubits >= kAdaptiveMpsMinQubits && cost_model != nullptr &&
         cost_model->mps_auto_validated();
-    const Target target = is_cuda_backend(backend)
-        ? cuda_target()
+    const Target target = cuda_device.has_value()
+        ? cuda_target(*cuda_device)
         : (mps_backend ? mps_target()
                        : ((adaptive_backend || auto_adaptive) ? adaptive_mps_target()
                                                              : native_target()));
@@ -1535,7 +1546,8 @@ void conjugate_swap(PauliFrame& pauli, std::size_t first, std::size_t second) {
     ExecutionPlan execution_plan = make_plan(
         program, target, result_mode, program.operations().size(), reduced.operations,
         compiled_steps, reduced.active_qubits, estimated_state_bytes, method, qualifier,
-        collect_workload_fingerprint, cost_model
+        collect_workload_fingerprint,
+        cuda_device.has_value() && *cuda_device != 0U ? nullptr : cost_model
     );
     if ((mps_backend || adaptive_backend || auto_adaptive) && !pauli_propagation) {
         execution_plan.tensor_network_max_bond = tensor_estimate.max_bond;
@@ -1914,10 +1926,11 @@ namespace detail {
 
 std::vector<Complex> cuda_pauli_expectations(
     const Program& program,
-    const std::vector<CudaPauliMask>& terms
+    const std::vector<CudaPauliMask>& terms,
+    std::size_t device
 ) {
     const std::vector<CompiledStep> steps = compile_program(program);
-    return cuda_pauli_expectations(program.num_qubits(), cuda_steps(steps), terms);
+    return cuda_pauli_expectations(program.num_qubits(), cuda_steps(steps), terms, device);
 }
 
 }  // namespace detail
@@ -2676,19 +2689,26 @@ PlannerCostModel load_planner_cost_model(const std::string& path) {
     return model;
 }
 
-bool cuda_available() noexcept { return detail::cuda_available(); }
-std::string cuda_unavailable_reason() { return detail::cuda_unavailable_reason(); }
-std::string cuda_device_name() { return detail::cuda_device_name(); }
+std::size_t cuda_device_count() noexcept { return detail::cuda_device_count(); }
+bool cuda_available(std::size_t device) noexcept { return detail::cuda_available(device); }
+std::string cuda_unavailable_reason(std::size_t device) {
+    return detail::cuda_unavailable_reason(device);
+}
+std::string cuda_device_name(std::size_t device) { return detail::cuda_device_name(device); }
 
-Target cuda_target() {
-    if (!detail::cuda_available()) {
-        throw std::runtime_error(detail::cuda_unavailable_reason());
+Target cuda_target(std::size_t device) {
+    const std::size_t device_count = detail::cuda_device_count();
+    if (device_count != 0U && device >= device_count) {
+        throw std::invalid_argument(detail::cuda_unavailable_reason(device));
+    }
+    if (!detail::cuda_available(device)) {
+        throw std::runtime_error(detail::cuda_unavailable_reason(device));
     }
     std::size_t max_qubits = 0U;
     std::size_t bytes = sizeof(Complex);
-    const std::size_t memory = detail::cuda_total_memory_bytes();
+    const std::size_t memory = detail::cuda_total_memory_bytes(device);
     while (bytes <= memory / 2U) { bytes *= 2U; ++max_qubits; }
-    return {"native-cuda", {OperationCode::H, OperationCode::X, OperationCode::Y, OperationCode::Z,
+    return {detail::cuda_backend_name(device), {OperationCode::H, OperationCode::X, OperationCode::Y, OperationCode::Z,
         OperationCode::RX, OperationCode::RY, OperationCode::RZ, OperationCode::CX,
         OperationCode::CZ, OperationCode::SWAP},
         {ResultMode::StateVector, ResultMode::Expectation, ResultMode::Variance}, max_qubits,
@@ -2855,7 +2875,10 @@ StateVector statevector(
     );
     if (prepared.execution_plan.method == "cuda-statevector") {
         return {
-            detail::cuda_statevector(program.num_qubits(), cuda_steps(prepared.steps)),
+            detail::cuda_statevector(
+                program.num_qubits(), cuda_steps(prepared.steps),
+                cuda_device_for_backend(prepared.execution_plan.backend)
+            ),
             prepared.execution_plan.backend,
         };
     }
@@ -2929,7 +2952,7 @@ SamplesBatch sample_batch(
     }
     validate_backend(backend);
     const Target target = is_cuda_backend(backend)
-        ? cuda_target()
+        ? cuda_target(cuda_device_for_backend(backend))
         : (is_mps_backend(backend) ? mps_target()
                                    : (is_adaptive_mps_backend(backend)
                                        ? adaptive_mps_target() : native_target()));
@@ -3044,7 +3067,8 @@ Expectation expectation(
             0U, std::uint64_t{1} << prepared.observable_qubit, 0U,
         };
         const std::vector<Complex> values = detail::cuda_pauli_expectations(
-            prepared.execution_plan.active_qubits, cuda_steps(prepared.steps), {mask}
+            prepared.execution_plan.active_qubits, cuda_steps(prepared.steps), {mask},
+            cuda_device_for_backend(prepared.execution_plan.backend)
         );
         if (values.empty() || std::abs(values.front().imag()) > 1e-12) {
             throw std::domain_error("CUDA Pauli expectation acquired an invalid imaginary part");
@@ -3076,7 +3100,7 @@ ExpectationBatch expectation_batch(
 ) {
     validate_backend(backend);
     const Target target = is_cuda_backend(backend)
-        ? cuda_target()
+        ? cuda_target(cuda_device_for_backend(backend))
         : (is_mps_backend(backend) ? mps_target()
                                    : (is_adaptive_mps_backend(backend)
                                        ? adaptive_mps_target() : native_target()));
@@ -3169,7 +3193,8 @@ Variance variance(
             0U, std::uint64_t{1} << prepared.observable_qubit, 0U,
         };
         const std::vector<Complex> values = detail::cuda_pauli_expectations(
-            prepared.execution_plan.active_qubits, cuda_steps(prepared.steps), {mask}
+            prepared.execution_plan.active_qubits, cuda_steps(prepared.steps), {mask},
+            cuda_device_for_backend(prepared.execution_plan.backend)
         );
         if (values.empty() || std::abs(values.front().imag()) > 1e-12) {
             throw std::domain_error("CUDA Pauli expectation acquired an invalid imaginary part");

@@ -4,6 +4,7 @@ public_api_manifest = "api/public_api_v0.txt"
 native_stub = "src/qupy/_native.pyi"
 deprecated_public_symbols = []
 explicit_backends = ["native-cpu", "native-cuda", "native-mps", "native-tn", "native-mpi"]
+parameterized_backends = ["native-cuda:<device>"]
 optional_python_modules = ["jax", "torch", "braket", "qiskit", "qiskit_aer"]
 
 [versions]
