@@ -277,6 +277,7 @@ term = qp.PauliTerm(
     0.5,
     [qp.PauliFactor(0, qp.Pauli.X), qp.PauliFactor(2, qp.Pauli.Z)],
 )
+hamiltonian = qp.Observable([term])
 program = qp.append_pauli_evolution(program, term, 0.2)
 program = qp.append_hamiltonian_evolution(program, hamiltonian, 0.2, steps=4, order=2)
 ```
