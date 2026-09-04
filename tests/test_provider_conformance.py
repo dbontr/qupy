@@ -11,6 +11,9 @@ import qupy as qp
 def _capabilities(*, hardware: bool = True, measurement: bool = True) -> str:
     payload: dict[str, object] = {"formats": ["openqasm3"]}
     if hardware:
+        durations = {"h": 10.0, "cz": 100.0}
+        if measurement:
+            durations["measure"] = 50.0
         payload["hardware_target"] = {
             "schema_version": 1,
             "name": "conformance-qpu",
@@ -22,7 +25,7 @@ def _capabilities(*, hardware: bool = True, measurement: bool = True) -> str:
             "mid_circuit_measurement": False,
             "reset": False,
             "dynamic_control": False,
-            "durations_ns": {"h": 10.0, "cz": 100.0, "measure": 50.0},
+            "durations_ns": durations,
         }
     return json.dumps(payload)
 
