@@ -134,8 +134,10 @@ from ._tensor_planner import (
 )
 from .algorithms import (
     VariationalTemplate,
+    append_hamiltonian_evolution,
     append_pauli_evolution,
     append_qft,
+    hamiltonian_evolution,
     hardware_efficient_ansatz,
     qft,
 )
@@ -283,6 +285,7 @@ __all__ = [
     "__version__",
     "adaptive_mps_target",
     "amplitude_damping",
+    "append_hamiltonian_evolution",
     "append_pauli_evolution",
     "append_qft",
     "bit_flip",
@@ -320,6 +323,7 @@ __all__ = [
     "expectation_plan",
     "grad",
     "h",
+    "hamiltonian_evolution",
     "hardware_efficient_ansatz",
     "hessian",
     "install_planner_cost_model",
