@@ -110,11 +110,14 @@ def check_provider_conformance(
         raise ValueError("provider conformance requires advertised openqasm3 support")
 
     advertised_target = capabilities.hardware_target
-    if target is not None and advertised_target is not None:
-        if target.fingerprint != advertised_target.fingerprint:
-            raise ValueError(
-                "explicit target does not match the provider-advertised hardware_target"
-            )
+    if (
+        target is not None
+        and advertised_target is not None
+        and target.fingerprint != advertised_target.fingerprint
+    ):
+        raise ValueError(
+            "explicit target does not match the provider-advertised hardware_target"
+        )
     selected_target = target if target is not None else advertised_target
     if selected_target is None:
         raise ValueError(
@@ -208,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             max_polls=args.max_polls,
             poll_interval_seconds=args.poll_interval,
         )
-    except Exception as exc:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"provider conformance failed: {exc}", file=sys.stderr)
         return 1
     print(report.to_json())
