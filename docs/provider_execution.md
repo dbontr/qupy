@@ -161,13 +161,15 @@ The Qiskit adapter deliberately does not depend on Qiskit's optional OpenQASM im
 
 Qiskit job states map to the portable lifecycle as follows: `INITIALIZING`, `QUEUED`, and `VALIDATING` map to queued; `RUNNING` maps to running; `DONE` maps to succeeded; `ERROR` maps to failed; and both `CANCELLED` and the alternate spelling `CANCELED` map to cancelled. Aer jobs are still treated as asynchronous jobs: callers poll until a terminal state rather than assuming local simulation completes before the first poll. Unknown status objects or names fail closed. Successful result retrieval normalizes measurement counts and shot count into deterministic JSON.
 
-A caller can also wrap another Qiskit Backend-style object directly:
+A caller can also wrap a Qiskit BackendV2-style object directly:
 
 ```python
-provider = qp.QiskitProvider(backend, target=trusted_target)
+provider = qp.QiskitProvider(backend)
 ```
 
-QuPy does not create, copy, inspect, persist, or refresh IBM Quantum credentials. It also does not infer a hardware target from an arbitrary Qiskit backend yet. Cloud/device backends therefore require a caller-supplied trusted `HardwareTarget` until direct capability translation has its own executable conformance evidence. Vendor-specific run options are likewise not forwarded through an unversioned JSON bag; the current Qiskit adapter accepts the empty options object only.
+When the backend exposes `num_qubits` and `target`, QuPy derives and advertises a conservative `HardwareTarget` with `qiskit_backend_target()`. The translation intentionally under-approximates Qiskit's richer `Target` model: a one-qubit operation, terminal measurement, or reset is advertised only when it is available on every backend qubit; RX/RY/RZ are omitted when the target exposes a fixed parameter or angle bounds; CX is represented only on links supported in both directions because QuPy's current coupling graph is undirected; and the selected two-qubit coupling graph is the widest graph on which every advertised two-qubit operation is valid. Gate-specific extra links remain unadvertised rather than being flattened into unsafe global support. Mid-circuit measurement and dynamic control remain false because BackendV2 `Target` metadata alone is not treated as sufficient evidence for those semantics.
+
+Callers can still supply `target=trusted_target` explicitly. An explicit target bypasses automatic BackendV2 translation and remains useful for vendor constraints QuPy's current `HardwareTarget` cannot represent, including directional or operation-specific coupling differences. QuPy does not create, copy, inspect, persist, or refresh IBM Quantum credentials. Vendor-specific run options are likewise not forwarded through an unversioned JSON bag; the current Qiskit adapter accepts the empty options object only.
 
 ## Precompiled submission
 

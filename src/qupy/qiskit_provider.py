@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from importlib import import_module
+from numbers import Number
 from types import ModuleType
 from typing import Protocol, cast
 
 from . import _native
 from .circuit import Circuit, CircuitOperationCode
-from .compiler import HardwareTarget
+from .compiler import Coupling, HardwareTarget
 from .provider import _hardware_target_payload
 
 
@@ -144,6 +145,246 @@ def _measurement_counts(result: object) -> dict[str, int]:
     return counts
 
 
+_ONE_QUBIT_OPERATIONS = {
+    "h": CircuitOperationCode.H,
+    "x": CircuitOperationCode.X,
+    "y": CircuitOperationCode.Y,
+    "z": CircuitOperationCode.Z,
+    "rx": CircuitOperationCode.RX,
+    "ry": CircuitOperationCode.RY,
+    "rz": CircuitOperationCode.RZ,
+}
+_TWO_QUBIT_OPERATIONS = {
+    "cx": (CircuitOperationCode.CX, False),
+    "cz": (CircuitOperationCode.CZ, True),
+    "swap": (CircuitOperationCode.SWAP, True),
+}
+_PARAMETERIZED_ROTATIONS = frozenset({"rx", "ry", "rz"})
+
+
+def _backend_num_qubits(backend: object) -> int:
+    value = getattr(backend, "num_qubits", None)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("Qiskit BackendV2 num_qubits must be an integer")
+    if value <= 0:
+        raise ValueError("Qiskit BackendV2 num_qubits must be positive")
+    return value
+
+
+def _backend_target(backend: object, num_qubits: int) -> object:
+    target = getattr(backend, "target", None)
+    if target is None:
+        raise ValueError("Qiskit BackendV2 target metadata is unavailable")
+    target_qubits = getattr(target, "num_qubits", None)
+    if target_qubits is not None:
+        if isinstance(target_qubits, bool) or not isinstance(target_qubits, int):
+            raise TypeError("Qiskit Target num_qubits must be an integer or None")
+        if target_qubits != num_qubits:
+            raise ValueError("Qiskit BackendV2 num_qubits disagrees with Target num_qubits")
+    return target
+
+
+def _target_operation_names(target: object) -> set[str]:
+    raw = getattr(target, "operation_names", None)
+    if raw is None:
+        raise TypeError("Qiskit Target operation_names metadata is unavailable")
+    try:
+        values = tuple(raw)
+    except TypeError as exc:
+        raise TypeError("Qiskit Target operation_names must be iterable") from exc
+    result: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise TypeError("Qiskit Target operation_names must contain non-empty strings")
+        result.add(value)
+    return result
+
+
+def _target_qargs(target: object, operation: str) -> frozenset[tuple[int, ...] | None]:
+    getter = getattr(target, "qargs_for_operation_name", None)
+    if not callable(getter):
+        raise TypeError("Qiskit Target must provide qargs_for_operation_name()")
+    try:
+        raw = getter(operation)
+    except KeyError as exc:
+        raise ValueError(f"Qiskit Target is missing qargs metadata for {operation!r}") from exc
+    try:
+        values = tuple(raw)
+    except TypeError as exc:
+        raise TypeError(f"Qiskit Target qargs for {operation!r} must be iterable") from exc
+
+    result: set[tuple[int, ...] | None] = set()
+    for value in values:
+        if value is None:
+            result.add(None)
+            continue
+        try:
+            qargs = tuple(value)
+        except TypeError as exc:
+            raise TypeError(f"Qiskit Target qargs for {operation!r} must be tuples") from exc
+        for qubit in qargs:
+            if isinstance(qubit, bool) or not isinstance(qubit, int):
+                raise TypeError(f"Qiskit Target qargs for {operation!r} must contain integers")
+            if qubit < 0:
+                raise ValueError(f"Qiskit Target qargs for {operation!r} must be non-negative")
+        result.add(qargs)
+    return frozenset(result)
+
+
+def _validate_qarg_range(
+    qargs: frozenset[tuple[int, ...] | None],
+    operation: str,
+    num_qubits: int,
+) -> None:
+    for item in qargs:
+        if item is None:
+            continue
+        if any(qubit >= num_qubits for qubit in item):
+            raise ValueError(f"Qiskit Target qargs for {operation!r} exceed backend num_qubits")
+
+
+def _operation_on_all_qubits(target: object, operation: str, num_qubits: int) -> bool:
+    qargs = _target_qargs(target, operation)
+    _validate_qarg_range(qargs, operation, num_qubits)
+    if None in qargs:
+        return True
+    if any(len(item) != 1 for item in qargs if item is not None):
+        raise ValueError(f"Qiskit Target operation {operation!r} has non-single-qubit qargs")
+    return all((qubit,) in qargs for qubit in range(num_qubits))
+
+
+def _supports_arbitrary_rotation(target: object, operation: str) -> bool:
+    if operation not in _PARAMETERIZED_ROTATIONS:
+        return True
+    getter = getattr(target, "operation_from_name", None)
+    if not callable(getter):
+        return False
+    gate = getter(operation)
+    parameters = getattr(gate, "params", None)
+    if not isinstance(parameters, (list, tuple)) or len(parameters) != 1:
+        return False
+    if isinstance(parameters[0], Number):
+        return False
+    bounds = getattr(target, "gate_has_angle_bounds", None)
+    return not (callable(bounds) and bool(bounds(operation)))
+
+
+def _undirected_edge(pair: tuple[int, int]) -> tuple[int, int]:
+    return pair if pair[0] < pair[1] else (pair[1], pair[0])
+
+
+def _two_qubit_coverage(
+    target: object,
+    operation: str,
+    num_qubits: int,
+    *,
+    symmetric: bool,
+) -> frozenset[tuple[int, int]] | None:
+    qargs = _target_qargs(target, operation)
+    _validate_qarg_range(qargs, operation, num_qubits)
+    if None in qargs:
+        return None
+    if any(len(item) != 2 for item in qargs if item is not None):
+        raise ValueError(f"Qiskit Target operation {operation!r} has non-two-qubit qargs")
+
+    directed = {cast(tuple[int, int], item) for item in qargs if item is not None}
+    if symmetric:
+        return frozenset(_undirected_edge(pair) for pair in directed if pair[0] != pair[1])
+    return frozenset(
+        _undirected_edge(pair)
+        for pair in directed
+        if pair[0] != pair[1] and (pair[1], pair[0]) in directed
+    )
+
+
+def _two_qubit_target(
+    target: object,
+    operation_names: set[str],
+    num_qubits: int,
+) -> tuple[list[CircuitOperationCode], list[Coupling]]:
+    candidates: list[tuple[CircuitOperationCode, frozenset[tuple[int, int]] | None, int]] = []
+    all_to_all_edges = num_qubits * (num_qubits - 1) // 2
+    for operation, (code, symmetric) in _TWO_QUBIT_OPERATIONS.items():
+        if operation not in operation_names:
+            continue
+        coverage = _two_qubit_coverage(
+            target,
+            operation,
+            num_qubits,
+            symmetric=symmetric,
+        )
+        score = all_to_all_edges if coverage is None else len(coverage)
+        if score != 0:
+            candidates.append((code, coverage, score))
+    if not candidates:
+        return [], []
+
+    primary_code, primary_coverage, _ = max(candidates, key=lambda item: item[2])
+    selected = [primary_code]
+    for code, coverage, _ in candidates:
+        if code is primary_code:
+            continue
+        compatible = (
+            coverage is None
+            if primary_coverage is None
+            else coverage is None or primary_coverage.issubset(coverage)
+        )
+        if compatible:
+            selected.append(code)
+
+    couplings = (
+        []
+        if primary_coverage is None
+        else [Coupling(first, second) for first, second in sorted(primary_coverage)]
+    )
+    return selected, couplings
+
+
+def qiskit_backend_target(backend: object) -> HardwareTarget:
+    """Conservatively translate Qiskit BackendV2 Target metadata into QuPy."""
+    if backend is None:
+        raise TypeError("backend must be a Qiskit BackendV2 object")
+    num_qubits = _backend_num_qubits(backend)
+    target = _backend_target(backend, num_qubits)
+    operation_names = _target_operation_names(target)
+
+    one_qubit_operations: list[CircuitOperationCode] = []
+    for operation, code in _ONE_QUBIT_OPERATIONS.items():
+        if (
+            operation in operation_names
+            and _operation_on_all_qubits(target, operation, num_qubits)
+            and _supports_arbitrary_rotation(target, operation)
+        ):
+            one_qubit_operations.append(code)
+
+    two_qubit_operations, couplings = _two_qubit_target(
+        target,
+        operation_names,
+        num_qubits,
+    )
+    measurement = "measure" in operation_names and _operation_on_all_qubits(
+        target,
+        "measure",
+        num_qubits,
+    )
+    reset = "reset" in operation_names and _operation_on_all_qubits(
+        target,
+        "reset",
+        num_qubits,
+    )
+    return HardwareTarget(
+        f"qiskit:{_backend_name(backend)}",
+        num_qubits,
+        one_qubit_operations,
+        two_qubit_operations,
+        couplings,
+        measurement=measurement,
+        mid_circuit_measurement=False,
+        reset=reset,
+        dynamic_control=False,
+    )
+
+
 def qiskit_aer_target(num_qubits: int = 24) -> HardwareTarget:
     """Return the conservative QuPy target used for Qiskit Aer integration."""
     qubits = _positive_integer(num_qubits, "num_qubits")
@@ -241,6 +482,8 @@ class QiskitProvider:
             raise TypeError("backend must be a Qiskit backend object")
         if name is not None and (not isinstance(name, str) or not name):
             raise ValueError("name must be a non-empty string when supplied")
+        if target is None and getattr(backend, "target", None) is not None:
+            target = qiskit_backend_target(backend)
         self._backend = cast(_QiskitBackend, backend)
         self._name = name if name is not None else f"qiskit:{_backend_name(backend)}"
         self._target = target
@@ -326,4 +569,4 @@ class QiskitProvider:
         self._job(job_id).cancel()
 
 
-__all__ = ["QiskitProvider", "qiskit_aer_target"]
+__all__ = ["QiskitProvider", "qiskit_aer_target", "qiskit_backend_target"]
