@@ -81,17 +81,19 @@ Several durable formats evolve independently from the package version. Their own
 
 A package release may support more than one compatible artifact version. QuPy must reject unsupported or malformed versions rather than reinterpret them silently.
 
-## Compatibility review checklist
+## Compatibility review v0
 
-Before a release candidate is considered 1.0-ready, review at least these surfaces:
+The first complete pre-1.0 review is recorded in `api/compatibility_v0.toml` and explained in `docs/compatibility_review_v0.md`. `tests/test_compatibility_review.py` makes the reviewed boundary executable alongside the top-level API manifest, native stub/runtime conformance, optional-dependency checks, and isolated release-artifact gates.
 
-1. exported top-level names and signatures;
-2. documented result types, array shapes, mutability, and ownership;
-3. exception classes and fail-closed validation boundaries;
-4. backend names and explicit-backend behavior;
-5. program, circuit, planner, provider, and interchange version boundaries;
-6. optional-dependency behavior when JAX, PyTorch, CUDA, MPI, or provider libraries are absent;
-7. wheel import/runtime behavior on every supported Python and operating-system target;
-8. deprecation and migration paths for any interface not intended to survive 1.0.
+The v0 review covers:
 
-The compatibility baseline is a gate, not a claim that QuPy has reached 1.0. The package stays alpha until those contracts have been reviewed together with the remaining scale and provider evidence.
+1. exported top-level names and native signatures;
+2. representative result types, array shapes, NumPy dtypes, mutability, and ownership;
+3. representative exception classes and fail-closed validation boundaries;
+4. explicit backend names and unavailable-backend behavior;
+5. program, circuit, provider, and interchange version boundaries;
+6. optional-dependency behavior when JAX, PyTorch, Amazon Braket, Qiskit, Qiskit Aer, CUDA, or MPI support is absent;
+7. wheel import/runtime behavior on every supported Python and operating-system target plus the source-distribution round trip; and
+8. deprecation status and the migration discipline required before a reviewed public symbol is removed.
+
+This closes the compatibility-review checklist for the current alpha baseline. It does not declare QuPy 1.0-ready by itself. The package remains alpha while the remaining scale and provider evidence matures, and future incompatible pre-1.0 changes must update the reviewed compatibility record deliberately.

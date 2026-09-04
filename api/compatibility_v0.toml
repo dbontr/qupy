@@ -1,0 +1,25 @@
+schema_version = 1
+status = "reviewed-pre-1.0"
+public_api_manifest = "api/public_api_v0.txt"
+native_stub = "src/qupy/_native.pyi"
+deprecated_public_symbols = []
+explicit_backends = ["native-cpu", "native-cuda", "native-mps", "native-tn", "native-mpi"]
+optional_python_modules = ["jax", "torch", "braket", "qiskit", "qiskit_aer"]
+
+[versions]
+program_ir = 1
+circuit_ir = 1
+planner_cost_schema_min = 1
+planner_cost_schema_max = 5
+planner_workload = 1
+planner_mps_policy = 1
+planner_observable_policy = 1
+planner_density_policy = 1
+tensor_network_cost_schema = 1
+tensor_network_policy = 1
+tensor_network_workload = 1
+provider_abi = 1
+provider_hardware_target_schema = 1
+standalone_openqasm = "3.1"
+provider_openqasm = "3.0"
+qir_profile = "base_profile"
