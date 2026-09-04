@@ -10,6 +10,40 @@ using namespace nb::literals;
 void bind_multi_device(nb::module_& module);
 
 void bind_tensor_network(nb::module_& module) {
+    nb::class_<qupy::TensorNetworkCostModel>(module, "TensorNetworkCostModel")
+        .def_prop_ro("schema_version", &qupy::TensorNetworkCostModel::schema_version)
+        .def_prop_ro("policy_version", &qupy::TensorNetworkCostModel::policy_version)
+        .def_prop_ro("workload_version", &qupy::TensorNetworkCostModel::workload_version)
+        .def_prop_ro("engine_version", &qupy::TensorNetworkCostModel::engine_version)
+        .def_prop_ro("host_fingerprint", &qupy::TensorNetworkCostModel::host_fingerprint)
+        .def_prop_ro("artifact_fingerprint", &qupy::TensorNetworkCostModel::artifact_fingerprint)
+        .def_prop_ro("report_count", &qupy::TensorNetworkCostModel::report_count)
+        .def_prop_ro("decision_samples", &qupy::TensorNetworkCostModel::decision_samples)
+        .def_prop_ro("decision_mistakes", &qupy::TensorNetworkCostModel::decision_mistakes)
+        .def_prop_ro("decision_max_regret", &qupy::TensorNetworkCostModel::decision_max_regret)
+        .def_prop_ro("cpu_wins", &qupy::TensorNetworkCostModel::cpu_wins)
+        .def_prop_ro("tensor_network_wins", &qupy::TensorNetworkCostModel::tensor_network_wins)
+        .def_prop_ro("auto_validated", &qupy::TensorNetworkCostModel::auto_validated)
+        .def(
+            "predict_cpu_ns",
+            &qupy::TensorNetworkCostModel::predict_cpu_ns,
+            "active_qubits"_a,
+            "compiled_steps"_a,
+            "two_qubit_operations"_a,
+            "operation_count"_a,
+            "term_count"_a,
+            "threads"_a
+        )
+        .def(
+            "predict_tensor_network_ns",
+            &qupy::TensorNetworkCostModel::predict_tensor_network_ns,
+            "contractions"_a,
+            "peak_tensor_rank"_a,
+            "peak_tensor_bytes"_a,
+            "scalar_multiplications"_a,
+            "term_count"_a
+        );
+
     nb::class_<qupy::TensorNetworkPlan>(module, "TensorNetworkPlan")
         .def_ro("term_count", &qupy::TensorNetworkPlan::term_count)
         .def_ro("contractions", &qupy::TensorNetworkPlan::contractions)
@@ -36,6 +70,12 @@ void bind_tensor_network(nb::module_& module) {
         .def_ro("method", &qupy::TensorNetworkResult::method);
 
     module.def(
+        "load_tensor_network_cost_model",
+        &qupy::load_tensor_network_cost_model,
+        "path"_a,
+        nb::call_guard<nb::gil_scoped_release>()
+    );
+    module.def(
         "tensor_network_plan",
         &qupy::tensor_network_plan,
         "program"_a,
@@ -56,6 +96,15 @@ void bind_tensor_network(nb::module_& module) {
         &qupy::tensor_network_observable_plan,
         "program"_a,
         "observables"_a,
+        "max_tensor_bytes"_a = qupy::kTensorNetworkDefaultMaxBytes,
+        nb::call_guard<nb::gil_scoped_release>()
+    );
+    module.def(
+        "tensor_network_auto_observable_plan",
+        &qupy::tensor_network_auto_observable_plan,
+        "program"_a,
+        "observables"_a,
+        "cost_model"_a,
         "max_tensor_bytes"_a = qupy::kTensorNetworkDefaultMaxBytes,
         nb::call_guard<nb::gil_scoped_release>()
     );
