@@ -90,7 +90,7 @@ def check_provider_conformance(
     target: HardwareTarget | None = None,
     shots: int = 1,
     max_polls: int = 32,
-    poll_interval_seconds: float = 0.0,
+    poll_interval_seconds: float = 0.5,
     options_json: str = "{}",
 ) -> ProviderConformanceReport:
     """Exercise the portable provider discovery, submission, and success lifecycle.
@@ -194,7 +194,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("plugin", help="path to a provider shared library")
     parser.add_argument("--shots", type=int, default=1)
     parser.add_argument("--max-polls", type=int, default=32)
-    parser.add_argument("--poll-interval", type=float, default=0.0)
+    parser.add_argument("--poll-interval", type=float, default=0.5)
     return parser
 
 
