@@ -69,11 +69,13 @@ Syntax failures include source line and column information. Existing `Circuit` v
 
 ## Provider interchange
 
-`Circuit.to_openqasm3()` remains the standalone OpenQASM 3.1 representation. `provider_program()` uses the same supported syntax with an OpenQASM 3.0 language header because provider interfaces such as Amazon Braket advertise OpenQASM 3.0. QuPy's current provider subset does not use syntax whose meaning differs between those language versions; only the declared transport version changes.
+`Circuit.to_openqasm3()` remains the standalone OpenQASM 3.1 representation. `provider_program()` uses the same supported syntax with an OpenQASM 3.0 language header because provider interfaces such as Amazon Braket advertise OpenQASM 3.0. QuPy's current provider subset does not use syntax whose meaning differs between those language versions; only the declared language version changes at this generic boundary.
 
-A provider submission stores that exact 3.0 text in `ProviderSubmission.program`. The text therefore remains the submitted-payload identity used by provider conformance and provenance checks. Provider adapters must not silently rewrite it after the generic QuPy submission boundary.
+`ProviderSubmission.program` stores the exact text delivered from QuPy's generic provider layer to the selected provider backend. That text is the provider-boundary identity used by generic conformance and provenance checks. A provider adapter may perform a documented vendor-dialect lowering after this boundary when the vendor accepts equivalent OpenQASM semantics through a different prelude.
 
-Both 3.0 provider payloads and standalone 3.1 text can be parsed back into `Circuit`, then inspected, compiled, fingerprinted, or re-serialized. The importer does not trust provider text. Unsupported or malformed input fails closed through the same parser boundary.
+Amazon Braket is one such case. QuPy's generic provider text contains `include "stdgates.inc";`, while Braket's OpenQASM interface exposes the same supported standard gates without requiring that include. `BraketProvider` therefore removes exactly the canonical `stdgates.inc` prelude before constructing `braket.ir.openqasm.Program`; it does not modify circuit declarations, gate calls, parameters, measurements, or classical conditions. Unexpected provider preludes fail closed instead of being rewritten heuristically.
+
+Both the generic 3.0 provider payload and standalone 3.1 text can be parsed back into `Circuit`, then inspected, compiled, fingerprinted, or re-serialized. The importer does not trust provider text. Unsupported or malformed input fails closed through the same parser boundary.
 
 ## Expanding the subset
 
