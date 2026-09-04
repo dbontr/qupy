@@ -172,6 +172,7 @@ jobs:
           qsimcirq==0.22.1
           stim==1.16.0
           pymatching==2.4.0
+          ldpc==2.4.1
       - name: Run benchmark adapter smoke
         run: >-
           uv run --no-sync python -m benchmarks.run
@@ -189,8 +190,11 @@ jobs:
           --iterations 1
           --output build/mps-smoke.json
       - name: Test QEC benchmark integration
-        run: uv run --no-sync pytest -q tests/test_qec_benchmark.py
-      - name: Run QEC decoder benchmark smoke
+        run: >-
+          uv run --no-sync pytest -q
+          tests/test_qec_benchmark.py
+          tests/test_qec_ldpc_benchmark.py
+      - name: Run surface-code QEC decoder benchmark smoke
         run: >-
           uv run --no-sync python -m benchmarks.qec
           --profile smoke
@@ -199,6 +203,15 @@ jobs:
           --iterations 1
           --max-bp-iterations 20
           --output build/qec-smoke.json
+      - name: Run QLDPC decoder benchmark smoke
+        run: >-
+          uv run --no-sync python -m benchmarks.qec_ldpc
+          --profile smoke
+          --shots 32
+          --warmups 0
+          --iterations 1
+          --max-bp-iterations 20
+          --output build/qec-ldpc-smoke.json
       - name: Validate benchmark reports
         run: >-
           uv run --no-sync python -c
@@ -213,7 +226,17 @@ jobs:
           row=qec['results'][0];
           assert row['error_count'] > 24 and row['syndrome_consistency_rate'] == 1.0;
           assert 0.0 <= row['qupy']['logical_failure_rate'] <= 1.0;
-          assert 0.0 <= row['pymatching']['logical_failure_rate'] <= 1.0"
+          assert 0.0 <= row['pymatching']['logical_failure_rate'] <= 1.0;
+          ldpc=json.load(open('build/qec-ldpc-smoke.json', encoding='utf-8'));
+          assert ldpc['schema_version'] == 1 and ldpc['kind'] == 'qec-ldpc-decoder-evidence';
+          assert ldpc['host']['ldpc'] == '2.4.1' and len(ldpc['results']) == 1;
+          ldpc_row=ldpc['results'][0];
+          assert ldpc_row['family'] == 'hypergraph-product-hamming';
+          assert ldpc_row['error_count'] == 58 and ldpc_row['logical_qubits'] == 16;
+          assert ldpc_row['qupy_syndrome_consistency_rate'] == 1.0;
+          assert ldpc_row['ldpc_syndrome_consistency_rate'] == 1.0;
+          assert 0.0 <= ldpc_row['qupy']['logical_failure_rate'] <= 1.0;
+          assert 0.0 <= ldpc_row['ldpc']['logical_failure_rate'] <= 1.0"
 
   planner-calibration:
     runs-on: ubuntu-latest

@@ -110,7 +110,7 @@ print(state.values)
 - exact single-Pauli-string time evolution plus explicit first- and second-order Pauli-Hamiltonian product formulas;
 - canonical weighted MaxCut Hamiltonians and standard X-mixer QAOA construction;
 - detector error models, deterministic syndrome sampling, repetition-code construction, a bounded exact reference maximum-likelihood decoder, and native sparse BP+OSD-0 decoding with reusable batch execution;
-- reproducible surface-code decoder evidence against PyMatching sparse-blossom on shared Stim detector samples.
+- reproducible surface-code evidence against PyMatching sparse-blossom and hypergraph-product QLDPC evidence against independent `ldpc` BP+OSD-0 comparators.
 
 ## Architecture
 
@@ -377,7 +377,7 @@ print(decoded.observables)
 
 BP+OSD-0 always verifies the returned correction against the requested syndrome when decoding succeeds. It is not a maximum-likelihood guarantee. The existing exact reference decoder is capped at 24 error mechanisms; the scalable path uses sparse belief propagation and deterministic GF(2) order-0 repair instead of subset enumeration.
 
-The benchmark harness compares QuPy and PyMatching on identical Stim-generated rotated surface-code detector samples, including logical-failure confidence intervals and raw decode timings without turning hosted-runner timing into a pass/fail claim.
+The QEC evidence harnesses compare QuPy against independent decoders on shared workloads: PyMatching sparse-blossom on Stim-generated rotated surface-code detector samples, and `ldpc` 2.4.1 BP+OSD-0 on deterministic Hamming-seed hypergraph-product code-capacity samples. Both record logical-failure confidence intervals and raw decode timings without turning hosted-runner timing into a pass/fail claim.
 
 See [Detector-model decoding](docs/qec_decoding.md) for algorithm, result, batch, benchmark, and failure contracts.
 
@@ -456,7 +456,7 @@ The largest remaining engineering work is integration and scale:
 - add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
 - extend first-party provider coverage beyond Amazon Braket and add direct device-capability translation only where vendor conformance evidence supports it;
 - broaden chemistry, simulation, and optimization applications beyond the current Hamiltonian-evolution and MaxCut/QAOA primitives while reusing the native execution and differentiation contracts;
-- extend the existing surface-code QEC evidence to LDPC/code-family workloads and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
+- broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
 - finish the compatibility review needed to turn the checked pre-1.0 API manifest, isolated release-artifact gates, and documented version contracts into a future 1.0 commitment.
 
 The goal is a single quantum numerical-computing layer that can move from laptop simulation to accelerators, distributed execution, hybrid autodiff, and QPU submission without changing the program's meaning.
