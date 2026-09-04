@@ -91,8 +91,11 @@ def test_submit_circuit_compiles_serializes_and_submits_once() -> None:
     assert shots == submission.shots
     assert options == submission.options_json
     assert program.format == "openqasm3"
-    assert program.text == submission.compilation.circuit.to_openqasm3()
-    assert program.text.startswith("OPENQASM 3.1;")
+    expected_qasm = submission.compilation.circuit.to_openqasm3().replace(
+        "OPENQASM 3.1;", "OPENQASM 3.0;", 1
+    )
+    assert program.text == expected_qasm
+    assert program.text.startswith("OPENQASM 3.0;")
     assert "qubit[3] q;" in program.text
     assert "cz q[" in program.text
     assert "measure q[" in program.text
