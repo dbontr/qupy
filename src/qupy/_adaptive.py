@@ -39,16 +39,6 @@ def _reject_tensor_network_non_expectation(backend: str, operation: str) -> None
         )
 
 
-def _legacy_observable_policy_active(cost_model: PlannerCostModel | None) -> bool:
-    if cost_model is None:
-        return False
-    return (
-        cost_model.cuda_auto_validated
-        or cost_model.mps_auto_validated
-        or cost_model.observable_auto_validated
-    )
-
-
 def plan(
     program: Program,
     result_mode: ResultMode,
@@ -102,7 +92,7 @@ def observable_plan(
     base = _native.observable_plan(program, observables, backend, legacy_model)
     if backend != "auto" or base.backend != "native-cpu":
         return base
-    if base.method == "pauli-propagation" or _legacy_observable_policy_active(legacy_model):
+    if base.method == "pauli-propagation":
         return base
     tensor_model = resolve_tensor_network_cost_model(backend)
     if tensor_model is None:
