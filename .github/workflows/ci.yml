@@ -164,6 +164,7 @@ jobs:
           qiskit-aer==0.17.2
           qsimcirq==0.22.1
           stim==1.16.0
+          pymatching==2.4.0
       - name: Run benchmark adapter smoke
         run: >-
           uv run --no-sync python -m benchmarks.run
@@ -180,12 +181,32 @@ jobs:
           --warmups 0
           --iterations 1
           --output build/mps-smoke.json
-      - name: Validate benchmark report
+      - name: Test QEC benchmark integration
+        run: uv run --no-sync pytest -q tests/test_qec_benchmark.py
+      - name: Run QEC decoder benchmark smoke
+        run: >-
+          uv run --no-sync python -m benchmarks.qec
+          --profile smoke
+          --shots 64
+          --warmups 0
+          --iterations 1
+          --max-bp-iterations 20
+          --output build/qec-smoke.json
+      - name: Validate benchmark reports
         run: >-
           uv run --no-sync python -c
-          "import json; data=json.load(open('build/benchmark-smoke.json', encoding='utf-8'));
+          "import json;
+          data=json.load(open('build/benchmark-smoke.json', encoding='utf-8'));
           assert data['schema_version'] == 1;
-          assert all(row['valid'] is True for row in data['results'] if not row['skipped'])"
+          assert all(row['valid'] is True for row in data['results'] if not row['skipped']);
+          qec=json.load(open('build/qec-smoke.json', encoding='utf-8'));
+          assert qec['schema_version'] == 1 and qec['kind'] == 'qec-decoder-evidence';
+          assert qec['host']['stim'] == '1.16.0' and qec['host']['pymatching'] == '2.4.0';
+          assert len(qec['results']) == 1;
+          row=qec['results'][0];
+          assert row['error_count'] > 24 and row['syndrome_consistency_rate'] == 1.0;
+          assert 0.0 <= row['qupy']['logical_failure_rate'] <= 1.0;
+          assert 0.0 <= row['pymatching']['logical_failure_rate'] <= 1.0"
 
   planner-calibration:
     runs-on: ubuntu-latest
