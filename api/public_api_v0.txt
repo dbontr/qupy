@@ -23,6 +23,8 @@ DistributedTrajectoryResult
 ExecutionPlan
 Expectation
 ExpectationBatch
+FermionLadder
+FermionTerm
 GradientMethod
 GradientResult
 HardwareTarget
@@ -112,14 +114,19 @@ expect_batch
 expect_observable
 expect_observables
 expectation_plan
+fermion_annihilation
+fermion_creation
+fermion_term
 grad
 h
 hardware_efficient_ansatz
+hartree_fock_state
 hessian
 install_planner_cost_model
 install_tensor_network_cost_model
 ir_version
 jacobian
+jordan_wigner
 kraus_channel
 lindblad_evolve
 load_planner_cost_model
@@ -128,6 +135,7 @@ make_jax_expectation
 make_torch_expectation
 maxcut_hamiltonian
 measurement_groups
+molecular_hamiltonian
 mpi_compiled
 mps_target
 native_target

@@ -108,6 +108,7 @@ print(state.values)
 - hardware-efficient variational ansätze with configurable RX/RY/RZ layers and linear/ring/none entanglement;
 - composable exact QFT / inverse-QFT synthesis over arbitrary selected qubits;
 - exact single-Pauli-string time evolution plus explicit first- and second-order Pauli-Hamiltonian product formulas;
+- dependency-free Jordan-Wigner mapping, spin-orbital molecular Hamiltonian construction, and Hartree-Fock occupation-state preparation;
 - canonical weighted MaxCut Hamiltonians and standard X-mixer QAOA construction;
 - detector error models, deterministic syndrome sampling, repetition-code construction, a bounded exact reference maximum-likelihood decoder, and native sparse BP+OSD-0 decoding with reusable batch execution;
 - reproducible surface-code evidence against PyMatching sparse-blossom and hypergraph-product QLDPC evidence against independent `ldpc` BP+OSD-0 comparators.
@@ -117,7 +118,7 @@ print(state.values)
 ```text
 Python API
     |
-    +-- algorithms / optional JAX + PyTorch adapters
+    +-- algorithms / chemistry / optional JAX + PyTorch adapters
     +-- provider adapters / optional Amazon Braket + Qiskit SDKs
     |
     v
@@ -283,6 +284,22 @@ program = qp.append_hamiltonian_evolution(program, hamiltonian, 0.2, steps=4, or
 ```
 
 `append_pauli_evolution` implements one exact Pauli exponential. `append_hamiltonian_evolution` makes the product-formula approximation explicit through its order and positive step count. Commuting Pauli terms are exact up to floating-point roundoff and global phase; noncommuting sums retain the corresponding product-formula error.
+
+## Electronic-structure chemistry
+
+QuPy can translate second-quantized spin-orbital operators into its native Pauli-sum `Observable` model without adding a chemistry runtime dependency.
+
+```python
+import numpy as np
+import qupy as qp
+
+one_body = np.diag([-1.0, -0.4])
+hamiltonian = qp.molecular_hamiltonian(one_body, nuclear_repulsion=0.7)
+reference = qp.hartree_fock_state(2, 1)
+energy = qp.expect(reference, hamiltonian)
+```
+
+`jordan_wigner()` accepts explicit ordered fermionic ladder terms and requires the mapped Pauli coefficients to be real within the requested tolerance. `molecular_hamiltonian()` uses the spin-orbital convention `sum h[p,q] a†_p a_q + 0.5 sum g[p,q,r,s] a†_p a†_q a_s a_r + E_nuc`. The returned observable uses the same CPU, CUDA, MPS, tensor-network, MPI, and differentiation paths as any other QuPy Hamiltonian. `hartree_fock_state()` prepares a computational-basis occupation state and supports explicit occupied-orbital selections.
 
 ## Hardware circuits, OpenQASM, and providers
 
@@ -456,7 +473,7 @@ The largest remaining engineering work is integration and scale:
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
 - add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
 - extend first-party provider coverage beyond Amazon Braket and Qiskit Aer, and add direct device-capability translation only where vendor conformance evidence supports it;
-- broaden chemistry, simulation, and optimization applications beyond the current Hamiltonian-evolution and MaxCut/QAOA primitives while reusing the native execution and differentiation contracts;
+- broaden chemistry beyond the dependency-free spin-orbital Jordan-Wigner/Hartree-Fock foundation, and broaden simulation and optimization applications while reusing the native execution and differentiation contracts;
 - broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
 - keep the reviewed pre-1.0 compatibility baseline current while the remaining scale and provider evidence matures toward a future 1.0 commitment.
 
