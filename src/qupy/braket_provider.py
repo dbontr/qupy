@@ -55,7 +55,10 @@ def _braket_openqasm_source(source: str) -> str:
     body = source[len(_PROVIDER_HEADER) :]
     if not body.startswith(_STDGATES_INCLUDE):
         raise ValueError("Amazon Braket adapter expected QuPy's stdgates.inc provider prelude")
-    return _PROVIDER_HEADER + body[len(_STDGATES_INCLUDE) :]
+    lowered = _PROVIDER_HEADER + body[len(_STDGATES_INCLUDE) :]
+    lowered = lowered.replace("\ncx ", "\ncnot ")
+    lowered = lowered.replace(") cx ", ") cnot ")
+    return lowered
 
 
 def _openqasm_program(source: str) -> object:
