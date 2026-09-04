@@ -4,7 +4,7 @@ QuPy supports bidirectional OpenQASM 3 interchange for the operation set represe
 
 ## Round-trip
 
-`Circuit.to_openqasm3()` serializes a circuit. `Circuit.from_openqasm3()` parses the supported subset back into the immutable circuit model.
+`Circuit.to_openqasm3()` serializes a circuit as OpenQASM 3.1. `Circuit.from_openqasm3()` parses the supported subset back into the immutable circuit model.
 
 ```python
 import qupy as qp
@@ -69,9 +69,11 @@ Syntax failures include source line and column information. Existing `Circuit` v
 
 ## Provider interchange
 
-QuPy provider payloads can already use OpenQASM 3 text. Both unitary provider payloads and `measure_all=True` payloads can be converted back into `Circuit`, then inspected, compiled, fingerprinted, or re-serialized.
+`Circuit.to_openqasm3()` remains the standalone OpenQASM 3.1 representation. `provider_program()` uses the same supported syntax with an OpenQASM 3.0 language header because provider interfaces such as Amazon Braket advertise OpenQASM 3.0. QuPy's current provider subset does not use syntax whose meaning differs between those language versions; only the declared transport version changes.
 
-The importer does not trust provider text. Unsupported or malformed input fails closed through the same parser boundary.
+A provider submission stores that exact 3.0 text in `ProviderSubmission.program`. The text therefore remains the submitted-payload identity used by provider conformance and provenance checks. Provider adapters must not silently rewrite it after the generic QuPy submission boundary.
+
+Both 3.0 provider payloads and standalone 3.1 text can be parsed back into `Circuit`, then inspected, compiled, fingerprinted, or re-serialized. The importer does not trust provider text. Unsupported or malformed input fails closed through the same parser boundary.
 
 ## Expanding the subset
 
