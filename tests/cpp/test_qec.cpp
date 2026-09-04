@@ -1,19 +1,25 @@
 #include "qupy/qec.hpp"
 
-#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
+
+void require(bool condition, const char* message) {
+    if (!condition) {
+        throw std::runtime_error(message);
+    }
+}
 
 std::vector<std::int8_t> syndrome_from_correction(
     const qupy::DetectorModel& model,
     const std::vector<std::int8_t>& correction
 ) {
-    assert(correction.size() == model.errors().size());
+    require(correction.size() == model.errors().size(), "correction size mismatch");
     std::vector<std::int8_t> syndrome(model.detector_count(), 0);
     for (std::size_t error_index = 0U; error_index < correction.size(); ++error_index) {
         if (correction[error_index] == 0) {
@@ -67,10 +73,16 @@ int main() {
         const qupy::DecodeResult exact = qupy::decode_detector_model(model, syndrome);
         const qupy::BpOsdDecodeResult scalable =
             qupy::decode_detector_model_bp_osd(model, syndrome, 20U, 0.0);
-        assert(syndrome_from_correction(model, scalable.correction) == syndrome);
-        assert(scalable.observables == exact.observables);
-        assert(std::abs(scalable.log_likelihood - exact.log_likelihood) < 1e-12);
-        assert(scalable.matched_errors == exact.matched_errors);
+        require(
+            syndrome_from_correction(model, scalable.correction) == syndrome,
+            "small-model correction has wrong syndrome"
+        );
+        require(scalable.observables == exact.observables, "logical frame differs from exact");
+        require(
+            std::abs(scalable.log_likelihood - exact.log_likelihood) < 1e-12,
+            "small-model likelihood differs from exact"
+        );
+        require(scalable.matched_errors == exact.matched_errors, "matched-error count differs");
     }
 
     {
@@ -78,10 +90,13 @@ int main() {
         const std::vector<std::int8_t> syndrome{1, 1};
         const qupy::BpOsdDecoder decoder(model, 0U, 0.0);
         const qupy::BpOsdDecodeResult result = decoder.decode(syndrome);
-        assert(result.osd_used);
-        assert(!result.bp_converged);
-        assert(result.iterations == 0U);
-        assert(syndrome_from_correction(model, result.correction) == syndrome);
+        require(result.osd_used, "zero-iteration decode should use OSD");
+        require(!result.bp_converged, "zero-iteration decode unexpectedly reports BP convergence");
+        require(result.iterations == 0U, "zero-iteration decode reports BP iterations");
+        require(
+            syndrome_from_correction(model, result.correction) == syndrome,
+            "OSD correction has wrong syndrome"
+        );
     }
 
     {
@@ -96,12 +111,21 @@ int main() {
         );
         const qupy::BpOsdDecoder decoder(model, 10U, 0.25);
         const qupy::BpOsdDecodeResult result = decoder.decode({1, 1});
-        assert((result.correction == std::vector<std::int8_t>{1, 1, 0}));
-        assert((result.observables == std::vector<std::int8_t>{1}));
-        assert(syndrome_from_correction(model, result.correction) ==
-               std::vector<std::int8_t>({1, 1}));
-        assert(decoder.active_error_count() == 1U);
-        assert(decoder.edge_count() == 1U);
+        require(
+            result.correction == std::vector<std::int8_t>({1, 1, 0}),
+            "deterministic endpoint correction mismatch"
+        );
+        require(
+            result.observables == std::vector<std::int8_t>({1}),
+            "deterministic endpoint logical frame mismatch"
+        );
+        require(
+            syndrome_from_correction(model, result.correction) ==
+                std::vector<std::int8_t>({1, 1}),
+            "deterministic endpoint syndrome mismatch"
+        );
+        require(decoder.active_error_count() == 1U, "wrong active-error count");
+        require(decoder.edge_count() == 1U, "wrong Tanner edge count");
     }
 
     {
@@ -112,7 +136,7 @@ int main() {
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
-        assert(rejected);
+        require(rejected, "impossible syndrome was accepted");
     }
 
     {
@@ -122,12 +146,12 @@ int main() {
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
-        assert(rejected);
+        require(rejected, "invalid damping was accepted");
     }
 
     {
         const qupy::DetectorModel model = large_sparse_model();
-        assert(model.errors().size() == 64U);
+        require(model.errors().size() == 64U, "large model did not contain 64 errors");
         std::vector<std::int8_t> known(model.errors().size(), 0);
         known[3] = 1;
         known[17] = 1;
@@ -137,16 +161,22 @@ int main() {
         bool exact_rejected = false;
         try {
             (void) qupy::decode_detector_model(model, syndrome);
-        } catch (const std::invalid_argument&) {
+        } catch (const std::length_error&) {
             exact_rejected = true;
         }
-        assert(exact_rejected);
+        require(exact_rejected, "reference decoder unexpectedly accepted 64 error mechanisms");
 
         const qupy::BpOsdDecoder decoder(model, 30U, 0.1);
         const qupy::BpOsdDecodeResult result = decoder.decode(syndrome);
-        assert(syndrome_from_correction(model, result.correction) == syndrome);
-        assert(result.correction.size() == model.errors().size());
-        assert(result.observables.size() == model.observable_count());
+        require(
+            syndrome_from_correction(model, result.correction) == syndrome,
+            "large-model correction has wrong syndrome"
+        );
+        require(result.correction.size() == model.errors().size(), "wrong correction width");
+        require(
+            result.observables.size() == model.observable_count(),
+            "wrong logical-frame width"
+        );
 
         const std::vector<std::int8_t> zero(model.detector_count(), 0);
         std::vector<std::int8_t> flattened;
@@ -155,22 +185,31 @@ int main() {
         flattened.insert(flattened.end(), syndrome.begin(), syndrome.end());
         flattened.insert(flattened.end(), syndrome.begin(), syndrome.end());
         const qupy::BpOsdDecodeBatch batch = decoder.decode_batch(flattened, 3U);
-        assert(batch.shots == 3U);
-        assert(batch.error_count == model.errors().size());
-        assert(batch.observable_count == model.observable_count());
-        assert(batch.corrections.size() == 3U * model.errors().size());
-        assert(batch.observables.size() == 3U * model.observable_count());
-        assert(batch.log_likelihoods.size() == 3U);
-        assert(batch.matched_errors.size() == 3U);
-        assert(batch.iterations.size() == 3U);
-        assert(batch.bp_converged.size() == 3U);
-        assert(batch.osd_used.size() == 3U);
+        require(batch.shots == 3U, "wrong batch shot count");
+        require(batch.error_count == model.errors().size(), "wrong batch error width");
+        require(
+            batch.observable_count == model.observable_count(),
+            "wrong batch observable width"
+        );
+        require(
+            batch.corrections.size() == 3U * model.errors().size(),
+            "wrong batch correction storage"
+        );
+        require(
+            batch.observables.size() == 3U * model.observable_count(),
+            "wrong batch observable storage"
+        );
+        require(batch.log_likelihoods.size() == 3U, "wrong likelihood batch size");
+        require(batch.matched_errors.size() == 3U, "wrong matched-error batch size");
+        require(batch.iterations.size() == 3U, "wrong iteration batch size");
+        require(batch.bp_converged.size() == 3U, "wrong convergence batch size");
+        require(batch.osd_used.size() == 3U, "wrong OSD batch size");
 
-        std::vector<std::int8_t> batch_second(
+        const std::vector<std::int8_t> batch_second(
             batch.corrections.begin() + static_cast<std::ptrdiff_t>(model.errors().size()),
             batch.corrections.begin() + static_cast<std::ptrdiff_t>(2U * model.errors().size())
         );
-        assert(batch_second == result.correction);
+        require(batch_second == result.correction, "batch decode differs from single decode");
     }
 
     return 0;
