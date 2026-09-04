@@ -37,7 +37,7 @@
 ## Quantum execution architecture and benchmark adapters
 - [Qiskit Target](https://quantum.cloud.ibm.com/docs/en/api/qiskit/2.3/qiskit.transpiler.Target) — IBM Quantum, Qiskit 2.3. Used for: target-owned operation, qubit, coupling, and instruction-property constraints for hardware compilation architecture comparison.
 - [Transpiler stages](https://quantum.cloud.ibm.com/docs/en/guides/transpiler-stages) — IBM Quantum. Used for: layout, routing, basis-translation, optimization, and scheduling stage boundaries for target-aware compilation architecture comparison.
-- [AerSimulator](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html) — Qiskit Aer. Used for: result-aware simulator architecture and state-vector/stabilizer benchmark adapters.
+- [AerSimulator](https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html) — Qiskit Aer 0.17.x. Used for: result-aware simulator architecture, benchmark adapters, and credential-free first-party provider interoperability.
 - [qsim](https://github.com/quantumlib/qsim) — Google Quantum AI. Used for: native state-vector optimization comparison and the qsim expectation benchmark adapter.
 - [Stim](https://github.com/quantumlib/Stim) — Google Quantum AI. Used for: independent stabilizer/tableau expectation benchmark comparisons.
 - [CircuitToEinsum](https://docs.nvidia.com/cuda/cuquantum/26.06.0/python/generated/cuquantum.tensornet.CircuitToEinsum.html) — NVIDIA cuQuantum 26.06. Used for: reverse-lightcone expectation reduction design comparison.
@@ -75,6 +75,8 @@
 - [Tracking quantum tasks from the Amazon Braket SDK](https://docs.aws.amazon.com/braket/latest/developerguide/braket-monitor-tasks-sdk.html) — Amazon Web Services. Used for: task identifiers, queued/running/completed lifecycle polling, result retrieval, and cancellation semantics.
 - [Testing a quantum task with the local simulator](https://docs.aws.amazon.com/braket/latest/developerguide/braket-send-to-local-simulator.html) — Amazon Web Services. Used for: credential-free `LocalSimulator` integration conformance.
 - [Amazon Braket Python SDK](https://github.com/amazon-braket/amazon-braket-sdk-python) — Amazon Web Services. Used for: optional SDK integration and the pinned provider-interoperability test dependency.
+- [Qiskit providers](https://quantum.cloud.ibm.com/docs/en/api/qiskit/providers) — IBM Quantum, Qiskit latest. Used for: Backend/Job lifecycle structure, `JobStatus` semantics, result retrieval, and cancellation behavior used by the Qiskit provider adapter.
+- [Qiskit Aer](https://github.com/Qiskit/qiskit-aer) — Qiskit, Aer 0.17.2. Used for: optional credential-free simulator backend integration and the pinned Qiskit provider-interoperability test dependency.
 
 ## Quantum error correction
 - [Stim detector error model format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md) — Google Quantum AI, Stim. Used for: detector-event, independent-error-mechanism, logical-frame-change, and decomposition-separator semantics used by QuPy detector models and QEC reference workloads.

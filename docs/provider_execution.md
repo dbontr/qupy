@@ -16,7 +16,7 @@ The hardware path is:
 
 `qp.submit_circuit()` performs steps 2 through 6. It returns a `ProviderSubmission` containing the provider job identifier, the complete `CompilationResult`, and the exact `ProviderProgram` submitted to the backend.
 
-`Circuit.to_openqasm3()` remains the standalone OpenQASM 3.1 serializer. The generic provider bridge uses the syntax-compatible OpenQASM 3.0 profile because major provider APIs, including Amazon Braket, advertise OpenQASM 3.0. QuPy's current hardware-capable subset does not use 3.1-only syntax, so this generic bridge changes only the declared language version. A provider adapter can apply a documented vendor-specific lowering after the generic provider boundary when required by that provider's OpenQASM dialect.
+`Circuit.to_openqasm3()` remains the standalone OpenQASM 3.1 serializer. The generic provider bridge uses the syntax-compatible OpenQASM 3.0 profile because major provider APIs advertise OpenQASM 3.0. QuPy's current hardware-capable subset does not use 3.1-only syntax, so this generic bridge changes only the declared language version. A provider adapter can apply a documented vendor-specific lowering after the generic provider boundary when required by that provider's interface.
 
 ```python
 import qupy as qp
@@ -128,27 +128,46 @@ The generic QuPy `ProviderProgram` remains the canonical OpenQASM 3.0 provider-b
 
 `braket_local_simulator_target()` advertises the QuPy gate subset exercised by the real SDK integration suite, all-to-all connectivity, and terminal measurement. It deliberately does not advertise reset, mid-circuit measurement, or dynamic control. The interoperability test submits H, X, Y, Z, RX, RY, RZ, CX/CNOT, CZ, and SWAP through the actual Braket `LocalSimulator`, so the advertised local gate set is tied to executable vendor evidence rather than inferred from documentation alone.
 
-Cloud execution uses the caller's configured Amazon Braket SDK and AWS credential environment:
-
-```python
-target = qp.HardwareTarget(
-    "configured-braket-device",
-    2,
-    [qp.CircuitOperationCode.H, qp.CircuitOperationCode.RZ],
-    [qp.CircuitOperationCode.CZ],
-    measurement=True,
-)
-provider = qp.BraketProvider.aws_device(
-    "arn:aws:braket:REGION::device/qpu/PROVIDER/DEVICE",
-    target=target,
-)
-```
-
-QuPy does not copy, persist, refresh, or inspect AWS credentials. The adapter delegates device construction and task submission to the installed Amazon Braket SDK. Device gate sets and topology differ across Braket hardware, so the AWS constructor does not invent a `HardwareTarget`; callers provide a trusted target until QuPy has direct conformance evidence for device-capability translation.
+Cloud execution uses the caller's configured Amazon Braket SDK and AWS credential environment. QuPy does not copy, persist, refresh, or inspect AWS credentials. Device gate sets and topology differ across Braket hardware, so the AWS constructor does not invent a `HardwareTarget`; callers provide a trusted target until QuPy has direct conformance evidence for device-capability translation.
 
 Amazon Braket quantum-task states map to the portable QuPy lifecycle as follows: `CREATED` and `QUEUED` map to queued; `RUNNING` and `CANCELLING` map to running; `COMPLETED` maps to succeeded; and `FAILED`/`CANCELLED` remain terminal failures. Unknown states fail closed. Result retrieval normalizes terminal measurement counts, probabilities, measured qubits, and shot count into deterministic JSON.
 
-The current Braket adapter accepts the empty provider options object only. Vendor-specific task options are not silently forwarded through an unversioned JSON bag. Applications that require Braket-specific execution controls can use the Braket SDK directly until those controls have an explicit QuPy contract.
+The current Braket adapter accepts the empty provider options object only. Vendor-specific task options are not silently forwarded through an unversioned JSON bag.
+
+## Qiskit and Aer
+
+`QiskitProvider` is a first-party adapter for Qiskit Backend-style jobs. Qiskit and Qiskit Aer are optional and lazily imported; neither package is a `qupy-compute` runtime dependency. If an SDK package itself is absent, adapter construction raises `ImportError` with the optional package requirement; import failures from dependencies inside an installed Qiskit stack are preserved rather than being masked as a missing SDK. Credential-free interoperability uses the real `AerSimulator`:
+
+```python
+import qupy as qp
+
+provider = qp.QiskitProvider.aer_simulator(num_qubits=4)
+circuit = qp.Circuit(2, 2).h(0).cx(0, 1)
+circuit = circuit.measure(0, 0).measure(1, 1)
+
+submission = qp.submit_circuit(
+    provider,
+    circuit,
+    1000,
+    initial_layout=[0, 1],
+)
+print(provider.poll(submission.job_id))
+print(provider.result_json(submission.job_id))
+```
+
+The Qiskit adapter deliberately does not depend on Qiskit's optional OpenQASM importer. The exact QuPy `ProviderProgram` remains the submitted provenance artifact; the adapter parses that OpenQASM 3.0 text back through QuPy's own supported-subset parser and constructs a Qiskit `QuantumCircuit` directly. This keeps the accepted provider syntax identical to QuPy's tested hardware subset instead of delegating parsing or extension semantics to another package.
+
+`qiskit_aer_target()` advertises H, X, Y, Z, RX, RY, RZ, CX, CZ, SWAP, all-to-all connectivity, and terminal measurement. Reset, mid-circuit measurement, and classical feed-forward remain unadvertised and are rejected by the adapter. The provider interoperability workflow submits a Bell circuit, every advertised unitary gate, and the generic QuPy provider-conformance circuit through Qiskit Aer itself.
+
+Qiskit job states map to the portable lifecycle as follows: `INITIALIZING`, `QUEUED`, and `VALIDATING` map to queued; `RUNNING` maps to running; `DONE` maps to succeeded; `ERROR` maps to failed; and both `CANCELLED` and the alternate spelling `CANCELED` map to cancelled. Aer jobs are still treated as asynchronous jobs: callers poll until a terminal state rather than assuming local simulation completes before the first poll. Unknown status objects or names fail closed. Successful result retrieval normalizes measurement counts and shot count into deterministic JSON.
+
+A caller can also wrap another Qiskit Backend-style object directly:
+
+```python
+provider = qp.QiskitProvider(backend, target=trusted_target)
+```
+
+QuPy does not create, copy, inspect, persist, or refresh IBM Quantum credentials. It also does not infer a hardware target from an arbitrary Qiskit backend yet. Cloud/device backends therefore require a caller-supplied trusted `HardwareTarget` until direct capability translation has its own executable conformance evidence. Vendor-specific run options are likewise not forwarded through an unversioned JSON bag; the current Qiskit adapter accepts the empty options object only.
 
 ## Precompiled submission
 
@@ -175,7 +194,7 @@ print(report.to_json())
 
 The checker requires advertised OpenQASM 3 support and either an advertised `hardware_target` or an explicit trusted target. It compiles and submits one single-qubit terminal-measurement circuit, then accepts repeated `queued` or `running` states while rejecting a regression from `running` back to `queued`. `failed`, `cancelled`, timeout, malformed result JSON, and capability/target inconsistencies fail closed.
 
-The Amazon Braket interoperability workflow applies this same checker to the real Braket `LocalSimulator`. That proves SDK import, deterministic OpenQASM dialect lowering, task submission, lifecycle mapping, result normalization, generic QuPy submission, and provider-conformance composition without requiring cloud credentials or spending QPU quota.
+The provider interoperability workflow applies this checker to both credential-free first-party integrations: Amazon Braket `LocalSimulator` and Qiskit `AerSimulator`. Those gates prove SDK import, adapter-specific circuit translation, local submission, lifecycle mapping, result normalization, generic QuPy submission, and provider-conformance composition without requiring cloud credentials or QPU quota. They do not certify physical hardware fidelity, cloud SLAs, billing, or credential lifecycle.
 
 For native command-line provider adapters that advertise their target, the packaged wheel installs:
 
@@ -185,7 +204,7 @@ qupy-provider-conformance /path/to/provider-library --shots 1 --max-polls 32 --p
 
 The report contains provider/target identity, the observed lifecycle states, and SHA-256 identities for the submitted program, provider job identifier, and result JSON. It deliberately does not embed the raw program text, remote job identifier, or provider result payload.
 
-This conformance check proves the portable QuPy provider contract only. It does not certify physical quantum fidelity, queue or latency service levels, billing behavior, credential lifecycle, security/compliance properties, provider-specific result semantics, or vendor SDK correctness. Those remain adapter/provider evidence. Cancellation remains part of the provider lifecycle and is tested independently; the successful remote conformance path does not create a cancellation race solely to test that operation.
+Cancellation remains part of the provider lifecycle and is tested independently; the successful conformance path does not create a cancellation race solely to test that operation.
 
 ## Provider ABI stability
 
@@ -204,4 +223,4 @@ The hardware execution bridge does not add credentials, HTTP clients, vendor SDK
 
 ## Current boundary
 
-The provider capability target uses the same compact target model as the native hardware compiler: global operation support by arity, undirected connectivity, and optional per-operation durations. Providers that need directed gates, per-edge basis differences, or calibration snapshots can extend the capability schema in a future version while preserving provider ABI compatibility.
+The provider capability target uses the same compact target model as the native hardware compiler: global operation support by arity, undirected connectivity, and optional per-operation durations. Providers that need directed gates, per-edge basis differences, or calibration snapshots can extend the capability schema in a future version while preserving provider ABI compatibility. First-party local adapters currently provide executable evidence for Amazon Braket and Qiskit Aer; automatic capability translation for vendor cloud hardware remains intentionally outside the validated surface.

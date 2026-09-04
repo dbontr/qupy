@@ -57,6 +57,7 @@ ProviderJobState
 ProviderPlugin
 ProviderProgram
 ProviderSubmission
+QiskitProvider
 ResultMode
 Samples
 SamplesBatch
@@ -149,6 +150,7 @@ provider_capabilities
 provider_program
 qaoa_maxcut_program
 qft
+qiskit_aer_target
 remove_planner_cost_model
 remove_tensor_network_cost_model
 repetition_code_detector_model
