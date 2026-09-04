@@ -44,7 +44,7 @@ The Linux Python 3.12 release lane additionally rebuilds the generated source di
 
 The verifier lives at `tools/verify_wheel.py` and intentionally has no QuPy import in its driver process. The QuPy import occurs only inside the isolated child environment. That environment installs only the base wheel and its required dependencies, verifies that JAX, PyTorch, and Amazon Braket remain absent after importing QuPy, and checks that invoking each optional adapter fails with the documented dependency error rather than importing an optional ecosystem implicitly.
 
-The Linux Python 3.12 CI lane also runs `mypy.stubtest` against the built native extension. This checks that the public native type stub and the runtime nanobind surface agree on names, signatures, attributes, and runtime-visible types instead of treating successful static type checking as sufficient evidence.
+The Linux Python 3.12 CI lane also generates a reference stub from the built nanobind extension and compares it structurally with the checked `src/qupy/_native.pyi`. The verifier requires complete public declaration and class-member coverage and matching callable argument structure while deliberately ignoring nanobind's runtime metaclass and callable-wrapper implementation details. This catches native API drift without treating ordinary static type checking as sufficient evidence or suppressing whole classes of nanobind-specific false positives.
 
 ## Pre-1.0 policy
 

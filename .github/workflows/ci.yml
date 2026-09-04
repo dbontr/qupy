@@ -121,7 +121,11 @@ jobs:
       - run: uv run mypy src/qupy
       - name: Verify native stubs match runtime
         if: ${{ matrix.python-version == '3.12' }}
-        run: uv run python -m mypy.stubtest qupy._native --concise
+        run: |
+          uv run --with "nanobind>=3.0.1,<4" python -m nanobind.stubgen \
+            -m qupy._native -o .native-runtime.pyi
+          uv run python tools/verify_native_stub.py \
+            src/qupy/_native.pyi .native-runtime.pyi
       - run: uv build
       - name: Verify built wheel in isolation
         run: uv run python tools/verify_wheel.py --dist-dir dist
