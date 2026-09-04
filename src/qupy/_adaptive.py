@@ -35,7 +35,8 @@ def _reject_tensor_network_non_expectation(backend: str, operation: str) -> None
     if backend == _TENSOR_NETWORK_BACKEND:
         raise ValueError(
             f"{operation} is not supported by native-tn; "
-            "the tensor-network backend currently supports observable expectations only"
+            "the tensor-network backend currently supports observable expectations and "
+            "expectation differentiation only"
         )
 
 

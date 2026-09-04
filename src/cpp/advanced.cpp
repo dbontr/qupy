@@ -1,4 +1,5 @@
 #include "qupy/advanced.hpp"
+#include "qupy/tensor_network.hpp"
 
 #include "cuda_driver.hpp"
 #include "distributed.hpp"
@@ -2214,6 +2215,11 @@ GradientResult value_and_grad(
     GradientMethod method,
     double epsilon
 ) {
+    if (backend == "native-tn") {
+        return tensor_network_value_and_grad(
+            program, value, slots, parameter_values, method, epsilon
+        );
+    }
     if (slots.size() != parameter_values.size()) {
         throw std::invalid_argument("parameter values must match parameter slots");
     }
@@ -2291,6 +2297,11 @@ JacobianResult jacobian(
     GradientMethod method,
     double epsilon
 ) {
+    if (backend == "native-tn") {
+        return tensor_network_jacobian(
+            program, values, slots, parameter_values, method, epsilon
+        );
+    }
     if (slots.size() != parameter_values.size()) {
         throw std::invalid_argument("parameter values must match parameter slots");
     }
@@ -2336,6 +2347,9 @@ HessianResult hessian(
     const std::vector<double>& parameter_values,
     const std::string& backend
 ) {
+    if (backend == "native-tn") {
+        return tensor_network_hessian(program, value, slots, parameter_values);
+    }
     if (slots.size() != parameter_values.size()) {
         throw std::invalid_argument("parameter values must match parameter slots");
     }

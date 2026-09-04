@@ -67,7 +67,7 @@ print(state.values)
 ### Specialized exact scale engines
 
 - exact MPS execution with structural bond/routing/work estimates and adaptive MPS-to-dense continuation;
-- exact general tensor-network expectation execution through explicit `native-tn` and evidence-gated automatic CPU/TN selection;
+- exact general tensor-network expectation execution and explicit parameter-shift differentiation through `native-tn`, with evidence-gated automatic CPU/TN expectation selection;
 - deterministic tensor-network structural preflight with contraction count, peak rank, peak intermediate bytes, scalar work, and plan fingerprints;
 - exact MPI-sharded state-vector execution and distributed Pauli/Hamiltonian reductions;
 - MPI term-parallel general tensor-network expectation execution;
@@ -150,7 +150,7 @@ The C++ core is independently buildable and directly tested with CTest. Python i
 | `native-cuda` | CUDA state vectors, Pauli reduction, density/noise | Exact; requires compatible NVIDIA driver |
 | stabilizer | Large Clifford sampling | Exact; planner-selected for eligible workloads |
 | `native-mps` / adaptive MPS | Low-entanglement exact execution | No user-visible bond truncation |
-| `native-tn` | General tensor-network rich-observable expectations | Exact greedy contraction; auto only with promoted in-domain CPU/TN evidence |
+| `native-tn` | General tensor-network rich-observable expectations and explicit expectation derivatives | Exact greedy contraction; auto expectation routing only with promoted in-domain CPU/TN evidence |
 | `native-mpi` | Distributed state vector and rich observables | Exact MPI sharding/reduction |
 | distributed TN | Pauli-term-parallel tensor-network expectation | Exact MPI reduction |
 | trajectories | Noisy wave-function Monte Carlo | Statistical estimator; seedable |
