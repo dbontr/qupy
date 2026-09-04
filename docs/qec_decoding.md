@@ -88,10 +88,30 @@ predicted_logicals = batch.observables
 
 Batch outputs are native-owned read-only NumPy views. The batch API removes per-shot Python dispatch overhead. The current implementation does not promise parallel shot execution.
 
+## Decoder evidence harness
+
+`python -m benchmarks.qec` measures QuPy BP+OSD-0 against PyMatching sparse-blossom minimum-weight perfect matching on identical detector samples from Stim-generated rotated surface-code memory circuits. Stim and PyMatching are benchmark-only dependencies and are not imported by the QuPy runtime package.
+
+The harness converts the flattened Stim detector error model into a QuPy `DetectorModel`. It preserves the complete parity of each independent error mechanism. Stim `^` separators are treated as suggested graphlike decompositions, not as separate independent errors. The harness then checks every QuPy batch correction by reconstructing its detector syndrome from the imported model.
+
+Each report includes:
+
+- surface-code task, distance, rounds, physical error rate, shots, and fixed seed;
+- detector, observable, error-mechanism, active-variable, and Tanner-edge counts;
+- QuPy detector-model fingerprint and conversion time;
+- decoder construction and raw batch-decode timing samples;
+- median batch throughput without a hosted-CI timing threshold;
+- logical-failure counts, rates, and 95% Wilson intervals for both decoders;
+- QuPy BP convergence rate, OSD-0 usage rate, and iteration statistics;
+- cross-decoder logical prediction agreement;
+- exact QuPy correction-to-syndrome consistency.
+
+The `smoke` profile is an integration check. The `standard` profile spans rotated X/Z memories, distances 3, 5, and 7, and two physical error rates. These Stim-generated circuits are reproducible reference workloads, not an exhaustive QEC corpus. Controlled repeated measurements with adequate shots are required before drawing decoder-quality or latency conclusions.
+
 ## Scale boundary
 
 The exact reference decoder grows exponentially with the number of error mechanisms and is capped at 24. BP+OSD-0 uses sparse message passing followed, when required, by a polynomial GF(2) solve. Its cost depends on Tanner-graph degree, BP iteration count, detector count, and the rank used by the OSD repair.
 
-For large production workloads, decoder quality must be benchmarked against the target code family and noise model. Higher-order OSD, minimum-weight matching, union-find, or code-specific decoders can provide different accuracy/latency tradeoffs; QuPy does not select those methods implicitly.
+For large production workloads, decoder quality must be benchmarked against the target code family and noise model. Higher-order OSD, minimum-weight matching, union-find, or code-specific decoders can provide different accuracy/latency tradeoffs; QuPy does not select those methods implicitly. The repository QEC evidence harness provides a repeatable surface-code comparison baseline; broader LDPC/code-family evidence remains necessary before promoting additional decoders.
 
-See [Research and implementation references](../REFERENCES.md) for the detector-model, BP+OSD, and ordered-statistics sources used by this implementation.
+See [Research and implementation references](../REFERENCES.md) for the detector-model, BP+OSD, ordered-statistics, and sparse-blossom sources used by this implementation and benchmark architecture.
