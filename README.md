@@ -424,6 +424,7 @@ uv run mypy src/qupy
 The README is the overview. Detailed contracts live in focused documents:
 
 - [Algorithm construction](docs/algorithms.md)
+- [Pre-1.0 compatibility review](docs/compatibility_review_v0.md)
 - [Detector-model decoding](docs/qec_decoding.md)
 - [Distributed scale engines](docs/distributed_scale_engines.md)
 - [JAX and PyTorch autodiff interoperability](docs/framework_autodiff.md)
@@ -457,6 +458,6 @@ The largest remaining engineering work is integration and scale:
 - extend first-party provider coverage beyond Amazon Braket and Qiskit Aer, and add direct device-capability translation only where vendor conformance evidence supports it;
 - broaden chemistry, simulation, and optimization applications beyond the current Hamiltonian-evolution and MaxCut/QAOA primitives while reusing the native execution and differentiation contracts;
 - broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
-- finish the compatibility review needed to turn the checked pre-1.0 API manifest, isolated release-artifact gates, and documented version contracts into a future 1.0 commitment.
+- keep the reviewed pre-1.0 compatibility baseline current while the remaining scale and provider evidence matures toward a future 1.0 commitment.
 
 The goal is a single quantum numerical-computing layer that can move from laptop simulation to accelerators, distributed execution, hybrid autodiff, and QPU submission without changing the program's meaning.
