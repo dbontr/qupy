@@ -134,9 +134,12 @@ from ._tensor_planner import (
 )
 from .algorithms import (
     VariationalTemplate,
+    append_hamiltonian_evolution,
     append_pauli_evolution,
     append_qft,
     hardware_efficient_ansatz,
+    maxcut_hamiltonian,
+    qaoa_maxcut_program,
     qft,
 )
 from .braket_provider import BraketProvider, braket_local_simulator_target
@@ -283,6 +286,7 @@ __all__ = [
     "__version__",
     "adaptive_mps_target",
     "amplitude_damping",
+    "append_hamiltonian_evolution",
     "append_pauli_evolution",
     "append_qft",
     "bit_flip",
@@ -332,6 +336,7 @@ __all__ = [
     "load_tensor_network_cost_model",
     "make_jax_expectation",
     "make_torch_expectation",
+    "maxcut_hamiltonian",
     "measurement_groups",
     "mpi_compiled",
     "mps_target",
@@ -353,6 +358,7 @@ __all__ = [
     "probabilities",
     "provider_capabilities",
     "provider_program",
+    "qaoa_maxcut_program",
     "qft",
     "remove_planner_cost_model",
     "remove_tensor_network_cost_model",
