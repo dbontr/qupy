@@ -1,9 +1,71 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from os import PathLike
 from typing import Protocol, cast
 
 from . import _native
+
+
+class TensorNetworkCostModel(Protocol):
+    @property
+    def schema_version(self) -> int: ...
+
+    @property
+    def policy_version(self) -> int: ...
+
+    @property
+    def workload_version(self) -> int: ...
+
+    @property
+    def engine_version(self) -> str: ...
+
+    @property
+    def host_fingerprint(self) -> str: ...
+
+    @property
+    def artifact_fingerprint(self) -> str: ...
+
+    @property
+    def report_count(self) -> int: ...
+
+    @property
+    def decision_samples(self) -> int: ...
+
+    @property
+    def decision_mistakes(self) -> int: ...
+
+    @property
+    def decision_max_regret(self) -> float: ...
+
+    @property
+    def cpu_wins(self) -> int: ...
+
+    @property
+    def tensor_network_wins(self) -> int: ...
+
+    @property
+    def auto_validated(self) -> bool: ...
+
+    def predict_cpu_ns(
+        self,
+        active_qubits: int,
+        compiled_steps: int,
+        two_qubit_operations: int,
+        operation_count: int,
+        term_count: int,
+        threads: int,
+    ) -> float: ...
+
+    def predict_tensor_network_ns(
+        self,
+        contractions: int,
+        peak_tensor_rank: int,
+        peak_tensor_bytes: int,
+        scalar_multiplications: float,
+        term_count: int,
+    ) -> float: ...
 
 
 class _NativeTensorNetworkPlan(Protocol):
@@ -74,6 +136,8 @@ class _NativeTensorNetworkResult(Protocol):
 
 
 class _NativeTensorNetworkModule(Protocol):
+    def load_tensor_network_cost_model(self, path: str) -> TensorNetworkCostModel: ...
+
     def tensor_network_plan(
         self,
         program: _native.Program,
@@ -92,6 +156,14 @@ class _NativeTensorNetworkModule(Protocol):
         self,
         program: _native.Program,
         observables: list[_native.Observable],
+        max_tensor_bytes: int = 1 << 30,
+    ) -> _native.ObservableExecutionPlan: ...
+
+    def tensor_network_auto_observable_plan(
+        self,
+        program: _native.Program,
+        observables: list[_native.Observable],
+        cost_model: TensorNetworkCostModel,
         max_tensor_bytes: int = 1 << 30,
     ) -> _native.ObservableExecutionPlan: ...
 
@@ -137,6 +209,13 @@ class TensorNetworkEstimate:
     exact: bool
     backend: str
     method: str
+
+
+def load_tensor_network_cost_model(
+    path: str | PathLike[str],
+) -> TensorNetworkCostModel:
+    native = cast(_NativeTensorNetworkModule, _native)
+    return native.load_tensor_network_cost_model(os.fspath(path))
 
 
 def tensor_network_plan(
@@ -196,6 +275,15 @@ def _observable_plan(
     return native.tensor_network_observable_plan(program, observables)
 
 
+def _auto_observable_plan(
+    program: _native.Program,
+    observables: list[_native.Observable],
+    cost_model: TensorNetworkCostModel,
+) -> _native.ObservableExecutionPlan:
+    native = cast(_NativeTensorNetworkModule, _native)
+    return native.tensor_network_auto_observable_plan(program, observables, cost_model)
+
+
 def _expect_observable(
     program: _native.Program,
     observable: _native.Observable,
@@ -213,8 +301,10 @@ def _expect_observables(
 
 
 __all__ = [
+    "TensorNetworkCostModel",
     "TensorNetworkEstimate",
     "TensorNetworkPlan",
+    "load_tensor_network_cost_model",
     "tensor_network_expectation",
     "tensor_network_plan",
 ]
