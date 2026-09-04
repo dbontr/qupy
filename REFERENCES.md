@@ -67,7 +67,7 @@
 ## QPU interchange and distributed execution
 - [OpenQASM 3.1 Specification](https://openqasm.com/versions/3.1/index.html) — OpenQASM contributors, specification 3.1. Used for: supported-subset parsing and serialization of portable gate calls, measurement, reset, barriers, register declarations, and classical feed-forward syntax.
 - [QIR Base Profile](https://github.com/qir-alliance/qir-spec/blob/main/specification/profiles/Base_Profile.md) — QIR Alliance. Used for: LLVM-based QIR entry-point, profile, qubit/result, and output-recording requirements.
-- [MPI: A Message-Passing Interface Standard Version 5.0](https://www.mpi-forum.org/docs/mpi-5.0/mpi50-report/mpi50-report.htm) — MPI Forum, MPI 5.0 (2025). Used for: distributed state-vector point-to-point communication, collective broadcast and reduction, communicator topology, and initialization semantics.
+- [MPI: A Message-Passing Interface Standard Version 5.0](https://www.mpi-forum.org/docs/mpi-5.0/mpi50-report/mpi50-report.htm) — MPI Forum, MPI 5.0 (2025). Used for: distributed state-vector point-to-point communication, host-staged distributed-CUDA shard exchange, collective failure/broadcast/reduction, communicator topology, and initialization semantics.
 
 ## Provider adapters
 - [Run your circuits with OpenQASM 3.0](https://docs.aws.amazon.com/braket/latest/developerguide/braket-openqasm.html) — Amazon Web Services. Used for: the Amazon Braket OpenQASM 3.0 provider transport profile and gate-model submission boundary.

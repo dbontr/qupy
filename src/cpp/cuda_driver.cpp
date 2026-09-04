@@ -965,6 +965,21 @@ public:
         const std::vector<CudaStep>& steps,
         const std::vector<CudaPauliMask>& terms
     );
+    [[nodiscard]] std::unique_lock<std::mutex> acquire_execution() {
+        return std::unique_lock<std::mutex>(execution_mutex_);
+    }
+    [[nodiscard]] std::uint64_t initialize_distributed_state(
+        std::size_t local_qubits,
+        bool rank_zero
+    );
+    void apply_distributed_local(std::uint64_t dimension, const CudaStep& step);
+    [[nodiscard]] std::vector<Complex> download_distributed_state(
+        std::uint64_t dimension
+    ) const;
+    void replace_distributed_state(
+        std::uint64_t dimension,
+        const std::vector<Complex>& values
+    );
 
 private:
     void check(CUresult result, std::string_view operation) const;
@@ -1264,6 +1279,66 @@ std::uint64_t CudaRuntime::prepare_state(
     return dimension;
 }
 
+std::uint64_t CudaRuntime::initialize_distributed_state(
+    std::size_t local_qubits,
+    bool rank_zero
+) {
+    const std::uint64_t dimension = prepare_zero_state(local_qubits);
+    if (!rank_zero) {
+        const Complex zero{0.0, 0.0};
+        check(cu_memcpy_htod_(workspace_, &zero, sizeof(zero)), "cuMemcpyHtoD(distributed-zero)");
+    }
+    check(cu_ctx_synchronize_(), "cuCtxSynchronize(distributed-init)");
+    return dimension;
+}
+
+void CudaRuntime::apply_distributed_local(
+    std::uint64_t dimension,
+    const CudaStep& step
+) {
+    set_current();
+    launch(workspace_, dimension, step);
+    check(cu_ctx_synchronize_(), "cuCtxSynchronize(distributed-local)");
+}
+
+std::vector<Complex> CudaRuntime::download_distributed_state(
+    std::uint64_t dimension
+) const {
+    if (dimension > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::length_error("distributed CUDA shard exceeds native address space");
+    }
+    const std::size_t size = static_cast<std::size_t>(dimension);
+    if (size > std::numeric_limits<std::size_t>::max() / sizeof(Complex)) {
+        throw std::length_error("distributed CUDA shard exceeds native address space");
+    }
+    set_current();
+    check(cu_ctx_synchronize_(), "cuCtxSynchronize(distributed-download)");
+    std::vector<Complex> result(size);
+    check(
+        cu_memcpy_dtoh_(result.data(), workspace_, size * sizeof(Complex)),
+        "cuMemcpyDtoH(distributed-state)"
+    );
+    return result;
+}
+
+void CudaRuntime::replace_distributed_state(
+    std::uint64_t dimension,
+    const std::vector<Complex>& values
+) {
+    if (dimension != static_cast<std::uint64_t>(values.size())) {
+        throw std::invalid_argument("distributed CUDA shard replacement has the wrong size");
+    }
+    if (values.size() > std::numeric_limits<std::size_t>::max() / sizeof(Complex)) {
+        throw std::length_error("distributed CUDA shard exceeds native address space");
+    }
+    set_current();
+    check(
+        cu_memcpy_htod_(workspace_, values.data(), values.size() * sizeof(Complex)),
+        "cuMemcpyHtoD(distributed-state)"
+    );
+    check(cu_ctx_synchronize_(), "cuCtxSynchronize(distributed-replace)");
+}
+
 std::uint64_t CudaRuntime::launch_pauli(
     std::uint64_t dimension,
     const CudaPauliMask& term,
@@ -1559,6 +1634,58 @@ RuntimeRegistry& registry() {
 }
 
 }  // namespace
+
+struct CudaDistributedState::Impl {
+    Impl(std::size_t local_qubits, bool rank_zero, std::size_t selected_device)
+        : cuda_runtime(runtime(selected_device)),
+          lock(cuda_runtime.acquire_execution()),
+          dimension(cuda_runtime.initialize_distributed_state(local_qubits, rank_zero)),
+          device(selected_device) {}
+
+    CudaRuntime& cuda_runtime;
+    std::unique_lock<std::mutex> lock;
+    std::uint64_t dimension;
+    std::size_t device;
+};
+
+CudaDistributedState::CudaDistributedState(
+    std::size_t local_qubits,
+    bool rank_zero,
+    std::size_t device
+) : impl_(std::make_unique<Impl>(local_qubits, rank_zero, device)) {}
+
+CudaDistributedState::~CudaDistributedState() = default;
+CudaDistributedState::CudaDistributedState(CudaDistributedState&&) noexcept = default;
+CudaDistributedState& CudaDistributedState::operator=(CudaDistributedState&&) noexcept = default;
+
+std::size_t CudaDistributedState::size() const noexcept {
+    return impl_ == nullptr ? 0U : static_cast<std::size_t>(impl_->dimension);
+}
+
+std::size_t CudaDistributedState::device() const noexcept {
+    return impl_ == nullptr ? 0U : impl_->device;
+}
+
+void CudaDistributedState::apply_local(const CudaStep& step) {
+    if (impl_ == nullptr) {
+        throw std::logic_error("distributed CUDA state was moved from");
+    }
+    impl_->cuda_runtime.apply_distributed_local(impl_->dimension, step);
+}
+
+std::vector<Complex> CudaDistributedState::download() const {
+    if (impl_ == nullptr) {
+        throw std::logic_error("distributed CUDA state was moved from");
+    }
+    return impl_->cuda_runtime.download_distributed_state(impl_->dimension);
+}
+
+void CudaDistributedState::replace(const std::vector<Complex>& values) {
+    if (impl_ == nullptr) {
+        throw std::logic_error("distributed CUDA state was moved from");
+    }
+    impl_->cuda_runtime.replace_distributed_state(impl_->dimension, values);
+}
 
 std::optional<std::size_t> cuda_backend_device(const std::string& backend) noexcept {
     std::string_view suffix;

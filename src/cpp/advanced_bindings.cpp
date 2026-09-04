@@ -718,4 +718,11 @@ void bind_advanced(nb::module_& module) {
         "program"_a,
         nb::call_guard<nb::gil_scoped_release>()
     );
+    module.def(
+        "distributed_cuda_statevector",
+        &qupy::distributed_cuda_statevector,
+        "program"_a,
+        "device"_a = std::nullopt,
+        nb::call_guard<nb::gil_scoped_release>()
+    );
 }

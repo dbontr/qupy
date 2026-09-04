@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,30 @@ struct CudaPauliMask {
     std::uint64_t flip_mask;
     std::uint64_t sign_mask;
     std::uint32_t y_phase;
+};
+
+class CudaDistributedState {
+public:
+    CudaDistributedState(
+        std::size_t local_qubits,
+        bool rank_zero,
+        std::size_t device = 0U
+    );
+    ~CudaDistributedState();
+    CudaDistributedState(CudaDistributedState&&) noexcept;
+    CudaDistributedState& operator=(CudaDistributedState&&) noexcept;
+    CudaDistributedState(const CudaDistributedState&) = delete;
+    CudaDistributedState& operator=(const CudaDistributedState&) = delete;
+
+    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] std::size_t device() const noexcept;
+    void apply_local(const CudaStep& step);
+    [[nodiscard]] std::vector<Complex> download() const;
+    void replace(const std::vector<Complex>& values);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 [[nodiscard]] std::optional<std::size_t> cuda_backend_device(

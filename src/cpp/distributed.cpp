@@ -1,5 +1,7 @@
 #include "distributed.hpp"
 
+#include "cuda_driver.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -9,8 +11,9 @@
 #include <cstdint>
 #include <limits>
 #include <map>
-#include <tuple>
+#include <optional>
 #include <stdexcept>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -59,6 +62,40 @@ using Matrix2 = std::array<Complex, 4>;
 
 [[nodiscard]] bool is_power_of_two(std::size_t value) noexcept {
     return value != 0U && (value & (value - 1U)) == 0U;
+}
+
+[[nodiscard]] bool operation_is_local(
+    const Operation& operation,
+    std::size_t local_qubits
+) noexcept {
+    return std::all_of(
+        operation.qubits.begin(),
+        operation.qubits.end(),
+        [local_qubits](std::size_t qubit) { return qubit < local_qubits; }
+    );
+}
+
+[[nodiscard]] detail::CudaStep cuda_local_step(const Operation& operation) {
+    if (operation.qubits.size() == 1U) {
+        return {
+            detail::CudaStepKind::Single,
+            operation_matrix(operation),
+            operation.qubits.front(),
+            0U,
+        };
+    }
+    if (operation.qubits.size() != 2U) {
+        throw std::invalid_argument("CUDA distributed state received an invalid operation arity");
+    }
+    detail::CudaStepKind kind = detail::CudaStepKind::CX;
+    switch (operation.code) {
+    case OperationCode::CX: kind = detail::CudaStepKind::CX; break;
+    case OperationCode::CZ: kind = detail::CudaStepKind::CZ; break;
+    case OperationCode::SWAP: kind = detail::CudaStepKind::SWAP; break;
+    default:
+        throw std::invalid_argument("CUDA distributed state received an invalid two-qubit operation");
+    }
+    return {kind, {}, operation.qubits[0], operation.qubits[1]};
 }
 
 [[nodiscard]] std::size_t integer_log2(std::size_t value) {
@@ -166,6 +203,16 @@ void mpi_check(int status, const char* operation) {
         std::string(operation) + " failed: " +
         std::string(buffer.data(), static_cast<std::size_t>(length))
     );
+}
+
+[[nodiscard]] bool any_rank_failed(bool local_failed) {
+    std::uint64_t local = local_failed ? 1U : 0U;
+    std::uint64_t global = 0U;
+    mpi_check(
+        MPI_Allreduce(&local, &global, 1, MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD),
+        "MPI_Allreduce(distributed CUDA failure)"
+    );
+    return global != 0U;
 }
 
 [[nodiscard]] std::vector<Complex> exchange_shard(
@@ -437,6 +484,148 @@ DistributedStateVector distributed_statevector(const Program& program) {
         rank,
         world_size,
         "mpi-statevector",
+    };
+#endif
+}
+
+DistributedStateVector distributed_cuda_statevector(
+    const Program& program,
+    std::optional<std::size_t> requested_device
+) {
+#ifndef QUPY_HAS_MPI
+    static_cast<void>(program);
+    static_cast<void>(requested_device);
+    throw std::runtime_error(
+        "MPI support is not compiled; rebuild QuPy with an MPI C++ implementation available"
+    );
+#else
+    static_cast<void>(mpi_lifecycle());
+    int finalized = 0;
+    mpi_check(MPI_Finalized(&finalized), "MPI_Finalized");
+    if (finalized != 0) {
+        throw std::runtime_error("MPI has already been finalized");
+    }
+
+    int raw_world_size = 0;
+    int raw_rank = 0;
+    mpi_check(MPI_Comm_size(MPI_COMM_WORLD, &raw_world_size), "MPI_Comm_size");
+    mpi_check(MPI_Comm_rank(MPI_COMM_WORLD, &raw_rank), "MPI_Comm_rank");
+    if (raw_world_size <= 0 || raw_rank < 0) {
+        throw std::runtime_error("MPI returned an invalid communicator topology");
+    }
+    const std::size_t world_size = static_cast<std::size_t>(raw_world_size);
+    const std::size_t rank = static_cast<std::size_t>(raw_rank);
+    if (!is_power_of_two(world_size)) {
+        throw std::invalid_argument(
+            "distributed CUDA statevector requires a power-of-two MPI world size"
+        );
+    }
+    if (program.num_qubits() >= std::numeric_limits<std::size_t>::digits) {
+        throw std::length_error("distributed CUDA statevector exceeds native address space");
+    }
+    const std::size_t global_size = std::size_t{1} << program.num_qubits();
+    if (world_size > global_size) {
+        throw std::invalid_argument("MPI world size exceeds the state-vector dimension");
+    }
+    const std::size_t rank_qubits = integer_log2(world_size);
+    const std::size_t local_qubits = program.num_qubits() - rank_qubits;
+    const std::size_t local_size = global_size / world_size;
+    const std::size_t device = requested_device.value_or(distributed_info().local_rank);
+
+    bool local_ready = detail::cuda_available(device);
+    if (local_ready) {
+        try {
+            const Target target = cuda_target(device);
+            local_ready = !target.max_qubits.has_value() || local_qubits <= *target.max_qubits;
+        } catch (const std::exception&) {
+            local_ready = false;
+        }
+    }
+    if (any_rank_failed(!local_ready)) {
+        throw std::runtime_error(
+            "distributed CUDA execution requires a usable mapped CUDA device on every MPI rank"
+        );
+    }
+
+    std::optional<detail::CudaDistributedState> state;
+    bool initialization_failed = false;
+    try {
+        state.emplace(local_qubits, rank == 0U, device);
+        initialization_failed = state->size() != local_size;
+    } catch (const std::exception&) {
+        initialization_failed = true;
+    }
+    if (any_rank_failed(initialization_failed)) {
+        throw std::runtime_error(
+            "distributed CUDA state initialization failed on one or more MPI ranks"
+        );
+    }
+    if (!state.has_value()) {
+        throw std::logic_error("distributed CUDA state initialization produced no shard");
+    }
+
+    for (const Operation& operation : program.operations()) {
+        if (operation_is_local(operation, local_qubits)) {
+            bool local_failed = false;
+            try {
+                state->apply_local(cuda_local_step(operation));
+            } catch (const std::exception&) {
+                local_failed = true;
+            }
+            if (any_rank_failed(local_failed)) {
+                throw std::runtime_error(
+                    "distributed CUDA local gate failed on one or more MPI ranks"
+                );
+            }
+            continue;
+        }
+
+        std::vector<Complex> host_state;
+        bool download_failed = false;
+        try {
+            host_state = state->download();
+        } catch (const std::exception&) {
+            download_failed = true;
+        }
+        if (any_rank_failed(download_failed)) {
+            throw std::runtime_error(
+                "distributed CUDA shard download failed on one or more MPI ranks"
+            );
+        }
+        apply_distributed_operation(host_state, operation, local_qubits, rank);
+
+        bool upload_failed = false;
+        try {
+            state->replace(host_state);
+        } catch (const std::exception&) {
+            upload_failed = true;
+        }
+        if (any_rank_failed(upload_failed)) {
+            throw std::runtime_error(
+                "distributed CUDA shard upload failed on one or more MPI ranks"
+            );
+        }
+    }
+
+    std::vector<Complex> values;
+    bool final_download_failed = false;
+    try {
+        values = state->download();
+    } catch (const std::exception&) {
+        final_download_failed = true;
+    }
+    if (any_rank_failed(final_download_failed)) {
+        throw std::runtime_error(
+            "distributed CUDA final shard download failed on one or more MPI ranks"
+        );
+    }
+    return {
+        std::move(values),
+        global_size,
+        rank * local_size,
+        rank,
+        world_size,
+        "native-mpi-cuda:" + std::to_string(device),
     };
 #endif
 }
