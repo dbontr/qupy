@@ -44,10 +44,13 @@ _STDGATES_INCLUDE = 'include "stdgates.inc";\n'
 def _braket_module(name: str) -> ModuleType:
     try:
         return import_module(name)
-    except ImportError as exc:
-        raise RuntimeError(
-            "Amazon Braket support requires the optional amazon-braket-sdk package"
-        ) from exc
+    except ModuleNotFoundError as exc:
+        missing = exc.name
+        if missing is not None and (name == missing or name.startswith(f"{missing}.")):
+            raise ImportError(
+                "Amazon Braket support requires the optional amazon-braket-sdk package"
+            ) from exc
+        raise
 
 
 def _braket_openqasm_source(source: str) -> str:

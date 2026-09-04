@@ -119,6 +119,9 @@ jobs:
       - run: uv run pytest -q
       - run: uv run ruff check src tests benchmarks tools
       - run: uv run mypy src/qupy
+      - name: Verify native stubs match runtime
+        if: ${{ matrix.python-version == '3.12' }}
+        run: uv run python -m mypy.stubtest qupy._native --concise
       - run: uv build
       - name: Verify built wheel in isolation
         run: uv run python tools/verify_wheel.py --dist-dir dist

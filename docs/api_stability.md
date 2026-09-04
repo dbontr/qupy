@@ -42,7 +42,9 @@ The isolated verification requires:
 
 The Linux Python 3.12 release lane additionally rebuilds the generated source distribution into a wheel in an isolated build environment and applies the same installation/runtime checks to that rebuilt wheel. This catches source-distribution omissions that a direct source-tree wheel build can miss.
 
-The verifier lives at `tools/verify_wheel.py` and intentionally has no QuPy import in its driver process. The QuPy import occurs only inside the isolated child environment.
+The verifier lives at `tools/verify_wheel.py` and intentionally has no QuPy import in its driver process. The QuPy import occurs only inside the isolated child environment. That environment installs only the base wheel and its required dependencies, verifies that JAX, PyTorch, and Amazon Braket remain absent after importing QuPy, and checks that invoking each optional adapter fails with the documented dependency error rather than importing an optional ecosystem implicitly.
+
+The Linux Python 3.12 CI lane also runs `mypy.stubtest` against the built native extension. This checks that the public native type stub and the runtime nanobind surface agree on names, signatures, attributes, and runtime-visible types instead of treating successful static type checking as sufficient evidence.
 
 ## Pre-1.0 policy
 
