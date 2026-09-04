@@ -174,8 +174,8 @@ from .provider import (
 )
 from .qec import (
     BpOsdDecodeBatch,
-    BpOsdDecodeResult,
     BpOsdDecoder,
+    BpOsdDecodeResult,
     decode_detector_model_bp_osd,
 )
 from .tensor_network import (
