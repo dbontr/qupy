@@ -486,7 +486,7 @@ The largest remaining engineering work is integration and scale:
 
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
 - replace host-staged distributed-CUDA exchanges with measured CUDA-aware MPI or equivalent direct GPU transport where hardware evidence shows a benefit, and benchmark multi-GPU / multi-node scaling explicitly;
-- extend first-party provider coverage beyond Amazon Braket and Qiskit Aer, and add direct device-capability translation only where vendor conformance evidence supports it;
+- extend first-party provider coverage beyond Amazon Braket and Qiskit, and deepen hardware-capability translation only where vendor evidence supports semantics that the portable target can represent safely;
 - broaden chemistry beyond the dependency-free Jordan-Wigner/Hartree-Fock/factorized-UCCSD layer with evidence-backed active-space, excitation-selection, and molecular-workflow integrations, while reusing the native execution and differentiation contracts;
 - broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
 - keep the reviewed pre-1.0 compatibility baseline current while the remaining scale and provider evidence matures toward a future 1.0 commitment.

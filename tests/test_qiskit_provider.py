@@ -67,6 +67,47 @@ class _FakeBackend:
         return self.job
 
 
+class _SymbolicParameter:
+    pass
+
+
+@dataclass
+class _FakeGate:
+    params: list[object]
+
+
+class _FakeBackendTarget:
+    def __init__(
+        self,
+        num_qubits: int | None,
+        qargs: dict[str, set[tuple[int, ...] | None]],
+        *,
+        parameters: dict[str, list[object]] | None = None,
+        angle_bounds: set[str] | None = None,
+    ) -> None:
+        self.num_qubits = num_qubits
+        self.operation_names = tuple(qargs)
+        self._qargs = qargs
+        self._parameters = {} if parameters is None else parameters
+        self._angle_bounds = set() if angle_bounds is None else angle_bounds
+
+    def qargs_for_operation_name(self, operation: str) -> set[tuple[int, ...] | None]:
+        return self._qargs[operation]
+
+    def operation_from_name(self, operation: str) -> _FakeGate:
+        return _FakeGate(list(self._parameters.get(operation, [])))
+
+    def gate_has_angle_bounds(self, operation: str) -> bool:
+        return operation in self._angle_bounds
+
+
+class _FakeDiscoverableBackend(_FakeBackend):
+    def __init__(self, target: _FakeBackendTarget, *, num_qubits: int) -> None:
+        super().__init__(_FakeJob(["DONE"]))
+        self.target = target
+        self.num_qubits = num_qubits
+
+
 _TERMINAL_STATES = {
     qp.ProviderJobState.SUCCEEDED,
     qp.ProviderJobState.FAILED,
@@ -166,6 +207,172 @@ def test_qiskit_does_not_mask_transitive_import_failures(
     with pytest.raises(ModuleNotFoundError) as raised:
         qp.QiskitProvider.aer_simulator()
     assert raised.value.name == "rustworkx"
+
+
+def test_qiskit_backend_target_conservatively_translates_backendv2_metadata() -> None:
+    all_qubits = {(qubit,) for qubit in range(4)}
+    target = _FakeBackendTarget(
+        4,
+        {
+            "h": all_qubits,
+            "x": {None},
+            "y": {(0,), (1,)},
+            "rx": all_qubits,
+            "ry": all_qubits,
+            "rz": all_qubits,
+            "cx": {(0, 1), (1, 0), (1, 2)},
+            "cz": {(0, 1), (1, 2), (2, 3)},
+            "swap": {(0, 1)},
+            "measure": all_qubits,
+            "reset": {(0,), (1,)},
+        },
+        parameters={
+            "rx": [_SymbolicParameter()],
+            "ry": [0.5],
+            "rz": [_SymbolicParameter()],
+        },
+        angle_bounds={"rx"},
+    )
+    backend = _FakeDiscoverableBackend(target, num_qubits=4)
+
+    translated = qp.qiskit_backend_target(backend)
+
+    assert translated.name == "qiskit:fixture-backend"
+    assert translated.num_qubits == 4
+    assert translated.one_qubit_operations == [
+        qp.CircuitOperationCode.H,
+        qp.CircuitOperationCode.X,
+        qp.CircuitOperationCode.RZ,
+    ]
+    assert translated.two_qubit_operations == [qp.CircuitOperationCode.CZ]
+    assert [(edge.first, edge.second) for edge in translated.couplings] == [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+    ]
+    assert translated.measurement
+    assert not translated.reset
+    assert not translated.mid_circuit_measurement
+    assert not translated.dynamic_control
+
+
+def test_qiskit_backend_target_preserves_only_bidirectional_cx_edges() -> None:
+    target = _FakeBackendTarget(
+        3,
+        {
+            "cx": {(0, 1), (1, 0), (1, 2)},
+            "measure": {None},
+        },
+    )
+    translated = qp.qiskit_backend_target(_FakeDiscoverableBackend(target, num_qubits=3))
+
+    assert translated.two_qubit_operations == [qp.CircuitOperationCode.CX]
+    assert [(edge.first, edge.second) for edge in translated.couplings] == [(0, 1)]
+    assert translated.supports(qp.CircuitOperationCode.CX, [0, 1])
+    assert not translated.supports(qp.CircuitOperationCode.CX, [1, 2])
+
+
+def test_qiskit_backend_target_global_two_qubit_operation_is_all_to_all() -> None:
+    target = _FakeBackendTarget(
+        3,
+        {
+            "x": {None},
+            "cz": {None},
+            "measure": {None},
+        },
+    )
+    translated = qp.qiskit_backend_target(_FakeDiscoverableBackend(target, num_qubits=3))
+
+    assert translated.two_qubit_operations == [qp.CircuitOperationCode.CZ]
+    assert translated.couplings == []
+    assert translated.supports(qp.CircuitOperationCode.CZ, [0, 2])
+
+
+def test_qiskit_provider_auto_advertises_discovered_backend_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = _FakeBackendTarget(
+        2,
+        {
+            "h": {None},
+            "cz": {None},
+            "measure": {None},
+        },
+    )
+    backend = _FakeDiscoverableBackend(target, num_qubits=2)
+    provider = qp.QiskitProvider(backend)
+    constructed: list[_FakeQuantumCircuit] = []
+
+    def fake_quantum_circuit(num_qubits: int, num_clbits: int) -> _FakeQuantumCircuit:
+        circuit = _FakeQuantumCircuit(num_qubits, num_clbits)
+        constructed.append(circuit)
+        return circuit
+
+    monkeypatch.setattr(qiskit_provider, "_new_quantum_circuit", fake_quantum_circuit)
+
+    capabilities = qp.provider_capabilities(provider)
+    assert provider.target is not None
+    assert capabilities.hardware_target is not None
+    assert capabilities.hardware_target.fingerprint == provider.target.fingerprint
+
+    circuit = qp.Circuit(2, 2).h(0).cz(0, 1).measure(0, 0).measure(1, 1)
+    submission = qp.submit_circuit(provider, circuit, 4, initial_layout=[0, 1])
+    assert submission.job_id == "qiskit-job-1"
+    assert len(constructed) == 1
+    assert backend.calls == [(constructed[0], 4)]
+
+
+def test_qiskit_backend_target_fails_closed_on_malformed_metadata() -> None:
+    missing_qubits = _FakeBackend(_FakeJob(["DONE"]))
+    with pytest.raises(TypeError, match="num_qubits"):
+        qp.qiskit_backend_target(missing_qubits)
+
+    missing_target = _FakeBackend(_FakeJob(["DONE"]))
+    missing_target.num_qubits = 2  # type: ignore[attr-defined]
+    with pytest.raises(ValueError, match="target metadata"):
+        qp.qiskit_backend_target(missing_target)
+
+    mismatch = _FakeDiscoverableBackend(
+        _FakeBackendTarget(3, {"x": {None}}),
+        num_qubits=2,
+    )
+    with pytest.raises(ValueError, match="disagrees"):
+        qp.qiskit_backend_target(mismatch)
+
+    out_of_range = _FakeDiscoverableBackend(
+        _FakeBackendTarget(2, {"x": {(0,), (2,)}}),
+        num_qubits=2,
+    )
+    with pytest.raises(ValueError, match="exceed"):
+        qp.qiskit_backend_target(out_of_range)
+
+
+def test_qiskit_backend_target_matches_real_generic_backendv2() -> None:
+    fake_provider = pytest.importorskip("qiskit.providers.fake_provider")
+    backend = fake_provider.GenericBackendV2(
+        num_qubits=3,
+        basis_gates=["x", "rz", "cz"],
+        coupling_map=[[0, 1], [1, 0], [1, 2], [2, 1]],
+        seed=7,
+    )
+
+    translated = qp.qiskit_backend_target(backend)
+    provider = qp.QiskitProvider(backend)
+
+    assert translated.num_qubits == 3
+    assert translated.one_qubit_operations == [
+        qp.CircuitOperationCode.X,
+        qp.CircuitOperationCode.RZ,
+    ]
+    assert translated.two_qubit_operations == [qp.CircuitOperationCode.CZ]
+    assert [(edge.first, edge.second) for edge in translated.couplings] == [
+        (0, 1),
+        (1, 2),
+    ]
+    assert translated.measurement
+    assert translated.reset
+    assert provider.target is not None
+    assert provider.target.fingerprint == translated.fingerprint
 
 
 def test_qiskit_capabilities_round_trip_the_configured_target() -> None:
