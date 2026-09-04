@@ -12,6 +12,7 @@ from benchmarks.tensor_network_calibrate import (
     _features,
     calibrate_files,
 )
+from benchmarks.tensor_network_promote import promote_files
 
 _CPU_COEFFICIENTS = (8.1, 0.12, 0.18, 0.25, 0.09, -0.06)
 _TN_COEFFICIENTS = (7.0, 0.21, 0.11, 0.045, 0.075, 0.10)
@@ -171,3 +172,35 @@ def test_tensor_network_calibration_rejects_cross_report_identity_drift(tmp_path
     reports[-1].write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="identities changed"):
         calibrate_files(tuple(reports))
+
+
+def test_tensor_network_promotion_emits_loadable_bounded_native_artifact(
+    tmp_path: Path,
+) -> None:
+    reports = _reports(tmp_path / "reports")
+    host = qp.planner_host_fingerprint()
+    for report in reports:
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        payload["host"]["planner_host_fingerprint"] = host
+        report.write_text(json.dumps(payload), encoding="utf-8")
+
+    artifact = promote_files(reports)
+    assert artifact.startswith("qupy-tensor-network-cost 1\n")
+    assert artifact.count("\ndomain ") == 2
+    assert "\nvalidated 1\n" in artifact
+
+    path = tmp_path / "policy.qptncost"
+    path.write_text(artifact, encoding="utf-8")
+    model = qp.load_tensor_network_cost_model(path)
+
+    assert model.auto_validated
+    assert model.schema_version == 1
+    assert model.policy_version == 1
+    assert model.workload_version == 1
+    assert model.report_count == 3
+    assert model.decision_samples == 18
+    assert model.decision_mistakes == 0
+    assert model.cpu_wins == 9
+    assert model.tensor_network_wins == 9
+    assert model.host_fingerprint == host
+    assert len(model.artifact_fingerprint) == 64
