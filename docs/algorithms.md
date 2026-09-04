@@ -73,7 +73,7 @@ Controlled phase rotations are synthesized from RZ and CX. Each synthesized cont
 
 `exp(-i * time * coefficient * P)`
 
-for one `PauliTerm` P.
+for one `PauliTerm` P, up to state-independent global phase.
 
 ```python
 term = qp.PauliTerm(
@@ -87,9 +87,45 @@ term = qp.PauliTerm(
 program = qp.append_pauli_evolution(program, term, 0.2)
 ```
 
-QuPy rotates X and Y factors into the Z basis, accumulates parity with a CX chain, applies one RZ rotation with angle `2 * time * coefficient`, then exactly uncomputes the parity and basis changes. Identity factors require no gates.
+QuPy rotates X and Y factors into the Z basis, accumulates parity with a CX chain, applies one RZ rotation with angle `2 * time * coefficient`, then exactly uncomputes the parity and basis changes. Identity factors require no gates. A term containing only identity factors contributes only a state-independent global phase and therefore adds no operation to the `Program`.
 
-This operation is exact for a single Pauli string subject to floating-point roundoff. It is not itself a product-formula approximation. Simulating a Hamiltonian sum by sequentially applying several noncommuting Pauli exponentials introduces whatever product-formula/Trotter error follows from the caller's chosen ordering and step size; QuPy does not hide that approximation.
+This operation is exact for a single Pauli string subject to floating-point roundoff and the omitted global phase. It is not itself a product-formula approximation.
+
+## Hamiltonian product-formula evolution
+
+`append_hamiltonian_evolution()` composes exact Pauli-string exponentials to approximate evolution under a real Pauli-sum `Observable`:
+
+```python
+hamiltonian = qp.Observable(
+    [
+        qp.PauliTerm(0.7, [qp.PauliFactor(0, qp.Pauli.X)]),
+        qp.PauliTerm(-0.4, [qp.PauliFactor(0, qp.Pauli.Z)]),
+    ]
+)
+
+program = qp.append_hamiltonian_evolution(
+    program,
+    hamiltonian,
+    time=0.5,
+    steps=8,
+    order=2,
+)
+```
+
+`hamiltonian_evolution()` is the corresponding constructor for a fresh native `Program`.
+
+The supported formulas are explicit:
+
+- `order=1`: first-order Lie-Trotter splitting. Each step applies every Hamiltonian term once, in `Observable.terms` order, with time `time / steps`.
+- `order=2`: symmetric second-order Suzuki splitting. Each step applies all but the final term forward at half time, the final term at full time, and the preceding terms in reverse at half time.
+
+The second-order construction combines the two adjacent half evolutions of the center term into one full evolution. It does not add redundant back-to-back half steps.
+
+The approximation boundary is the noncommuting Hamiltonian sum. Each individual Pauli exponential is exact up to global phase and floating-point roundoff. If all non-identity terms commute, either supported formula reproduces the Hamiltonian evolution up to global phase and floating-point roundoff. For noncommuting terms, `steps` controls the time-slice size; increasing it generally reduces product-formula error while increasing circuit depth.
+
+The term order is part of the requested product formula. QuPy preserves the `Observable.terms` order instead of sorting noncommuting terms or selecting an undocumented ordering heuristic. Negative time is supported. `steps` must be a positive integer, and `order` must be `1` or `2`.
+
+QuPy does not choose a step count from a hidden accuracy target and does not report an error bound that it has not computed. Applications that need a specific simulation error must select and validate a step count for their Hamiltonian, time interval, and downstream observable.
 
 ## Design boundary
 
@@ -97,8 +133,8 @@ The algorithm layer deliberately returns native primitives:
 
 - no alternate circuit IR;
 - no symbolic-expression engine;
-- no Python simulation loop;
-- no hidden approximate execution;
-- no automatic Hamiltonian product formula.
+- no Python simulator;
+- no hidden approximate backend selection;
+- no hidden Hamiltonian ordering or step-size policy.
 
-Higher-level algorithms can build on these constructors while keeping execution, differentiation, planning, and exactness policy in the existing native ownership boundaries.
+Higher-level algorithms can build on these constructors while keeping execution, differentiation, planning, and backend policy in the existing native ownership boundaries.
