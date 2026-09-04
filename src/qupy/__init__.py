@@ -172,6 +172,7 @@ from .provider import (
     submit_circuit,
     submit_compiled_circuit,
 )
+from .provider_conformance import ProviderConformanceReport, check_provider_conformance
 from .qec import (
     BpOsdDecodeBatch,
     BpOsdDecoder,
@@ -255,6 +256,7 @@ __all__ = [
     "Probabilities",
     "Program",
     "ProviderCapabilities",
+    "ProviderConformanceReport",
     "ProviderJobState",
     "ProviderPlugin",
     "ProviderProgram",
@@ -280,6 +282,7 @@ __all__ = [
     "append_pauli_evolution",
     "append_qft",
     "bit_flip",
+    "check_provider_conformance",
     "circuit_ir_version",
     "commuting_groups",
     "compile",
