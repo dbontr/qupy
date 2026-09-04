@@ -236,6 +236,8 @@ def test_cuda_density_matrix_matches_cpu_for_unitary_and_noise_execution() -> No
 def test_lindblad_rk4_preserves_static_state_and_models_decay() -> None:
     zero_hamiltonian = np.zeros((2, 2), dtype=np.complex128)
     initial_zero = qp.density_matrix(qp.Program(1))
+    with pytest.raises(TypeError):
+        qp.lindblad_evolve(initial_zero, zero_hamiltonian, dt=0.01, steps=20)
     static = qp.lindblad_evolve(initial_zero, zero_hamiltonian, [], 0.01, 20)
     np.testing.assert_allclose(static.state.values, initial_zero.values, atol=1e-12)
 

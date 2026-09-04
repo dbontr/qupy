@@ -669,7 +669,7 @@ void bind_advanced(nb::module_& module) {
         },
         "initial"_a,
         "hamiltonian"_a,
-        "collapse_operators"_a = nb::list(),
+        "collapse_operators"_a,
         "dt"_a,
         "steps"_a
     );
