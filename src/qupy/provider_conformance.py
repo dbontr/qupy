@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from . import _native
 from .circuit import Circuit
 from .compiler import HardwareTarget
-from .provider import provider_capabilities, submit_circuit
+from .provider import ProviderBackend, provider_capabilities, submit_circuit
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +85,7 @@ def _json_type(value: object) -> str:
 
 
 def check_provider_conformance(
-    plugin: _native.ProviderPlugin,
+    plugin: ProviderBackend,
     *,
     target: HardwareTarget | None = None,
     shots: int = 1,

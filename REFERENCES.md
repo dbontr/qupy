@@ -67,6 +67,13 @@
 - [QIR Base Profile](https://github.com/qir-alliance/qir-spec/blob/main/specification/profiles/Base_Profile.md) — QIR Alliance. Used for: LLVM-based QIR entry-point, profile, qubit/result, and output-recording requirements.
 - [MPI: A Message-Passing Interface Standard Version 5.0](https://www.mpi-forum.org/docs/mpi-5.0/mpi50-report/mpi50-report.htm) — MPI Forum, MPI 5.0 (2025). Used for: distributed state-vector point-to-point communication, collective broadcast and reduction, communicator topology, and initialization semantics.
 
+## Provider adapters
+- [Run your circuits with OpenQASM 3.0](https://docs.aws.amazon.com/braket/latest/developerguide/braket-openqasm.html) — Amazon Web Services. Used for: the Amazon Braket OpenQASM 3.0 provider transport profile and gate-model submission boundary.
+- [Create and submit an example OpenQASM 3.0 quantum task](https://docs.aws.amazon.com/braket/latest/developerguide/braket-openqasm-create-submit-task.html) — Amazon Web Services. Used for: `braket.ir.openqasm.Program` construction and `device.run(..., shots=...)` submission semantics.
+- [Tracking quantum tasks from the Amazon Braket SDK](https://docs.aws.amazon.com/braket/latest/developerguide/braket-monitor-tasks-sdk.html) — Amazon Web Services. Used for: task identifiers, queued/running/completed lifecycle polling, result retrieval, and cancellation semantics.
+- [Testing a quantum task with the local simulator](https://docs.aws.amazon.com/braket/latest/developerguide/braket-send-to-local-simulator.html) — Amazon Web Services. Used for: credential-free `LocalSimulator` integration conformance.
+- [Amazon Braket Python SDK](https://github.com/amazon-braket/amazon-braket-sdk-python) — Amazon Web Services. Used for: optional SDK integration and the pinned provider-interoperability test dependency.
+
 ## Quantum error correction
 - [Stim detector error model format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md) — Google Quantum AI, Stim. Used for: detector-event, independent-error-mechanism, logical-frame-change, and decomposition-separator semantics used by QuPy detector models and QEC reference workloads.
 - [Decoding across the quantum low-density parity-check code landscape](https://doi.org/10.1103/PhysRevResearch.2.043423) — Joschka Roffe, David R. White, Simon Burton, and Earl Campbell, Physical Review Research 2, 043423 (2020). Used for: belief-propagation plus ordered-statistics post-processing architecture for quantum error decoding.

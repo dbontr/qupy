@@ -139,6 +139,7 @@ from .algorithms import (
     hardware_efficient_ansatz,
     qft,
 )
+from .braket_provider import BraketProvider, braket_local_simulator_target
 from .circuit import (
     Circuit,
     CircuitInstruction,
@@ -165,6 +166,7 @@ from .multi_device import (
     distributed_trajectory_expectations,
 )
 from .provider import (
+    ProviderBackend,
     ProviderCapabilities,
     ProviderSubmission,
     provider_capabilities,
@@ -209,6 +211,7 @@ __all__ = [
     "BpOsdDecodeBatch",
     "BpOsdDecodeResult",
     "BpOsdDecoder",
+    "BraketProvider",
     "Circuit",
     "CircuitInstruction",
     "CircuitOperationCode",
@@ -255,6 +258,7 @@ __all__ = [
     "PlannerCostModel",
     "Probabilities",
     "Program",
+    "ProviderBackend",
     "ProviderCapabilities",
     "ProviderConformanceReport",
     "ProviderJobState",
@@ -282,6 +286,7 @@ __all__ = [
     "append_pauli_evolution",
     "append_qft",
     "bit_flip",
+    "braket_local_simulator_target",
     "check_provider_conformance",
     "circuit_ir_version",
     "commuting_groups",
