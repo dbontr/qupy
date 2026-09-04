@@ -112,6 +112,97 @@ def test_hartree_fock_state_supports_explicit_occupations() -> None:
     assert qp.expect(state, n3, backend="native-cpu").value == pytest.approx(1.0)
 
 
+def test_uccsd_excitation_order_is_deterministic() -> None:
+    excitations = qp.uccsd_excitations(4, 2)
+    assert excitations == (
+        qp.FermionicExcitation((0,), (2,)),
+        qp.FermionicExcitation((0,), (3,)),
+        qp.FermionicExcitation((1,), (2,)),
+        qp.FermionicExcitation((1,), (3,)),
+        qp.FermionicExcitation((0, 1), (2, 3)),
+    )
+
+
+def test_uccsd_single_excitation_rotates_between_determinants() -> None:
+    template = qp.uccsd_ansatz(2, 1)
+    assert template.parameter_count == 1
+    assert template.gate_parameter_count == 2
+    assert template.parameter_names == ("single.0->1",)
+
+    state = template.bind([math.pi / 2.0])
+    n0 = _number_operator(0, 2)
+    n1 = _number_operator(1, 2)
+    assert qp.expect(state, n0, backend="native-cpu").value == pytest.approx(0.0, abs=1e-12)
+    assert qp.expect(state, n1, backend="native-cpu").value == pytest.approx(1.0, abs=1e-12)
+
+
+def test_uccsd_double_excitation_rotates_between_determinants() -> None:
+    template = qp.uccsd_ansatz(4, 2)
+    assert template.parameter_count == 5
+    state = template.bind([0.0, 0.0, 0.0, 0.0, math.pi / 2.0])
+
+    occupations = [
+        qp.expect(state, _number_operator(orbital, 4), backend="native-cpu").value
+        for orbital in range(4)
+    ]
+    np.testing.assert_allclose(occupations, [0.0, 0.0, 1.0, 1.0], atol=2e-12)
+
+
+def test_uccsd_template_compresses_native_gate_gradients() -> None:
+    template = qp.uccsd_ansatz(2, 1)
+    theta = 0.31
+    expanded = template.expanded_parameters([theta])
+    number_one = _number_operator(1, 2)
+    native = qp.value_and_grad(
+        template.program,
+        number_one,
+        list(template.slots),
+        expanded,
+        backend="native-cpu",
+        method=qp.GradientMethod.ADJOINT,
+    )
+    gradient = template.compress_gradient(native.gradient)
+
+    assert native.value == pytest.approx(math.sin(theta) ** 2, abs=2e-12)
+    np.testing.assert_allclose(gradient, [math.sin(2.0 * theta)], atol=2e-12)
+
+
+def test_uccsd_active_spaces_and_named_binding() -> None:
+    template = qp.uccsd_ansatz(
+        6,
+        2,
+        occupied_orbitals=[1, 3],
+        virtual_orbitals=[4, 5],
+    )
+    assert template.parameter_names == (
+        "single.1->4",
+        "single.1->5",
+        "single.3->4",
+        "single.3->5",
+        "double.1,3->4,5",
+    )
+    bound = template.bind_named({name: 0.0 for name in template.parameter_names})
+    assert qp.expect(bound, _number_operator(1, 6), backend="native-cpu").value == pytest.approx(
+        1.0
+    )
+    assert qp.expect(bound, _number_operator(3, 6), backend="native-cpu").value == pytest.approx(
+        1.0
+    )
+
+
+def test_uccsd_zero_excitation_space_preserves_reference() -> None:
+    template = qp.uccsd_ansatz(2, 2)
+    assert template.parameter_count == 0
+    assert template.gate_parameter_count == 0
+    state = template.bind([])
+    assert qp.expect(state, _number_operator(0, 2), backend="native-cpu").value == pytest.approx(
+        1.0
+    )
+    assert qp.expect(state, _number_operator(1, 2), backend="native-cpu").value == pytest.approx(
+        1.0
+    )
+
+
 def test_chemistry_inputs_fail_closed() -> None:
     with pytest.raises(ValueError, match="positive"):
         qp.jordan_wigner(0, [])
@@ -138,3 +229,20 @@ def test_chemistry_inputs_fail_closed() -> None:
         qp.hartree_fock_state(3, 2, occupied_orbitals=[0])
     with pytest.raises(ValueError, match="unique"):
         qp.hartree_fock_state(3, 2, occupied_orbitals=[1, 1])
+
+    with pytest.raises(ValueError, match="rank"):
+        qp.FermionicExcitation((), ())
+    with pytest.raises(ValueError, match="disjoint"):
+        qp.FermionicExcitation((0,), (0,))
+    with pytest.raises(ValueError, match="disjoint"):
+        qp.uccsd_excitations(4, 2, virtual_orbitals=[1, 3])
+    with pytest.raises(ValueError, match="outside"):
+        qp.fermionic_excitation_generator(2, qp.FermionicExcitation((0,), (2,)))
+
+    template = qp.uccsd_ansatz(2, 1)
+    with pytest.raises(ValueError, match="exactly 1"):
+        template.bind([])
+    with pytest.raises(ValueError, match="shape"):
+        template.compress_gradient(np.zeros(template.gate_parameter_count + 1))
+    with pytest.raises(ValueError, match="named parameters"):
+        template.bind_named({"unexpected": 0.0})

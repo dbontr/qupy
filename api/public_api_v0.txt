@@ -25,6 +25,7 @@ Expectation
 ExpectationBatch
 FermionLadder
 FermionTerm
+FermionicExcitation
 GradientMethod
 GradientResult
 HardwareTarget
@@ -72,6 +73,7 @@ TensorNetworkEstimate
 TensorNetworkPlan
 TrajectoryEstimate
 TrajectoryResult
+UccsdTemplate
 Variance
 VariationalTemplate
 Z
@@ -119,6 +121,7 @@ expectation_plan
 fermion_annihilation
 fermion_creation
 fermion_term
+fermionic_excitation_generator
 grad
 h
 hardware_efficient_ansatz
@@ -183,6 +186,8 @@ to_openqasm3
 to_qir_base_profile
 trajectory_expectation
 trajectory_expectations
+uccsd_ansatz
+uccsd_excitations
 value_and_grad
 variance
 variance_observable

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import combinations
 
 import numpy as np
 import numpy.typing as npt
 
 from . import _native
+from .algorithms import append_pauli_evolution
 
 _PauliKey = tuple[tuple[int, str], ...]
 _LOCAL_PAULI_PRODUCT: dict[tuple[str, str], tuple[complex, str | None]] = {
@@ -56,6 +58,130 @@ class FermionTerm:
             raise TypeError("operators must contain FermionLadder values")
         object.__setattr__(self, "coefficient", coefficient)
         object.__setattr__(self, "operators", operators)
+
+
+@dataclass(frozen=True, slots=True)
+class FermionicExcitation:
+    """Canonical occupied-to-virtual single or double fermionic excitation."""
+
+    occupied: tuple[int, ...]
+    virtual: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        occupied = tuple(self.occupied)
+        virtual = tuple(self.virtual)
+        if len(occupied) not in (1, 2) or len(virtual) != len(occupied):
+            raise ValueError("excitation rank must be one or two with matching orbital counts")
+        for label, orbitals in (("occupied", occupied), ("virtual", virtual)):
+            for orbital in orbitals:
+                if isinstance(orbital, bool) or not isinstance(orbital, int):
+                    raise TypeError(f"{label} orbitals must be integers")
+                if orbital < 0:
+                    raise ValueError(f"{label} orbitals must be non-negative")
+            if len(set(orbitals)) != len(orbitals):
+                raise ValueError(f"{label} orbitals must be unique")
+        if set(occupied) & set(virtual):
+            raise ValueError("occupied and virtual orbitals must be disjoint")
+        object.__setattr__(self, "occupied", tuple(sorted(occupied)))
+        object.__setattr__(self, "virtual", tuple(sorted(virtual)))
+
+    @property
+    def rank(self) -> int:
+        return len(self.occupied)
+
+
+@dataclass(frozen=True, slots=True)
+class UccsdTemplate:
+    """Factorized UCCSD program plus the linear map from amplitudes to gate slots."""
+
+    program: _native.Program
+    slots: tuple[_native.ParameterSlot, ...]
+    slot_parameter_indices: tuple[int, ...]
+    slot_scales: tuple[float, ...]
+    parameter_names: tuple[str, ...]
+    excitations: tuple[FermionicExcitation, ...]
+
+    def __post_init__(self) -> None:
+        slots = tuple(self.slots)
+        indices = tuple(self.slot_parameter_indices)
+        scales = tuple(float(scale) for scale in self.slot_scales)
+        names = tuple(self.parameter_names)
+        excitations = tuple(self.excitations)
+        if len(slots) != len(indices) or len(slots) != len(scales):
+            raise ValueError(
+                "slots, slot_parameter_indices, and slot_scales must have equal length"
+            )
+        if len(names) != len(excitations):
+            raise ValueError("parameter_names and excitations must have equal length")
+        if any(not name for name in names) or len(set(names)) != len(names):
+            raise ValueError("parameter_names must be unique and non-empty")
+        if any(index < 0 or index >= len(excitations) for index in indices):
+            raise ValueError("slot_parameter_indices contains an invalid parameter index")
+        if not all(math.isfinite(scale) for scale in scales):
+            raise ValueError("slot_scales must be finite")
+        object.__setattr__(self, "slots", slots)
+        object.__setattr__(self, "slot_parameter_indices", indices)
+        object.__setattr__(self, "slot_scales", scales)
+        object.__setattr__(self, "parameter_names", names)
+        object.__setattr__(self, "excitations", excitations)
+
+    @property
+    def parameter_count(self) -> int:
+        return len(self.excitations)
+
+    @property
+    def gate_parameter_count(self) -> int:
+        return len(self.slots)
+
+    def expanded_parameters(self, values: Sequence[float]) -> npt.NDArray[np.float64]:
+        amplitudes = tuple(float(value) for value in values)
+        if len(amplitudes) != self.parameter_count:
+            raise ValueError(f"values must contain exactly {self.parameter_count} parameters")
+        if not all(math.isfinite(value) for value in amplitudes):
+            raise ValueError("parameter values must be finite")
+        return np.asarray(
+            [
+                scale * amplitudes[index]
+                for index, scale in zip(self.slot_parameter_indices, self.slot_scales, strict=True)
+            ],
+            dtype=np.float64,
+        )
+
+    def bind(self, values: Sequence[float]) -> _native.Program:
+        expanded = self.expanded_parameters(values)
+        if self.gate_parameter_count == 0:
+            return self.program
+        return self.program.bind(list(self.slots), expanded.tolist())
+
+    def bind_named(self, values: Mapping[str, float]) -> _native.Program:
+        expected = set(self.parameter_names)
+        supplied = set(values)
+        missing = sorted(expected - supplied)
+        extra = sorted(supplied - expected)
+        if missing or extra:
+            details: list[str] = []
+            if missing:
+                details.append(f"missing {missing}")
+            if extra:
+                details.append(f"unexpected {extra}")
+            raise ValueError("named parameters do not match UCCSD template: " + ", ".join(details))
+        return self.bind([values[name] for name in self.parameter_names])
+
+    def compress_gradient(self, gradient: npt.ArrayLike) -> npt.NDArray[np.float64]:
+        gate_gradient = np.asarray(gradient, dtype=np.float64)
+        if gate_gradient.shape != (self.gate_parameter_count,):
+            raise ValueError(f"gradient must have shape ({self.gate_parameter_count},)")
+        if not np.all(np.isfinite(gate_gradient)):
+            raise ValueError("gradient must contain only finite values")
+        result = np.zeros(self.parameter_count, dtype=np.float64)
+        for value, index, scale in zip(
+            gate_gradient,
+            self.slot_parameter_indices,
+            self.slot_scales,
+            strict=True,
+        ):
+            result[index] += scale * float(value)
+        return result
 
 
 def fermion_creation(orbital: int) -> FermionLadder:
@@ -248,6 +374,31 @@ def molecular_hamiltonian(
     return jordan_wigner(orbital_count, terms, tolerance=threshold)
 
 
+def _reference_occupied_orbitals(
+    orbital_count: int,
+    num_electrons: int,
+    occupied_orbitals: Sequence[int] | None,
+) -> tuple[int, ...]:
+    if isinstance(num_electrons, bool) or not isinstance(num_electrons, int):
+        raise TypeError("num_electrons must be an integer")
+    if num_electrons < 0 or num_electrons > orbital_count:
+        raise ValueError("num_electrons must be between 0 and num_spin_orbitals")
+
+    occupied = (
+        tuple(range(num_electrons)) if occupied_orbitals is None else tuple(occupied_orbitals)
+    )
+    if len(occupied) != num_electrons:
+        raise ValueError("occupied_orbitals must contain exactly num_electrons entries")
+    for orbital in occupied:
+        if isinstance(orbital, bool) or not isinstance(orbital, int):
+            raise TypeError("occupied_orbitals must contain integers")
+        if orbital < 0 or orbital >= orbital_count:
+            raise ValueError("occupied_orbitals contains an orbital outside num_spin_orbitals")
+    if len(set(occupied)) != len(occupied):
+        raise ValueError("occupied_orbitals must be unique")
+    return tuple(sorted(occupied))
+
+
 def hartree_fock_state(
     num_spin_orbitals: int,
     num_electrons: int,
@@ -256,39 +407,214 @@ def hartree_fock_state(
 ) -> _native.Program:
     """Prepare a computational-basis Hartree-Fock occupation state."""
     orbital_count = _positive_integer(num_spin_orbitals, "num_spin_orbitals")
-
-    if isinstance(num_electrons, bool) or not isinstance(num_electrons, int):
-        raise TypeError("num_electrons must be an integer")
-    if num_electrons < 0 or num_electrons > orbital_count:
-        raise ValueError("num_electrons must be between 0 and num_spin_orbitals")
-
-    if occupied_orbitals is None:
-        occupied = tuple(range(num_electrons))
-    else:
-        occupied = tuple(occupied_orbitals)
-        if len(occupied) != num_electrons:
-            raise ValueError("occupied_orbitals must contain exactly num_electrons entries")
-        for orbital in occupied:
-            if isinstance(orbital, bool) or not isinstance(orbital, int):
-                raise TypeError("occupied_orbitals must contain integers")
-            if orbital < 0 or orbital >= orbital_count:
-                raise ValueError("occupied_orbitals contains an orbital outside num_spin_orbitals")
-        if len(set(occupied)) != len(occupied):
-            raise ValueError("occupied_orbitals must be unique")
+    occupied = _reference_occupied_orbitals(
+        orbital_count,
+        num_electrons,
+        occupied_orbitals,
+    )
 
     program = _native.Program(orbital_count)
-    for orbital in sorted(occupied):
+    for orbital in occupied:
         program = _native.x(program, orbital)
     return program
+
+
+def _virtual_orbitals(
+    orbital_count: int,
+    occupied: tuple[int, ...],
+    virtual_orbitals: Sequence[int] | None,
+) -> tuple[int, ...]:
+    occupied_set = set(occupied)
+    if virtual_orbitals is None:
+        return tuple(orbital for orbital in range(orbital_count) if orbital not in occupied_set)
+
+    virtual = tuple(virtual_orbitals)
+    for orbital in virtual:
+        if isinstance(orbital, bool) or not isinstance(orbital, int):
+            raise TypeError("virtual_orbitals must contain integers")
+        if orbital < 0 or orbital >= orbital_count:
+            raise ValueError("virtual_orbitals contains an orbital outside num_spin_orbitals")
+    if len(set(virtual)) != len(virtual):
+        raise ValueError("virtual_orbitals must be unique")
+    if occupied_set & set(virtual):
+        raise ValueError("occupied_orbitals and virtual_orbitals must be disjoint")
+    return tuple(sorted(virtual))
+
+
+def uccsd_excitations(
+    num_spin_orbitals: int,
+    num_electrons: int,
+    *,
+    occupied_orbitals: Sequence[int] | None = None,
+    virtual_orbitals: Sequence[int] | None = None,
+) -> tuple[FermionicExcitation, ...]:
+    """Enumerate canonical occupied-to-virtual UCCSD excitations."""
+    orbital_count = _positive_integer(num_spin_orbitals, "num_spin_orbitals")
+    occupied = _reference_occupied_orbitals(
+        orbital_count,
+        num_electrons,
+        occupied_orbitals,
+    )
+    virtual = _virtual_orbitals(orbital_count, occupied, virtual_orbitals)
+
+    excitations: list[FermionicExcitation] = []
+    for source in occupied:
+        for target in virtual:
+            excitations.append(FermionicExcitation((source,), (target,)))
+    for sources in combinations(occupied, 2):
+        for targets in combinations(virtual, 2):
+            excitations.append(FermionicExcitation(sources, targets))
+    return tuple(excitations)
+
+
+def fermionic_excitation_generator(
+    num_spin_orbitals: int,
+    excitation: FermionicExcitation,
+    *,
+    tolerance: float = 1e-12,
+) -> _native.Observable:
+    """Map i(A - A-dagger) for one excitation to a Hermitian Pauli generator."""
+    orbital_count = _positive_integer(num_spin_orbitals, "num_spin_orbitals")
+    if not isinstance(excitation, FermionicExcitation):
+        raise TypeError("excitation must be a FermionicExcitation")
+    for orbital in (*excitation.occupied, *excitation.virtual):
+        if orbital >= orbital_count:
+            raise ValueError("excitation references an orbital outside num_spin_orbitals")
+
+    forward = tuple(fermion_creation(orbital) for orbital in excitation.virtual) + tuple(
+        fermion_annihilation(orbital) for orbital in reversed(excitation.occupied)
+    )
+    adjoint = tuple(fermion_creation(orbital) for orbital in excitation.occupied) + tuple(
+        fermion_annihilation(orbital) for orbital in reversed(excitation.virtual)
+    )
+    return jordan_wigner(
+        orbital_count,
+        [
+            FermionTerm(1.0j, forward),
+            FermionTerm(-1.0j, adjoint),
+        ],
+        tolerance=tolerance,
+    )
+
+
+def _pauli_terms_commute(left: _native.PauliTerm, right: _native.PauliTerm) -> bool:
+    left_factors = {
+        factor.qubit: factor.pauli for factor in left.factors if factor.pauli is not _native.Pauli.I
+    }
+    right_factors = {
+        factor.qubit: factor.pauli
+        for factor in right.factors
+        if factor.pauli is not _native.Pauli.I
+    }
+    disagreements = sum(
+        left_factors[qubit] is not right_factors[qubit]
+        for qubit in left_factors.keys() & right_factors.keys()
+    )
+    return disagreements % 2 == 0
+
+
+def _commuting_excitation_generator(generator: _native.Observable) -> bool:
+    terms = tuple(generator.terms)
+    return all(
+        _pauli_terms_commute(left, right)
+        for index, left in enumerate(terms)
+        for right in terms[index + 1 :]
+    )
+
+
+def _excitation_parameter_name(excitation: FermionicExcitation) -> str:
+    prefix = "single" if excitation.rank == 1 else "double"
+    occupied = ",".join(str(orbital) for orbital in excitation.occupied)
+    virtual = ",".join(str(orbital) for orbital in excitation.virtual)
+    return f"{prefix}.{occupied}->{virtual}"
+
+
+def uccsd_ansatz(
+    num_spin_orbitals: int,
+    num_electrons: int,
+    *,
+    occupied_orbitals: Sequence[int] | None = None,
+    virtual_orbitals: Sequence[int] | None = None,
+    tolerance: float = 1e-12,
+) -> UccsdTemplate:
+    """Build a deterministic first-order factorized spin-orbital UCCSD template."""
+    orbital_count = _positive_integer(num_spin_orbitals, "num_spin_orbitals")
+    threshold = _tolerance(tolerance)
+    occupied = _reference_occupied_orbitals(
+        orbital_count,
+        num_electrons,
+        occupied_orbitals,
+    )
+    excitations = uccsd_excitations(
+        orbital_count,
+        num_electrons,
+        occupied_orbitals=occupied,
+        virtual_orbitals=virtual_orbitals,
+    )
+
+    program = hartree_fock_state(
+        orbital_count,
+        num_electrons,
+        occupied_orbitals=occupied,
+    )
+    slots: list[_native.ParameterSlot] = []
+    slot_parameter_indices: list[int] = []
+    slot_scales: list[float] = []
+    names = tuple(_excitation_parameter_name(excitation) for excitation in excitations)
+
+    for parameter_index, excitation in enumerate(excitations):
+        generator = fermionic_excitation_generator(
+            orbital_count,
+            excitation,
+            tolerance=threshold,
+        )
+        terms = tuple(generator.terms)
+        if not terms:
+            raise RuntimeError("UCCSD excitation generator mapped to no Pauli terms")
+        if not _commuting_excitation_generator(generator):
+            raise RuntimeError("UCCSD excitation generator mapped to non-commuting Pauli terms")
+
+        for term in terms:
+            operation_start = len(program.operations)
+            program = append_pauli_evolution(program, term, 0.0)
+            appended = program.operations[operation_start:]
+            rz_indices = [
+                operation_start + offset
+                for offset, operation in enumerate(appended)
+                if operation.code is _native.OperationCode.RZ
+                and len(operation.parameters) == 1
+                and operation.parameters[0] == 0.0
+            ]
+            if len(rz_indices) != 1:
+                raise RuntimeError(
+                    "UCCSD Pauli evolution did not expose exactly one RZ parameter slot"
+                )
+            slots.append(_native.ParameterSlot(rz_indices[0], 0))
+            slot_parameter_indices.append(parameter_index)
+            slot_scales.append(2.0 * float(term.coefficient))
+
+    return UccsdTemplate(
+        program=program,
+        slots=tuple(slots),
+        slot_parameter_indices=tuple(slot_parameter_indices),
+        slot_scales=tuple(slot_scales),
+        parameter_names=names,
+        excitations=excitations,
+    )
 
 
 __all__ = [
     "FermionLadder",
     "FermionTerm",
+    "FermionicExcitation",
+    "UccsdTemplate",
     "fermion_annihilation",
     "fermion_creation",
     "fermion_term",
+    "fermionic_excitation_generator",
     "hartree_fock_state",
     "jordan_wigner",
     "molecular_hamiltonian",
+    "uccsd_ansatz",
+    "uccsd_excitations",
 ]

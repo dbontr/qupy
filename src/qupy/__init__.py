@@ -146,14 +146,19 @@ from .algorithms import (
 )
 from .braket_provider import BraketProvider, braket_local_simulator_target
 from .chemistry import (
+    FermionicExcitation,
     FermionLadder,
     FermionTerm,
+    UccsdTemplate,
     fermion_annihilation,
     fermion_creation,
     fermion_term,
+    fermionic_excitation_generator,
     hartree_fock_state,
     jordan_wigner,
     molecular_hamiltonian,
+    uccsd_ansatz,
+    uccsd_excitations,
 )
 from .circuit import (
     Circuit,
@@ -249,6 +254,7 @@ __all__ = [
     "ExpectationBatch",
     "FermionLadder",
     "FermionTerm",
+    "FermionicExcitation",
     "GradientMethod",
     "GradientResult",
     "HardwareTarget",
@@ -296,6 +302,7 @@ __all__ = [
     "TensorNetworkPlan",
     "TrajectoryEstimate",
     "TrajectoryResult",
+    "UccsdTemplate",
     "Variance",
     "VariationalTemplate",
     "Z",
@@ -343,6 +350,7 @@ __all__ = [
     "fermion_annihilation",
     "fermion_creation",
     "fermion_term",
+    "fermionic_excitation_generator",
     "grad",
     "h",
     "hardware_efficient_ansatz",
@@ -407,6 +415,8 @@ __all__ = [
     "to_qir_base_profile",
     "trajectory_expectation",
     "trajectory_expectations",
+    "uccsd_ansatz",
+    "uccsd_excitations",
     "value_and_grad",
     "variance",
     "variance_observable",

@@ -159,6 +159,41 @@ The mapper combines Pauli products exactly and removes coefficients below the ex
 
 `hartree_fock_state()` prepares a computational-basis occupation state as a native `Program`. By default it occupies the lowest-index spin orbitals; `occupied_orbitals` can specify another unique occupation pattern with the same electron count.
 
+### Factorized UCCSD
+
+`uccsd_excitations()` deterministically enumerates all occupied-to-virtual spin-orbital singles, followed by doubles. Explicit occupied and virtual orbital lists can restrict the active excitation space; they must be unique, in range, and disjoint. QuPy does not infer an alpha/beta spin convention or silently spin-adapt the excitation list.
+
+For one excitation `A`, `fermionic_excitation_generator()` constructs the Hermitian operator `i(A - A†)` and maps it through Jordan-Wigner. The resulting Pauli terms are required to commute pairwise before the circuit template is accepted. Therefore each factor
+
+`exp(theta * (A - A†)) = exp(-i * theta * i(A - A†))`
+
+is synthesized exactly as a product of native Pauli exponentials. `uccsd_ansatz()` orders those exact factors as singles then doubles. This is a first-order **factorized UCCSD ansatz**: it does not claim that the product over distinct excitation factors equals one exact exponential of the full noncommuting cluster generator.
+
+```python
+import numpy as np
+import qupy as qp
+
+template = qp.uccsd_ansatz(4, 2)
+theta = np.zeros(template.parameter_count, dtype=np.float64)
+program = template.bind(theta)
+```
+
+Each high-level excitation amplitude generally controls several synthesized RZ angles. `UccsdTemplate` stores that linear map explicitly through `slots`, `slot_parameter_indices`, and `slot_scales`. `expanded_parameters()` produces the gate-level vector expected by the native differentiation API; `compress_gradient()` applies the exact chain rule back to UCCSD amplitudes:
+
+```python
+native = qp.value_and_grad(
+    template.program,
+    hamiltonian,
+    list(template.slots),
+    template.expanded_parameters(theta),
+    backend="native-cpu",
+    method=qp.GradientMethod.ADJOINT,
+)
+uccsd_gradient = template.compress_gradient(native.gradient)
+```
+
+This avoids introducing a second symbolic parameter-expression IR while still reusing QuPy's native adjoint, parameter-shift, or finite-difference machinery at the synthesized gate layer. `bind_named()` is available when stable excitation names are more convenient than positional vectors.
+
 Chemistry construction remains outside the execution engine. The resulting program and observable use the ordinary planner, exact and approximate execution backends, expectation APIs, and native differentiation without a chemistry-specific simulator path or runtime dependency.
 
 ## Design boundary

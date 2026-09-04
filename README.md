@@ -109,7 +109,7 @@ print(state.values)
 - hardware-efficient variational ansätze with configurable RX/RY/RZ layers and linear/ring/none entanglement;
 - composable exact QFT / inverse-QFT synthesis over arbitrary selected qubits;
 - exact single-Pauli-string time evolution plus explicit first- and second-order Pauli-Hamiltonian product formulas;
-- dependency-free Jordan-Wigner mapping, spin-orbital molecular Hamiltonian construction, and Hartree-Fock occupation-state preparation;
+- dependency-free Jordan-Wigner mapping, spin-orbital molecular Hamiltonians, Hartree-Fock references, and factorized UCCSD templates with native-gradient chain-rule mapping;
 - canonical weighted MaxCut Hamiltonians and standard X-mixer QAOA construction;
 - detector error models, deterministic syndrome sampling, repetition-code construction, a bounded exact reference maximum-likelihood decoder, and native sparse BP+OSD-0 decoding with reusable batch execution;
 - reproducible surface-code evidence against PyMatching sparse-blossom and hypergraph-product QLDPC evidence against independent `ldpc` BP+OSD-0 comparators.
@@ -304,6 +304,17 @@ energy = qp.expect(reference, hamiltonian)
 
 `jordan_wigner()` accepts explicit ordered fermionic ladder terms and requires the mapped Pauli coefficients to be real within the requested tolerance. `molecular_hamiltonian()` uses the spin-orbital convention `sum h[p,q] a†_p a_q + 0.5 sum g[p,q,r,s] a†_p a†_q a_s a_r + E_nuc`. The returned observable uses the same CPU, CUDA, MPS, tensor-network, MPI, and differentiation paths as any other QuPy Hamiltonian. `hartree_fock_state()` prepares a computational-basis occupation state and supports explicit occupied-orbital selections.
 
+Factorized spin-orbital UCCSD is built from the same primitives:
+
+```python
+template = qp.uccsd_ansatz(4, 2)
+theta = np.zeros(template.parameter_count)
+program = template.bind(theta)
+energy = qp.expect(program, hamiltonian)
+```
+
+`uccsd_ansatz()` enumerates occupied-to-virtual singles followed by doubles in deterministic order. Each individual fermionic excitation is mapped as the Hermitian generator `i(A - A†)` and exponentiated exactly because its Jordan-Wigner Pauli terms commute; the ordered product across different excitations is the explicit first-order factorized UCCSD ansatz. `UccsdTemplate` also exposes the synthesized gate slots and the linear amplitude-to-gate map, so native gate-level gradients can be converted back to UCCSD amplitude gradients with `compress_gradient()` without adding a second symbolic parameter system.
+
 ## Hardware circuits, OpenQASM, and providers
 
 `Program` is the numerical unitary execution IR. `Circuit` is the hardware-facing IR for classical state and device-control semantics.
@@ -476,7 +487,7 @@ The largest remaining engineering work is integration and scale:
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
 - replace host-staged distributed-CUDA exchanges with measured CUDA-aware MPI or equivalent direct GPU transport where hardware evidence shows a benefit, and benchmark multi-GPU / multi-node scaling explicitly;
 - extend first-party provider coverage beyond Amazon Braket and Qiskit Aer, and add direct device-capability translation only where vendor conformance evidence supports it;
-- broaden chemistry beyond the dependency-free spin-orbital Jordan-Wigner/Hartree-Fock foundation, and broaden simulation and optimization applications while reusing the native execution and differentiation contracts;
+- broaden chemistry beyond the dependency-free Jordan-Wigner/Hartree-Fock/factorized-UCCSD layer with evidence-backed active-space, excitation-selection, and molecular-workflow integrations, while reusing the native execution and differentiation contracts;
 - broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
 - keep the reviewed pre-1.0 compatibility baseline current while the remaining scale and provider evidence matures toward a future 1.0 commitment.
 
