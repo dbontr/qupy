@@ -6,18 +6,15 @@ else()
     project(qupy VERSION 0.3.0 LANGUAGES CXX)
 endif()
 
-file(
-    STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/cpp/core.cpp"
-    QUPY_CORE_VERSION_LINE
-    REGEX "kCoreVersion = \"[^\"]+\";"
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/cpp/core.cpp" QUPY_CORE_SOURCE)
+string(
+    REGEX MATCH "kCoreVersion = \"([^\"]+)\""
+    QUPY_CORE_VERSION_MATCH "${QUPY_CORE_SOURCE}"
 )
-if(NOT QUPY_CORE_VERSION_LINE)
+if(NOT QUPY_CORE_VERSION_MATCH)
     message(FATAL_ERROR "Could not determine the QuPy native core version")
 endif()
-string(
-    REGEX REPLACE ".*kCoreVersion = \"([^\"]+)\";.*" "\\1"
-    QUPY_CORE_VERSION "${QUPY_CORE_VERSION_LINE}"
-)
+set(QUPY_CORE_VERSION "${CMAKE_MATCH_1}")
 if(DEFINED SKBUILD_PROJECT_VERSION_FULL AND
    NOT "${QUPY_CORE_VERSION}" STREQUAL "${SKBUILD_PROJECT_VERSION_FULL}")
     message(
