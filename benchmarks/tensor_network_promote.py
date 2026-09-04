@@ -68,10 +68,12 @@ def _render_artifact(
         f"host {host}",
         "policy 1",
         f"reports {calibration.report_count}",
-        "decision "
-        f"{calibration.decision.samples} {calibration.decision.mistakes} "
-        f"{_format_float(calibration.decision.max_regret)} "
-        f"{calibration.decision.cpu_wins} {calibration.decision.tn_wins}",
+        (
+            "decision "
+            f"{calibration.decision.samples} {calibration.decision.mistakes} "
+            f"{_format_float(calibration.decision.max_regret)} "
+            f"{calibration.decision.cpu_wins} {calibration.decision.tn_wins}"
+        ),
     ]
     for model in calibration.models:
         coefficient_text = " ".join(_format_float(value) for value in model.coefficients)
