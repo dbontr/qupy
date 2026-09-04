@@ -31,11 +31,19 @@ assert package_path.is_relative_to(prefix), (package_path, prefix)
 assert native_path.is_relative_to(prefix), (native_path, prefix)
 assert any(str(native_path).endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES)
 
-distribution_version = importlib.metadata.version("qupy-compute")
+distribution = importlib.metadata.distribution("qupy-compute")
+distribution_version = distribution.version
 assert distribution_version == qp.__version__ == qp.core_version()
 assert qp.core_language() == "C++20"
 assert qp.ir_version() == 1
 assert qp.circuit_ir_version() == 1
+
+console_scripts = {
+    entry.name: entry.value
+    for entry in distribution.entry_points
+    if entry.group == "console_scripts"
+}
+assert console_scripts["qupy-provider-conformance"] == "qupy.provider_conformance:main"
 
 marker = importlib.resources.files("qupy").joinpath("py.typed")
 assert marker.is_file(), marker
@@ -85,6 +93,12 @@ def _venv_python(environment: Path) -> Path:
     return environment / "bin" / "python"
 
 
+def _venv_script(environment: Path, name: str) -> Path:
+    if os.name == "nt":
+        return environment / "Scripts" / f"{name}.exe"
+    return environment / "bin" / name
+
+
 def _clean_environment() -> dict[str, str]:
     environment = os.environ.copy()
     environment.pop("PYTHONHOME", None)
@@ -109,7 +123,8 @@ def _run(command: list[str], *, cwd: Path, environment: dict[str, str]) -> None:
 
 def install_and_verify(wheel: Path, workspace: Path) -> None:
     environment = _clean_environment()
-    python = _create_environment(workspace / "install-env")
+    install_environment = workspace / "install-env"
+    python = _create_environment(install_environment)
     _run(
         [
             str(python),
@@ -124,6 +139,14 @@ def install_and_verify(wheel: Path, workspace: Path) -> None:
     )
     _run(
         [str(python), "-I", "-c", _VERIFY_CODE],
+        cwd=workspace,
+        environment=environment,
+    )
+    conformance_cli = _venv_script(install_environment, "qupy-provider-conformance")
+    if not conformance_cli.is_file():
+        raise RuntimeError(f"wheel did not install the provider conformance CLI at {conformance_cli}")
+    _run(
+        [str(conformance_cli), "--help"],
         cwd=workspace,
         environment=environment,
     )

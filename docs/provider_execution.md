@@ -105,6 +105,35 @@ If the provider does advertise a target, an explicitly supplied target must have
 
 The provider must advertise `openqasm3` support. QuPy does not silently switch formats or bypass target validation.
 
+## Provider conformance
+
+`qp.check_provider_conformance()` exercises the portable discovery, compile, submit, poll, and result-retrieval contract against a provider plug-in. It is explicit because it submits a real provider job. Calling it can consume provider quota or incur provider-side cost; credentials, service policy, rate limits, and billing remain the caller's responsibility.
+
+```python
+import qupy as qp
+
+provider = qp.ProviderPlugin("/path/to/provider-library")
+report = qp.check_provider_conformance(
+    provider,
+    shots=1,
+    max_polls=32,
+    poll_interval_seconds=0.5,
+)
+print(report.to_json())
+```
+
+The checker requires advertised OpenQASM 3 support and either an advertised `hardware_target` or an explicit trusted target. It compiles and submits one single-qubit terminal-measurement circuit, then accepts repeated `queued` or `running` states while rejecting a regression from `running` back to `queued`. `failed`, `cancelled`, timeout, malformed result JSON, and capability/target inconsistencies fail closed.
+
+For command-line provider adapters that advertise their target, the packaged wheel installs:
+
+```text
+qupy-provider-conformance /path/to/provider-library --shots 1 --max-polls 32 --poll-interval 0.5
+```
+
+The report contains provider/target identity, the observed lifecycle states, and SHA-256 identities for the submitted program, provider job identifier, and result JSON. It deliberately does not embed the raw program text, remote job identifier, or provider result payload.
+
+This conformance check proves the portable QuPy provider contract only. It does not certify physical quantum fidelity, queue or latency service levels, billing behavior, credential lifecycle, security/compliance properties, provider-specific result semantics, or vendor SDK correctness. Those remain adapter/provider evidence. Cancellation remains part of ABI-v1 and is tested independently at the native ABI boundary; the successful remote conformance path does not create a cancellation race solely to test that operation.
+
 ## Provider ABI stability
 
 The C provider ABI remains version 1 and continues to expose:

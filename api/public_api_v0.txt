@@ -50,6 +50,7 @@ PlannerCostModel
 Probabilities
 Program
 ProviderCapabilities
+ProviderConformanceReport
 ProviderJobState
 ProviderPlugin
 ProviderProgram
@@ -75,6 +76,7 @@ amplitude_damping
 append_pauli_evolution
 append_qft
 bit_flip
+check_provider_conformance
 circuit_ir_version
 commuting_groups
 compile
