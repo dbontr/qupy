@@ -173,8 +173,16 @@ NB_MODULE(_native, module) {
         .def_ro("dynamic_control", &qupy::Target::dynamic_control)
         .def_ro("parameter_batches", &qupy::Target::parameter_batches)
         .def_prop_ro("fingerprint", &qupy::Target::fingerprint)
-        .def("supports_operation", nb::overload_cast<qupy::OperationCode>(&qupy::Target::supports, nb::const_))
-        .def("supports_result", nb::overload_cast<qupy::ResultMode>(&qupy::Target::supports, nb::const_));
+        .def(
+            "supports_operation",
+            nb::overload_cast<qupy::OperationCode>(&qupy::Target::supports, nb::const_),
+            "code"_a
+        )
+        .def(
+            "supports_result",
+            nb::overload_cast<qupy::ResultMode>(&qupy::Target::supports, nb::const_),
+            "mode"_a
+        );
 
     nb::class_<qupy::PlannerCostModel>(module, "PlannerCostModel")
         .def_prop_ro("schema_version", &qupy::PlannerCostModel::schema_version)

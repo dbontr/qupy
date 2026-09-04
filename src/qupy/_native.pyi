@@ -1131,22 +1131,26 @@ def expect_observable(
     program: Program,
     observable: Observable,
     backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult: ...
 def variance_observable(
     program: Program,
     observable: Observable,
     backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult: ...
 def covariance(
     program: Program,
     left: Observable,
     right: Observable,
     backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult: ...
 def expect_observables(
     program: Program,
     observables: list[Observable],
     backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
 ) -> ObservableBatch: ...
 
 def native_target() -> Target: ...
@@ -1212,6 +1216,7 @@ def expect(
     program: Program,
     observable: Observable,
     backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult: ...
 def expect_batch(
     program: Program,
@@ -1232,6 +1237,7 @@ def variance(
     program: Program,
     observable: Observable,
     backend: str = "auto",
+    cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult: ...
 
 def value_and_grad(
