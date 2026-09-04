@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import pytest
 
 import qupy as qp
-import qupy.braket_provider as braket_provider
+from qupy import braket_provider
 
 
 @dataclass
