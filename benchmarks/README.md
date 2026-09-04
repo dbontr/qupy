@@ -89,13 +89,35 @@ The density policy contains 36 paired workloads covering 4–9 qubits, chain and
 
 Density validation is leave-one-workload-out. The CPU curve is a six-feature log runtime model over qubits, operation work, and Kraus work. The CUDA curve is a seven-feature non-negative additive runtime model over `4^n` density elements, gate work, and one local superoperator per noise event. A separate six-feature log speedup curve is fitted directly to each paired `CPU runtime / CUDA runtime` ratio and owns backend selection. Promotion requires all three curves to satisfy the same `1.5x` median / `2.0x` maximum error limits, at least three reports with the same host and workload set, at least 24 paired workloads, and zero decisions above 10% regret. Schema-v5 promotion requires a validated schema-v4 base and preserves all earlier planner evidence.
 
+## QEC decoder evidence
+
+The QEC harness compares native QuPy BP+OSD-0 with PyMatching sparse-blossom minimum-weight perfect matching on the same detector samples from Stim-generated rotated surface-code memory circuits. These generated circuits are reproducible reference workloads, not an exhaustive QEC research corpus.
+
+Run the portable smoke workload:
+
+```text
+python -m benchmarks.qec --profile smoke --warmups 1 --iterations 5 --output qec-smoke.json
+```
+
+Run the broader reference grid across X/Z memories, distances 3/5/7, and physical error rates 0.001/0.005:
+
+```text
+python -m benchmarks.qec --profile standard --warmups 2 --iterations 10 --output qec-standard.json
+```
+
+Stim produces the noisy circuit samples and a decomposed detector error model. QuPy imports each complete independent error mechanism by parity, ignoring `^` separators because separators are decomposition suggestions rather than additional error events. PyMatching consumes the same detector error model and may use those graphlike decomposition hints for matching. Both decoders therefore see the same detector syndromes and logical ground truth while retaining their own decoding algorithms.
+
+The QEC report records detector/error graph size, model identity, fixed random seed, sample time, decoder setup time, raw batch-decode timings, median throughput, logical-failure counts and 95% Wilson intervals, QuPy BP convergence/OSD usage/iteration statistics, and cross-decoder logical prediction agreement. Every QuPy correction is reconstructed through the imported detector model; the benchmark fails if any correction does not reproduce its input syndrome.
+
+CI pins Stim and PyMatching only in the benchmark-compatibility job. They are not QuPy runtime dependencies. Hosted CI verifies integration and semantic invariants but does not enforce decoder latency or logical-error superiority thresholds. Performance and decoder-quality claims require controlled repeated measurements with adequate shots on the target workload distribution.
+
 Run all compatibility adapters after installing their optional packages:
 
 ```text
 python -m benchmarks.run --profile smoke --engines qupy,stim,qsim,aer-statevector,aer-stabilizer --warmups 1 --iterations 5 --require-engines
 ```
 
-The repository CI compatibility job installs Stim 1.16.0, qsimcirq 0.22.1, and Qiskit Aer 0.17.2 only for benchmark-adapter verification. These packages are not QuPy runtime dependencies.
+The repository CI compatibility job installs Stim 1.16.0, PyMatching 2.4.0, qsimcirq 0.22.1, and Qiskit Aer 0.17.2 only for benchmark verification. These packages are not QuPy runtime dependencies.
 
 ## Interpretation
 
