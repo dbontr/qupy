@@ -416,5 +416,9 @@ struct DistributedStateVector {
 [[nodiscard]] DistributedInfo distributed_info();
 [[nodiscard]] bool mpi_compiled() noexcept;
 [[nodiscard]] DistributedStateVector distributed_statevector(const Program& program);
+[[nodiscard]] DistributedStateVector distributed_cuda_statevector(
+    const Program& program,
+    std::optional<std::size_t> device = std::nullopt
+);
 
 }  // namespace qupy

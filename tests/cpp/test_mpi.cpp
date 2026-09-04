@@ -22,6 +22,16 @@ void require_close(double actual, double expected, const char* message) {
     }
 }
 
+void require_complex_close(
+    qupy::Complex actual,
+    qupy::Complex expected,
+    const char* message
+) {
+    if (std::abs(actual - expected) > 5e-12) {
+        throw std::runtime_error(message);
+    }
+}
+
 qupy::Program distributed_program() {
     qupy::Program program(4U);
     program = qupy::ry(program, 0.0, 0U);
@@ -105,6 +115,41 @@ void test_observable_batch_and_gradient() {
     require_close(
         mpi_gradient.gradient.front(), cpu_gradient.gradient.front(), "MPI gradient mismatch"
     );
+}
+
+void test_distributed_cuda_statevector() {
+    const qupy::Program program = distributed_program();
+    try {
+        const qupy::DistributedStateVector distributed =
+            qupy::distributed_cuda_statevector(program);
+        const qupy::StateVector cpu = qupy::statevector(program, "native-cpu");
+        require(
+            distributed.global_size == cpu.values.size(),
+            "distributed CUDA global size mismatch"
+        );
+        require(
+            distributed.local_values.size() == distributed.global_size / distributed.world_size,
+            "distributed CUDA local shard size mismatch"
+        );
+        require(
+            distributed.backend.rfind("native-mpi-cuda:", 0U) == 0U,
+            "distributed CUDA backend identity mismatch"
+        );
+        for (std::size_t index = 0U; index < distributed.local_values.size(); ++index) {
+            require_complex_close(
+                distributed.local_values[index],
+                cpu.values[distributed.global_offset + index],
+                "distributed CUDA state shard mismatch"
+            );
+        }
+    } catch (const std::runtime_error& error) {
+        require(
+            std::string(error.what()).find(
+                "distributed CUDA execution requires a usable mapped CUDA device"
+            ) != std::string::npos,
+            "distributed CUDA failed after device readiness validation"
+        );
+    }
 }
 
 void test_distributed_tensor_network() {
@@ -216,6 +261,7 @@ int main() {
         require(info.rank < info.world_size, "MPI rank is outside the world");
         test_observable_reductions();
         test_observable_batch_and_gradient();
+        test_distributed_cuda_statevector();
         test_distributed_tensor_network();
         test_distributed_trajectories();
         return 0;

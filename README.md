@@ -69,7 +69,7 @@ print(state.values)
 - exact MPS execution with structural bond/routing/work estimates and adaptive MPS-to-dense continuation;
 - exact general tensor-network expectation execution and explicit parameter-shift differentiation through `native-tn`, with evidence-gated automatic CPU/TN expectation selection;
 - deterministic tensor-network structural preflight with contraction count, peak rank, peak intermediate bytes, scalar work, and plan fingerprints;
-- exact MPI-sharded state-vector execution and distributed Pauli/Hamiltonian reductions;
+- exact MPI-sharded host state-vector execution plus explicit rank-local CUDA shard execution with host-staged nonlocal-gate exchange, alongside distributed Pauli/Hamiltonian reductions;
 - MPI term-parallel general tensor-network expectation execution;
 - MPI-distributed noisy quantum trajectories with collective failure propagation.
 
@@ -379,7 +379,7 @@ print(info.available, info.world_size, info.rank)
 
 Distributed tensor-network and trajectory APIs use collective failure propagation: a rank-local failure is surfaced collectively rather than leaving peers blocked in mismatched MPI collectives.
 
-Multi-GPU state sharding is **not** implied by MPI support. QuPy now has explicit per-process CUDA device ownership (`native-cuda:<device>`), so a launcher can assign different visible ordinals to independent processes without global device mutation. The current MPI state-vector shards still live in host memory, however; moving those shards onto rank-local GPUs and exchanging nonlocal-gate data device-to-device remains a separate distributed CUDA execution path.
+`distributed_cuda_statevector()` maps each MPI rank to an explicit CUDA ordinal and keeps that rank's shard in the selected device workspace for local-qubit gates. With `device=None`, the launcher-reported local rank selects the CUDA ordinal; callers may pass an explicit ordinal instead. Gates touching distributed qubits use the same exact MPI shard semantics as the host engine, with the shard staged through host memory for the exchange/update and then returned to the GPU. This is real rank-local GPU state ownership, but it is not CUDA-aware MPI or direct GPU-to-GPU transport.
 
 ## Quantum error correction
 
@@ -474,7 +474,7 @@ Benchmark and calibration tooling lives under [`benchmarks/`](benchmarks/). The 
 The largest remaining engineering work is integration and scale:
 
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
-- move MPI state-vector shards onto explicit rank-local CUDA devices and add device-aware nonlocal-gate exchange for true multi-GPU / multi-node accelerator execution;
+- replace host-staged distributed-CUDA exchanges with measured CUDA-aware MPI or equivalent direct GPU transport where hardware evidence shows a benefit, and benchmark multi-GPU / multi-node scaling explicitly;
 - extend first-party provider coverage beyond Amazon Braket and Qiskit Aer, and add direct device-capability translation only where vendor conformance evidence supports it;
 - broaden chemistry beyond the dependency-free spin-orbital Jordan-Wigner/Hartree-Fock foundation, and broaden simulation and optimization applications while reusing the native execution and differentiation contracts;
 - broaden QEC evidence beyond Hamming-seed hypergraph products to circuit-level noise and additional LDPC families, and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;

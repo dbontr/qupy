@@ -104,6 +104,7 @@ default_planner_cost_model
 default_tensor_network_cost_model
 density_matrix
 depolarizing
+distributed_cuda_statevector
 distributed_info
 distributed_statevector
 distributed_tensor_network_expectation

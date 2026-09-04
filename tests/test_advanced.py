@@ -408,6 +408,8 @@ def test_distributed_surface_is_explicit_and_fail_closed() -> None:
     if not qp.mpi_compiled():
         with pytest.raises(RuntimeError, match="MPI support is not compiled"):
             qp.distributed_statevector(_bell_program())
+        with pytest.raises(RuntimeError, match="MPI support is not compiled"):
+            qp.distributed_cuda_statevector(_bell_program())
         xx = _observable(_term(1.0, (0, qp.Pauli.X), (1, qp.Pauli.X)))
         with pytest.raises(RuntimeError, match="MPI support is not compiled"):
             qp.observable_plan(_bell_program(), [xx], backend="native-mpi")
