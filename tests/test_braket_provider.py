@@ -78,7 +78,7 @@ def test_braket_capabilities_round_trip_the_configured_target() -> None:
     assert capabilities.hardware_target.fingerprint == _target().fingerprint
 
 
-def test_braket_submission_lowers_only_the_standard_gate_include(
+def test_braket_submission_lowers_only_the_known_dialect_differences(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     task = _FakeTask(["QUEUED", "RUNNING", "COMPLETED"])
@@ -107,9 +107,12 @@ def test_braket_submission_lowers_only_the_standard_gate_include(
     )
     assert circuit.to_openqasm3().startswith("OPENQASM 3.1;\n")
     braket_source = submission.program.text.replace('include "stdgates.inc";\n', "", 1)
+    braket_source = braket_source.replace("\ncx ", "\ncnot ")
     assert captured_sources == [braket_source]
     assert device.calls == [({"source": braket_source}, 4)]
     assert 'include "stdgates.inc";' not in braket_source
+    assert "\ncx " not in braket_source
+    assert "\ncnot " in braket_source
     assert braket_source.splitlines()[0] == "OPENQASM 3.0;"
     assert provider.poll(submission.job_id) is qp.ProviderJobState.QUEUED
     assert provider.poll(submission.job_id) is qp.ProviderJobState.RUNNING
@@ -222,10 +225,10 @@ def test_braket_local_simulator_real_sdk_integration() -> None:
     pytest.importorskip("braket")
 
     provider = qp.BraketProvider.local_simulator(num_qubits=4)
-    circuit = qp.Circuit(2, 2).h(0).cx(0, 1).measure(0, 0).measure(1, 1)
+    bell = qp.Circuit(2, 2).h(0).cx(0, 1).measure(0, 0).measure(1, 1)
     submission = qp.submit_circuit(
         provider,
-        circuit,
+        bell,
         64,
         initial_layout=[0, 1],
         optimization_level=0,
@@ -236,6 +239,23 @@ def test_braket_local_simulator_real_sdk_integration() -> None:
     assert result["shots"] == 64
     assert sum(result["measurement_counts"].values()) == 64
     assert set(result["measurement_counts"]) <= {"00", "11"}
+
+    all_gates = qp.Circuit(2, 2)
+    all_gates = all_gates.h(0).x(0).y(0).z(0)
+    all_gates = all_gates.rx(0.11, 0).ry(-0.23, 0).rz(0.37, 0)
+    all_gates = all_gates.cx(0, 1).cz(0, 1).swap(0, 1)
+    all_gates = all_gates.measure(0, 0).measure(1, 1)
+    gate_submission = qp.submit_circuit(
+        provider,
+        all_gates,
+        8,
+        initial_layout=[0, 1],
+        optimization_level=0,
+    )
+    assert provider.poll(gate_submission.job_id) is qp.ProviderJobState.SUCCEEDED
+    gate_result = json.loads(provider.result_json(gate_submission.job_id))
+    assert gate_result["shots"] == 8
+    assert sum(gate_result["measurement_counts"].values()) == 8
 
     report = qp.check_provider_conformance(
         provider,
