@@ -4,6 +4,8 @@
 - [nanobind documentation](https://nanobind.readthedocs.io/en/latest/) — nanobind 3.x. Used for: low-overhead C++/Python bindings and native type exposure.
 - [nanobind ndarray](https://nanobind.readthedocs.io/en/latest/ndarray.html) — nanobind 3.x. Used for: ownership-safe zero-copy NumPy result views.
 - [scikit-build-core getting started](https://scikit-build-core.readthedocs.io/en/latest/guide/getting_started.html) — scikit-build-core. Used for: CMake-backed Python packaging.
+- [PEP 561 — Distributing and Packaging Type Information](https://peps.python.org/pep-0561/) — Python Packaging/Typing specification. Used for: shipping the `py.typed` marker alongside QuPy's inline annotations and extension-module stubs.
+- [PyPI Trove classifiers](https://pypi.org/classifiers/) — Python Package Index. Used for: standardized alpha, platform, language, scientific-computing, and `Typing :: Typed` release metadata.
 
 ## Framework autodiff interoperability
 - [JAX pure_callback](https://docs.jax.dev/en/latest/_autosummary/jax.pure_callback.html) — JAX. Used for: JIT-compatible host execution of QuPy objectives without making JAX a QuPy runtime dependency.
