@@ -9,6 +9,7 @@ from . import _native
 
 _ROTATION_AXES = {"rx", "ry", "rz"}
 _ENTANGLEMENT_PATTERNS = {"linear", "ring", "none"}
+_PRODUCT_FORMULA_ORDERS = {1, 2}
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +188,7 @@ def append_pauli_evolution(
     term: _native.PauliTerm,
     time: float,
 ) -> _native.Program:
-    """Append exp(-i * time * coefficient * P) for one Pauli term."""
+    """Append exp(-i * time * coefficient * P), up to global phase."""
     evolution_time = float(time)
     if not math.isfinite(evolution_time):
         raise ValueError("time must be finite")
@@ -234,10 +235,98 @@ def append_pauli_evolution(
     return program
 
 
+def _product_formula_order(order: int) -> int:
+    if isinstance(order, bool) or not isinstance(order, int):
+        raise TypeError("order must be an integer")
+    if order not in _PRODUCT_FORMULA_ORDERS:
+        raise ValueError("order must be 1 or 2")
+    return order
+
+
+def _product_formula_steps(steps: int) -> int:
+    if isinstance(steps, bool) or not isinstance(steps, int):
+        raise TypeError("steps must be an integer")
+    if steps <= 0:
+        raise ValueError("steps must be positive")
+    return steps
+
+
+def _append_product_formula_step(
+    program: _native.Program,
+    terms: tuple[_native.PauliTerm, ...],
+    step_time: float,
+    order: int,
+) -> _native.Program:
+    if not terms:
+        return program
+    if order == 1 or len(terms) == 1:
+        for term in terms:
+            program = append_pauli_evolution(program, term, step_time)
+        return program
+
+    half_time = step_time / 2.0
+    for term in terms[:-1]:
+        program = append_pauli_evolution(program, term, half_time)
+    program = append_pauli_evolution(program, terms[-1], step_time)
+    for term in reversed(terms[:-1]):
+        program = append_pauli_evolution(program, term, half_time)
+    return program
+
+
+def append_hamiltonian_evolution(
+    program: _native.Program,
+    hamiltonian: _native.Observable,
+    time: float,
+    *,
+    steps: int = 1,
+    order: int = 2,
+) -> _native.Program:
+    """Append first- or second-order product-formula Hamiltonian evolution."""
+    evolution_time = float(time)
+    if not math.isfinite(evolution_time):
+        raise ValueError("time must be finite")
+    step_count = _product_formula_steps(steps)
+    formula_order = _product_formula_order(order)
+    terms = tuple(hamiltonian.terms)
+    step_time = evolution_time / step_count
+    for _ in range(step_count):
+        program = _append_product_formula_step(
+            program,
+            terms,
+            step_time,
+            formula_order,
+        )
+    return program
+
+
+def hamiltonian_evolution(
+    num_qubits: int,
+    hamiltonian: _native.Observable,
+    time: float,
+    *,
+    steps: int = 1,
+    order: int = 2,
+) -> _native.Program:
+    """Construct product-formula Hamiltonian evolution as a native Program."""
+    if isinstance(num_qubits, bool) or not isinstance(num_qubits, int):
+        raise TypeError("num_qubits must be an integer")
+    if num_qubits <= 0:
+        raise ValueError("num_qubits must be positive")
+    return append_hamiltonian_evolution(
+        _native.Program(num_qubits),
+        hamiltonian,
+        time,
+        steps=steps,
+        order=order,
+    )
+
+
 __all__ = [
     "VariationalTemplate",
+    "append_hamiltonian_evolution",
     "append_pauli_evolution",
     "append_qft",
+    "hamiltonian_evolution",
     "hardware_efficient_ansatz",
     "qft",
 ]
