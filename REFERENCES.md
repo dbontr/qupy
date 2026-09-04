@@ -69,3 +69,5 @@
 
 ## Quantum error correction
 - [Stim detector error model format](https://github.com/quantumlib/Stim/blob/main/doc/file_format_dem_detector_error_model.md) — Google Quantum AI, Stim. Used for: detector-event, independent-error-mechanism, and logical-frame-change semantics used by QuPy detector models.
+- [Decoding across the quantum low-density parity-check code landscape](https://doi.org/10.1103/PhysRevResearch.2.043423) — Joschka Roffe, David R. White, Simon Burton, and Earl Campbell, Physical Review Research 2, 043423 (2020). Used for: belief-propagation plus ordered-statistics post-processing architecture for quantum error decoding.
+- [Soft-decision decoding of linear block codes based on ordered statistics](https://doi.org/10.1109/18.412683) — Marc P. C. Fossorier and Shu Lin, IEEE Transactions on Information Theory 41(5), 1379-1396 (1995). Used for: reliability ordering and order-0 ordered-statistics reprocessing principles.

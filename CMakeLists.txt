@@ -25,6 +25,7 @@ add_library(
     src/cpp/multi_device.cpp
     src/cpp/openqasm.cpp
     src/cpp/provider.cpp
+    src/cpp/qec.cpp
     src/cpp/stabilizer.cpp
     src/cpp/tensor_network.cpp
     src/cpp/tensor_network_cost.cpp
@@ -82,6 +83,7 @@ if(QUPY_BUILD_PYTHON)
         src/cpp/circuit_bindings.cpp
         src/cpp/compiler_bindings.cpp
         src/cpp/multi_device_bindings.cpp
+        src/cpp/qec_bindings.cpp
         src/cpp/tensor_network_bindings.cpp
         src/cpp/trajectory_bindings.cpp
     )
@@ -161,6 +163,28 @@ if(QUPY_BUILD_TESTS)
         endif()
     endif()
     add_test(NAME qupy_compiler_tests COMMAND qupy_compiler_tests)
+
+    add_executable(qupy_qec_tests tests/cpp/test_qec.cpp)
+    target_compile_features(qupy_qec_tests PRIVATE cxx_std_20)
+    target_link_libraries(qupy_qec_tests PRIVATE qupy_core)
+    if(MSVC)
+        target_compile_options(qupy_qec_tests PRIVATE /W4 /permissive-)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_qec_tests PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(qupy_qec_tests PRIVATE -Wall -Wextra -Wpedantic)
+        if(QUPY_WARNINGS_AS_ERRORS)
+            target_compile_options(qupy_qec_tests PRIVATE -Werror)
+        endif()
+        if(QUPY_ENABLE_SANITIZERS)
+            target_compile_options(
+                qupy_qec_tests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer
+            )
+            target_link_options(qupy_qec_tests PRIVATE -fsanitize=address,undefined)
+        endif()
+    endif()
+    add_test(NAME qupy_qec_tests COMMAND qupy_qec_tests)
 
     add_executable(qupy_tensor_network_tests tests/cpp/test_tensor_network.cpp)
     target_compile_features(qupy_tensor_network_tests PRIVATE cxx_std_20)

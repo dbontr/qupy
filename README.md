@@ -106,7 +106,7 @@ print(state.values)
 - hardware-efficient variational ansätze with configurable RX/RY/RZ layers and linear/ring/none entanglement;
 - composable exact QFT / inverse-QFT synthesis over arbitrary selected qubits;
 - exact single-Pauli-string time evolution with explicit product-formula boundaries for noncommuting Hamiltonian sums;
-- detector error models, deterministic syndrome sampling, repetition-code construction, and a bounded exact reference maximum-likelihood decoder.
+- detector error models, deterministic syndrome sampling, repetition-code construction, a bounded exact reference maximum-likelihood decoder, and native sparse BP+OSD-0 decoding with reusable batch execution.
 
 ## Architecture
 
@@ -128,6 +128,7 @@ C++20 QuPy core
     |-- CPU / CUDA / stabilizer / MPS / tensor-network engines
     |-- density-matrix / trajectory / Lindblad execution
     |-- MPI distributed execution
+    |-- detector-model QEC decoding
     |-- native differentiation and optimization
     `-- typed native result storage
          |
@@ -338,6 +339,24 @@ Distributed tensor-network and trajectory APIs use collective failure propagatio
 
 Multi-GPU CUDA execution is **not** implied by MPI support. The current distributed scale engines distribute work/rank ownership; physical GPU placement remains a separate execution concern.
 
+## Quantum error correction
+
+Detector models describe independent error mechanisms, detector flips, and logical-frame changes. The exact decoder remains the small-model maximum-likelihood reference; `BpOsdDecoder` is the reusable sparse path for larger detector models.
+
+```python
+model = qp.repetition_code_detector_model(5, 4, 0.01, 0.02)
+samples = qp.sample_detector_model(model, shots=4096, seed=7)
+
+decoder = qp.BpOsdDecoder(model, max_iterations=50, damping=0.1)
+decoded = decoder.decode_batch(samples.syndrome)
+
+print(decoded.observables)
+```
+
+BP+OSD-0 always verifies the returned correction against the requested syndrome when decoding succeeds. It is not a maximum-likelihood guarantee. The existing exact reference decoder is capped at 24 error mechanisms; the scalable path uses sparse belief propagation and deterministic GF(2) order-0 repair instead of subset enumeration.
+
+See [Detector-model decoding](docs/qec_decoding.md) for algorithm, result, batch, and failure contracts.
+
 ## Testing and verification
 
 The repository treats verification as part of the architecture, not as a release afterthought.
@@ -381,6 +400,7 @@ uv run mypy src/qupy
 The README is the overview. Detailed contracts live in focused documents:
 
 - [Algorithm construction](docs/algorithms.md)
+- [Detector-model decoding](docs/qec_decoding.md)
 - [Distributed scale engines](docs/distributed_scale_engines.md)
 - [JAX and PyTorch autodiff interoperability](docs/framework_autodiff.md)
 - [Hardware compilation](docs/hardware_compilation.md)
@@ -412,7 +432,7 @@ The largest remaining engineering work is not another isolated simulator backend
 - add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
 - deepen first-party QPU provider adapters and lifecycle coverage while keeping credentials outside the core;
 - broaden algorithm/application layers on top of the native execution and differentiation contracts;
-- strengthen QEC with scalable production decoders beyond the bounded exact reference decoder;
+- benchmark BP+OSD-0 across surface/LDPC workloads and add higher-order or specialized QEC decoders only when measured logical-error and latency gains justify them;
 - stabilize the public API, packaging, documentation, and compatibility policy toward a future 1.0.
 
 The goal is a single quantum numerical-computing layer that can move from laptop simulation to accelerators, distributed execution, hybrid autodiff, and QPU submission without changing the program's meaning.

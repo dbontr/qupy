@@ -172,6 +172,12 @@ from .provider import (
     submit_circuit,
     submit_compiled_circuit,
 )
+from .qec import (
+    BpOsdDecodeBatch,
+    BpOsdDecoder,
+    BpOsdDecodeResult,
+    decode_detector_model_bp_osd,
+)
 from .tensor_network import (
     TensorNetworkCostModel,
     TensorNetworkEstimate,
@@ -193,6 +199,9 @@ except PackageNotFoundError:
     __version__ = "0+unknown"
 
 __all__ = [
+    "BpOsdDecodeBatch",
+    "BpOsdDecodeResult",
+    "BpOsdDecoder",
     "Circuit",
     "CircuitInstruction",
     "CircuitOperationCode",
@@ -278,6 +287,7 @@ __all__ = [
     "cx",
     "cz",
     "decode_detector_model",
+    "decode_detector_model_bp_osd",
     "default_planner_cost_model",
     "default_tensor_network_cost_model",
     "density_matrix",
