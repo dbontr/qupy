@@ -69,11 +69,7 @@ Controlled phase rotations are synthesized from RZ and CX. Each synthesized cont
 
 ## Exact Pauli-string evolution
 
-`append_pauli_evolution()` appends
-
-`exp(-i * time * coefficient * P)`
-
-for one `PauliTerm` P.
+`append_pauli_evolution()` appends `exp(-i * time * coefficient * P)` for one `PauliTerm` P.
 
 ```python
 term = qp.PauliTerm(
@@ -87,18 +83,70 @@ term = qp.PauliTerm(
 program = qp.append_pauli_evolution(program, term, 0.2)
 ```
 
-QuPy rotates X and Y factors into the Z basis, accumulates parity with a CX chain, applies one RZ rotation with angle `2 * time * coefficient`, then exactly uncomputes the parity and basis changes. Identity factors require no gates.
+QuPy rotates X and Y factors into the Z basis, accumulates parity with a CX chain, applies one RZ rotation with angle `2 * time * coefficient`, then exactly uncomputes the parity and basis changes. Identity factors require no gates. This operation is exact for a single Pauli string subject to floating-point roundoff. Identity-only terms contribute only a physically irrelevant global phase and therefore require no operation in QuPy's numerical program model.
 
-This operation is exact for a single Pauli string subject to floating-point roundoff. It is not itself a product-formula approximation. Simulating a Hamiltonian sum by sequentially applying several noncommuting Pauli exponentials introduces whatever product-formula/Trotter error follows from the caller's chosen ordering and step size; QuPy does not hide that approximation.
+## Pauli-Hamiltonian product formulas
+
+`append_hamiltonian_evolution()` composes exact Pauli-string exponentials into an explicit product-formula approximation for a Hamiltonian represented by `Observable`.
+
+```python
+hamiltonian = qp.Observable(
+    [
+        qp.PauliTerm(0.7, [qp.PauliFactor(0, qp.Pauli.X)]),
+        qp.PauliTerm(-0.2, [qp.PauliFactor(0, qp.Pauli.Z)]),
+    ]
+)
+program = qp.append_hamiltonian_evolution(
+    qp.Program(1), hamiltonian, 1.0, steps=8, order=2
+)
+```
+
+`order=1` uses a Lie-Trotter step in the Hamiltonian term order. `order=2` uses a symmetric second-order composition. `steps` must be a positive integer and is never selected implicitly.
+
+For mutually commuting Pauli terms, either order is exact up to floating-point roundoff and global phase. For noncommuting terms, the returned `Program` is an approximation whose error depends on commutators, total time, term ordering, formula order, and step count. QuPy does not relabel that approximation as exact execution; after construction, backend execution still follows the ordinary QuPy planning and exactness contracts for the resulting program.
+
+## Weighted MaxCut
+
+`maxcut_hamiltonian()` constructs the weighted MaxCut objective `C = sum w_ij (I - Z_i Z_j) / 2`.
+
+```python
+cost = qp.maxcut_hamiltonian(
+    4,
+    [(0, 1), (1, 2), (2, 3), (3, 0)],
+    weights=[1.0, 2.0, 1.0, 2.0],
+)
+```
+
+The expectation of `cost` on a computational-basis state is the weight of the represented cut. Edges are undirected, self-loops and duplicate undirected edges are rejected, weights must be finite and non-negative, and edge order is canonicalized so equivalent input orderings produce the same observable fingerprint. The identity component is retained so expectations report the actual cut objective rather than a constant-shifted objective.
+
+## MaxCut QAOA
+
+`qaoa_maxcut_program()` constructs the standard alternating QAOA circuit for the weighted MaxCut Hamiltonian with an X mixer.
+
+```python
+program = qp.qaoa_maxcut_program(
+    4,
+    [(0, 1), (1, 2), (2, 3), (3, 0)],
+    gammas=[0.7, 0.4],
+    betas=[0.3, 0.2],
+)
+energy = qp.expect(program, cost)
+```
+
+The constructor starts in `|+>^n`, applies one MaxCut cost layer for each `gamma`, then applies `exp(-i beta X)` independently to every qubit. MaxCut cost terms are all Z-type and commute, so each cost layer is exact up to global phase and floating-point roundoff rather than a Trotter approximation.
+
+`gammas` and `betas` are explicit numeric layer parameters and must have the same non-zero length. QuPy does not introduce a second symbolic parameter-expression system solely for QAOA. Parameter searches can construct programs from candidate vectors and evaluate them through the same planner and backends, while native slot-based differentiation remains available for `VariationalTemplate` workflows whose parameters map directly to native gate slots.
+
+For a single unweighted edge, the p=1 choice `gamma = pi/2`, `beta = pi/8` reaches the maximum cut expectation of 1; this analytic case is part of the conformance suite.
 
 ## Design boundary
 
 The algorithm layer deliberately returns native primitives:
 
 - no alternate circuit IR;
-- no symbolic-expression engine;
-- no Python simulation loop;
-- no hidden approximate execution;
-- no automatic Hamiltonian product formula.
+- no Python simulator;
+- no hidden approximation or implicit product-formula step selection;
+- no dependency on a separate optimization framework;
+- no symbolic parameter-expression engine layered over native `Program` identity.
 
-Higher-level algorithms can build on these constructors while keeping execution, differentiation, planning, and exactness policy in the existing native ownership boundaries.
+Higher-level applications can build on these constructors while keeping execution, differentiation, planning, observables, and exactness policy in the existing native ownership boundaries.

@@ -107,7 +107,8 @@ print(state.values)
 - native `VariationalTemplate` with deterministic parameter names and tracked native slots;
 - hardware-efficient variational ansätze with configurable RX/RY/RZ layers and linear/ring/none entanglement;
 - composable exact QFT / inverse-QFT synthesis over arbitrary selected qubits;
-- exact single-Pauli-string time evolution with explicit product-formula boundaries for noncommuting Hamiltonian sums;
+- exact single-Pauli-string time evolution plus explicit first- and second-order Pauli-Hamiltonian product formulas;
+- canonical weighted MaxCut Hamiltonians and standard X-mixer QAOA construction;
 - detector error models, deterministic syndrome sampling, repetition-code construction, a bounded exact reference maximum-likelihood decoder, and native sparse BP+OSD-0 decoding with reusable batch execution;
 - reproducible surface-code decoder evidence against PyMatching sparse-blossom on shared Stim detector samples.
 
@@ -264,7 +265,7 @@ objective = qp.make_torch_expectation(
 
 JAX and PyTorch are optional dependencies. QuPy does not share framework device buffers/streams in the current adapter layer; framework arrays are bridged to native QuPy execution with explicit documented boundaries.
 
-## QFT and Pauli evolution
+## QFT and Hamiltonian evolution
 
 ```python
 program = qp.Program(5)
@@ -276,10 +277,12 @@ term = qp.PauliTerm(
     0.5,
     [qp.PauliFactor(0, qp.Pauli.X), qp.PauliFactor(2, qp.Pauli.Z)],
 )
+hamiltonian = qp.Observable([term])
 program = qp.append_pauli_evolution(program, term, 0.2)
+program = qp.append_hamiltonian_evolution(program, hamiltonian, 0.2, steps=4, order=2)
 ```
 
-`append_pauli_evolution` implements one exact Pauli exponential. Sequentially applying noncommuting Pauli exponentials is a caller-selected product formula and therefore has the corresponding approximation error; QuPy does not hide that distinction.
+`append_pauli_evolution` implements one exact Pauli exponential. `append_hamiltonian_evolution` makes the product-formula approximation explicit through its order and positive step count. Commuting Pauli terms are exact up to floating-point roundoff and global phase; noncommuting sums retain the corresponding product-formula error.
 
 ## Hardware circuits, OpenQASM, and providers
 
@@ -452,7 +455,7 @@ The largest remaining engineering work is integration and scale:
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
 - add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
 - extend first-party provider coverage beyond Amazon Braket and add direct device-capability translation only where vendor conformance evidence supports it;
-- broaden algorithm/application layers on top of the native execution and differentiation contracts;
+- broaden chemistry, simulation, and optimization applications beyond the current Hamiltonian-evolution and MaxCut/QAOA primitives while reusing the native execution and differentiation contracts;
 - extend the existing surface-code QEC evidence to LDPC/code-family workloads and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
 - finish the compatibility review needed to turn the checked pre-1.0 API manifest, isolated release-artifact gates, and documented version contracts into a future 1.0 commitment.
 

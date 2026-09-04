@@ -163,3 +163,127 @@ def test_pauli_evolution_validates_time_and_program_extent() -> None:
         qp.append_pauli_evolution(qp.Program(1), term, 0.1)
     with pytest.raises(ValueError, match="finite"):
         qp.append_pauli_evolution(qp.Program(2), term, float("inf"))
+
+
+def test_hamiltonian_evolution_is_exact_for_commuting_pauli_terms() -> None:
+    first = qp.PauliTerm(0.3, [qp.PauliFactor(0, qp.Pauli.Z)])
+    second = qp.PauliTerm(
+        -0.7,
+        [qp.PauliFactor(0, qp.Pauli.Z), qp.PauliFactor(1, qp.Pauli.Z)],
+    )
+    hamiltonian = qp.Observable([first, second])
+    prepared = qp.h(qp.Program(2), 0)
+    prepared = qp.ry(prepared, 0.41, 1)
+    time = 0.63
+
+    reference = qp.append_pauli_evolution(prepared, first, time)
+    reference = qp.append_pauli_evolution(reference, second, time)
+    actual = qp.append_hamiltonian_evolution(
+        prepared,
+        hamiltonian,
+        time,
+        steps=4,
+        order=1,
+    )
+
+    np.testing.assert_allclose(
+        qp.statevector(actual, backend="native-cpu").values,
+        qp.statevector(reference, backend="native-cpu").values,
+        atol=2e-12,
+    )
+
+
+def test_second_order_hamiltonian_evolution_is_time_symmetric() -> None:
+    hamiltonian = qp.Observable(
+        [
+            qp.PauliTerm(0.8, [qp.PauliFactor(0, qp.Pauli.X)]),
+            qp.PauliTerm(-0.35, [qp.PauliFactor(0, qp.Pauli.Z)]),
+        ]
+    )
+    prepared = qp.ry(qp.Program(1), 0.29, 0)
+    reference = qp.statevector(prepared, backend="native-cpu").values.copy()
+
+    evolved = qp.append_hamiltonian_evolution(
+        prepared,
+        hamiltonian,
+        0.71,
+        steps=3,
+        order=2,
+    )
+    restored = qp.append_hamiltonian_evolution(
+        evolved,
+        hamiltonian,
+        -0.71,
+        steps=3,
+        order=2,
+    )
+    np.testing.assert_allclose(
+        qp.statevector(restored, backend="native-cpu").values,
+        reference,
+        atol=3e-12,
+    )
+
+
+def test_hamiltonian_evolution_validates_product_formula_contract() -> None:
+    hamiltonian = _z_observable()
+    with pytest.raises(ValueError, match="time must be finite"):
+        qp.append_hamiltonian_evolution(qp.Program(1), hamiltonian, float("nan"))
+    with pytest.raises(ValueError, match="steps must be positive"):
+        qp.append_hamiltonian_evolution(qp.Program(1), hamiltonian, 0.1, steps=0)
+    with pytest.raises(TypeError, match="steps must be an integer"):
+        qp.append_hamiltonian_evolution(qp.Program(1), hamiltonian, 0.1, steps=True)
+    with pytest.raises(ValueError, match="order must be 1 or 2"):
+        qp.append_hamiltonian_evolution(qp.Program(1), hamiltonian, 0.1, order=3)
+    with pytest.raises(TypeError, match="order must be an integer"):
+        qp.append_hamiltonian_evolution(qp.Program(1), hamiltonian, 0.1, order=True)
+
+
+def test_maxcut_hamiltonian_matches_weighted_cut_values_and_is_canonical() -> None:
+    hamiltonian = qp.maxcut_hamiltonian(
+        3,
+        [(1, 2), (0, 1)],
+        weights=[3.0, 2.0],
+    )
+    reordered = qp.maxcut_hamiltonian(
+        3,
+        [(0, 1), (2, 1)],
+        weights=[2.0, 3.0],
+    )
+    assert hamiltonian.fingerprint == reordered.fingerprint
+
+    uncut = qp.Program(3)
+    fully_cut = qp.x(qp.Program(3), 1)
+    assert qp.expect(uncut, hamiltonian, backend="native-cpu").value == pytest.approx(0.0)
+    assert qp.expect(fully_cut, hamiltonian, backend="native-cpu").value == pytest.approx(5.0)
+
+
+def test_qaoa_maxcut_single_edge_reaches_p1_optimum() -> None:
+    hamiltonian = qp.maxcut_hamiltonian(2, [(0, 1)])
+    program = qp.qaoa_maxcut_program(
+        2,
+        [(0, 1)],
+        [math.pi / 2.0],
+        [math.pi / 8.0],
+    )
+    energy = qp.expect(program, hamiltonian, backend="native-cpu").value
+    assert energy == pytest.approx(1.0, abs=2e-12)
+
+
+def test_maxcut_and_qaoa_validate_graph_and_layer_inputs() -> None:
+    with pytest.raises(ValueError, match="distinct"):
+        qp.maxcut_hamiltonian(2, [(0, 0)])
+    with pytest.raises(ValueError, match="duplicate"):
+        qp.maxcut_hamiltonian(2, [(0, 1), (1, 0)])
+    with pytest.raises(ValueError, match="one value per edge"):
+        qp.maxcut_hamiltonian(3, [(0, 1), (1, 2)], weights=[1.0])
+    with pytest.raises(ValueError, match="non-negative"):
+        qp.maxcut_hamiltonian(2, [(0, 1)], weights=[-1.0])
+    with pytest.raises(ValueError, match="outside"):
+        qp.maxcut_hamiltonian(2, [(0, 2)])
+
+    with pytest.raises(ValueError, match="at least one layer"):
+        qp.qaoa_maxcut_program(2, [(0, 1)], [], [])
+    with pytest.raises(ValueError, match="same length"):
+        qp.qaoa_maxcut_program(2, [(0, 1)], [0.1], [0.2, 0.3])
+    with pytest.raises(ValueError, match="finite"):
+        qp.qaoa_maxcut_program(2, [(0, 1)], [float("inf")], [0.2])
