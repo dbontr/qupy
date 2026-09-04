@@ -75,6 +75,7 @@ Z
 __version__
 adaptive_mps_target
 amplitude_damping
+append_hamiltonian_evolution
 append_pauli_evolution
 append_qft
 bit_flip
@@ -112,6 +113,7 @@ expect_observables
 expectation_plan
 grad
 h
+hamiltonian_evolution
 hardware_efficient_ansatz
 hessian
 install_planner_cost_model
