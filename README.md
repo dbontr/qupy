@@ -25,7 +25,7 @@ uv sync
 uv run pytest -q
 ```
 
-QuPy requires Python 3.12+ and a C++20 compiler. NumPy is the only required Python runtime dependency. JAX and PyTorch integration is optional and loaded lazily.
+QuPy requires Python 3.12+ and a C++20 compiler. NumPy is the only required Python runtime dependency. JAX, PyTorch, and Amazon Braket integration are optional and loaded lazily.
 
 ## Quick start
 
@@ -95,9 +95,11 @@ print(state.values)
 
 - separate immutable `Circuit` IR for measurement, reset, barriers, and single-bit classical feed-forward;
 - deterministic `HardwareTarget` compilation with optimization, layout, routing, basis translation, dependency depth, and optional ASAP scheduling;
-- OpenQASM 3.1 serialization **and import** for the supported hardware-capable subset;
+- OpenQASM 3.1 serialization **and import** for the supported hardware-capable subset, plus a provider-facing OpenQASM 3.0 transport profile;
 - QIR Base Profile export for numerical programs;
-- provider capability discovery, target discovery, compiled submission, polling, result retrieval, cancellation, and a stable plug-in C ABI;
+- structural provider lifecycle for native C-ABI plug-ins and first-party Python adapters;
+- provider capability discovery, target discovery, compiled submission, polling, result retrieval, cancellation, and explicit conformance testing;
+- first-party Amazon Braket adapter with credential-free `LocalSimulator` interoperability and caller-owned AWS credentials for cloud devices;
 - explicit separation between numerical execution identity and hardware-control semantics.
 
 ### Algorithms and QEC
@@ -106,7 +108,8 @@ print(state.values)
 - hardware-efficient variational ansätze with configurable RX/RY/RZ layers and linear/ring/none entanglement;
 - composable exact QFT / inverse-QFT synthesis over arbitrary selected qubits;
 - exact single-Pauli-string time evolution with explicit product-formula boundaries for noncommuting Hamiltonian sums;
-- detector error models, deterministic syndrome sampling, repetition-code construction, a bounded exact reference maximum-likelihood decoder, and native sparse BP+OSD-0 decoding with reusable batch execution.
+- detector error models, deterministic syndrome sampling, repetition-code construction, a bounded exact reference maximum-likelihood decoder, and native sparse BP+OSD-0 decoding with reusable batch execution;
+- reproducible surface-code decoder evidence against PyMatching sparse-blossom on shared Stim detector samples.
 
 ## Architecture
 
@@ -114,6 +117,7 @@ print(state.values)
 Python API
     |
     +-- algorithms / optional JAX + PyTorch adapters
+    +-- provider adapters / optional Amazon Braket SDK
     |
     v
 nanobind extension
@@ -310,7 +314,22 @@ target = qp.HardwareTarget(
 compiled = qp.compile(circuit, target, optimization_level=2)
 ```
 
-Provider plug-ins keep remote credentials, queue policy, and vendor-specific behavior outside the numerical core.
+Native provider plug-ins and first-party Python providers implement the same `ProviderBackend` lifecycle. Vendor credentials and vendor SDKs remain outside the numerical core.
+
+Amazon Braket can be exercised without AWS credentials through its real local simulator:
+
+```python
+provider = qp.BraketProvider.local_simulator(num_qubits=4)
+submission = qp.submit_circuit(
+    provider,
+    qp.Circuit(1, 1).h(0).measure(0, 0),
+    100,
+    initial_layout=[0],
+)
+print(provider.result_json(submission.job_id))
+```
+
+See [Provider execution](docs/provider_execution.md) for native ABI conformance, Amazon Braket cloud/local boundaries, OpenQASM provider transport, and credential ownership.
 
 ## Open systems
 
@@ -355,7 +374,9 @@ print(decoded.observables)
 
 BP+OSD-0 always verifies the returned correction against the requested syndrome when decoding succeeds. It is not a maximum-likelihood guarantee. The existing exact reference decoder is capped at 24 error mechanisms; the scalable path uses sparse belief propagation and deterministic GF(2) order-0 repair instead of subset enumeration.
 
-See [Detector-model decoding](docs/qec_decoding.md) for algorithm, result, batch, and failure contracts.
+The benchmark harness compares QuPy and PyMatching on identical Stim-generated rotated surface-code detector samples, including logical-failure confidence intervals and raw decode timings without turning hosted-runner timing into a pass/fail claim.
+
+See [Detector-model decoding](docs/qec_decoding.md) for algorithm, result, batch, benchmark, and failure contracts.
 
 ## Testing and verification
 
@@ -369,11 +390,11 @@ Standard CI covers:
 - Ruff and strict mypy;
 - ASan + UBSan;
 - 2-rank and 4-rank MPI execution;
-- wheel builds and native-runtime confirmation;
+- isolated wheel and sdist-built-wheel runtime verification;
 - benchmark-adapter compatibility;
 - planner calibration/promotion validation.
 
-A separate framework workflow installs pinned JAX and PyTorch CPU runtimes and executes the real autodiff adapter conformance suite.
+A separate framework workflow installs pinned JAX and PyTorch CPU runtimes and executes the real autodiff adapter conformance suite. A provider-interoperability workflow installs the pinned Amazon Braket SDK and runs QuPy submission, lifecycle, result normalization, and generic provider conformance against Braket `LocalSimulator`.
 
 Native-only development:
 
@@ -422,17 +443,17 @@ Benchmark and calibration tooling lives under [`benchmarks/`](benchmarks/). The 
 6. Keep `backend="auto"` exact unless approximation is explicitly part of the requested method.
 7. Fail closed on stale evidence, unsupported capabilities, and malformed interchange.
 8. Add specialized engines only behind conformance tests against shared semantics.
-9. Keep optional ecosystems optional; do not make JAX, PyTorch, MPI, CUDA, or vendor credentials mandatory for the core package.
+9. Keep optional ecosystems optional; do not make JAX, PyTorch, MPI, CUDA, vendor SDKs, or vendor credentials mandatory for the core package.
 
 ## Current frontier
 
-The largest remaining engineering work is not another isolated simulator backend. It is integration and scale:
+The largest remaining engineering work is integration and scale:
 
 - broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
 - add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
-- deepen first-party QPU provider adapters and lifecycle coverage while keeping credentials outside the core;
+- extend first-party provider coverage beyond Amazon Braket and add direct device-capability translation only where vendor conformance evidence supports it;
 - broaden algorithm/application layers on top of the native execution and differentiation contracts;
-- benchmark BP+OSD-0 across surface/LDPC workloads and add higher-order or specialized QEC decoders only when measured logical-error and latency gains justify them;
-- stabilize the public API, packaging, documentation, and compatibility policy toward a future 1.0.
+- extend the existing surface-code QEC evidence to LDPC/code-family workloads and add higher-order or specialized decoders only when measured logical-error and latency gains justify them;
+- finish the compatibility review needed to turn the checked pre-1.0 API manifest, isolated release-artifact gates, and documented version contracts into a future 1.0 commitment.
 
 The goal is a single quantum numerical-computing layer that can move from laptop simulation to accelerators, distributed execution, hybrid autodiff, and QPU submission without changing the program's meaning.
