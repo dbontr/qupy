@@ -88,7 +88,7 @@ predicted_logicals = batch.observables
 
 Batch outputs are native-owned read-only NumPy views. The batch API removes per-shot Python dispatch overhead. The current implementation does not promise parallel shot execution.
 
-## Decoder evidence harness
+## Surface-code decoder evidence
 
 `python -m benchmarks.qec` measures QuPy BP+OSD-0 against PyMatching sparse-blossom minimum-weight perfect matching on identical detector samples from Stim-generated rotated surface-code memory circuits. Stim and PyMatching are benchmark-only dependencies and are not imported by the QuPy runtime package.
 
@@ -108,10 +108,29 @@ Each report includes:
 
 The `smoke` profile is an integration check. The `standard` profile spans rotated X/Z memories, distances 3, 5, and 7, and two physical error rates. These Stim-generated circuits are reproducible reference workloads, not an exhaustive QEC corpus. Controlled repeated measurements with adequate shots are required before drawing decoder-quality or latency conclusions.
 
+## Hypergraph-product QLDPC evidence
+
+`python -m benchmarks.qec_ldpc` exercises QuPy on a second code family with a different graph structure and comparator. It constructs square Tillich-Zémor hypergraph-product CSS codes from full-rank binary Hamming parity-check matrices and evaluates independent code-capacity X noise. The external `ldpc` package is a benchmark-only dependency; it is not imported by QuPy's runtime package.
+
+For a seed parity-check matrix `H` with shape `(r, n)`, the benchmark constructs
+
+- `H_X = [H ⊗ I_n | I_r ⊗ H^T]`;
+- `H_Z = [I_n ⊗ H | H^T ⊗ I_r]`.
+
+The benchmark verifies `H_X H_Z^T = 0` over GF(2), computes a complete logical-Z basis for `ker(H_X) / row(H_Z)`, and verifies that basis against the X checks before sampling any errors. Each physical X error becomes one QuPy detector-error mechanism: its detector support is the corresponding `H_Z` column and its logical-frame support is the corresponding column of the logical-Z basis.
+
+The seeded code-capacity sampler generates the same syndrome and logical truth used to score both decoders. QuPy uses native BP+OSD-0. The independent comparator uses `ldpc` 2.4.1 product-sum belief propagation with OSD-0. Both returned corrections are multiplied back through `H_Z`; the benchmark fails if either decoder returns a correction that does not reproduce the requested syndrome.
+
+The smoke workload uses the rank-3 Hamming seed. It produces a 58-qubit CSS code with 21 X checks, 21 Z checks, and 16 encoded logical qubits. Its 58 independent physical-error mechanisms already exceed the exact reference decoder's 24-mechanism cap. The standard profile also includes the rank-4 seed, producing a 241-qubit code with 121 logical qubits, across several code-capacity error rates.
+
+QLDPC reports include code dimensions, fixed seed and physical error rate, model fingerprint, sampling/setup/decode times, logical-failure counts and Wilson intervals, cross-decoder logical prediction agreement, both syndrome-consistency rates, and QuPy BP/OSD statistics. Hosted CI checks semantics and report contracts only. It does not impose a latency winner or logical-failure superiority threshold.
+
+These workloads broaden evidence from topological surface-code circuits to finite-rate hypergraph-product codes, but they remain code-capacity Hamming-seed HGP cases. They do not substitute for circuit-level noise, biased/correlated noise, lifted-product or bivariate-bicycle families, or hardware-derived detector models.
+
 ## Scale boundary
 
 The exact reference decoder grows exponentially with the number of error mechanisms and is capped at 24. BP+OSD-0 uses sparse message passing followed, when required, by a polynomial GF(2) solve. Its cost depends on Tanner-graph degree, BP iteration count, detector count, and the rank used by the OSD repair.
 
-For large production workloads, decoder quality must be benchmarked against the target code family and noise model. Higher-order OSD, minimum-weight matching, union-find, or code-specific decoders can provide different accuracy/latency tradeoffs; QuPy does not select those methods implicitly. The repository QEC evidence harness provides a repeatable surface-code comparison baseline; broader LDPC/code-family evidence remains necessary before promoting additional decoders.
+For large production workloads, decoder quality must be benchmarked against the target code family and noise model. Higher-order OSD, minimum-weight matching, union-find, or code-specific decoders can provide different accuracy/latency tradeoffs; QuPy does not select those methods implicitly. The repository now carries reproducible surface-code and hypergraph-product QLDPC comparison baselines. Broader code families and circuit-level noise evidence remain necessary before promoting additional decoder methods or making cross-family performance claims.
 
-See [Research and implementation references](../REFERENCES.md) for the detector-model, BP+OSD, ordered-statistics, and sparse-blossom sources used by this implementation and benchmark architecture.
+See [Research and implementation references](../REFERENCES.md) for the detector-model, hypergraph-product, BP+OSD, ordered-statistics, sparse-blossom, and independent LDPC comparator sources used by this implementation and benchmark architecture.
