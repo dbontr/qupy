@@ -198,6 +198,12 @@ try:
 except PackageNotFoundError:
     __version__ = "0+unknown"
 
+if __version__ != "0+unknown" and core_version() != __version__:
+    raise ImportError(
+        "QuPy Python/native version mismatch: "
+        f"distribution {__version__}, native core {core_version()}"
+    )
+
 __all__ = [
     "BpOsdDecodeBatch",
     "BpOsdDecodeResult",
@@ -268,6 +274,7 @@ __all__ = [
     "Variance",
     "VariationalTemplate",
     "Z",
+    "__version__",
     "adaptive_mps_target",
     "amplitude_damping",
     "append_pauli_evolution",
