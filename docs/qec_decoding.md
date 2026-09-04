@@ -1,0 +1,97 @@
+# Detector-model decoding
+
+QuPy uses detector error models to represent independent error mechanisms. Each `DetectorError` has a probability, a detector support, and an optional logical-observable support. Supports are binary: repeated detector or observable indices cancel in pairs.
+
+QuPy provides two detector-model decoders with different contracts.
+
+## Exact reference decoder
+
+`decode_detector_model(model, syndrome)` is the small-model reference path. It enumerates every subset of error mechanisms and returns the maximum-likelihood assignment that reproduces the requested syndrome.
+
+The reference decoder deliberately rejects models with more than 24 error mechanisms. Its exponential search is useful for conformance and small cases, not scale.
+
+## Sparse BP+OSD-0 decoder
+
+`BpOsdDecoder` is the scalable native path. Construct the decoder once when many syndromes share the same detector model.
+
+```python
+import numpy as np
+import qupy as qp
+
+model = qp.repetition_code_detector_model(
+    distance=5,
+    rounds=4,
+    data_error_probability=0.01,
+    measurement_error_probability=0.02,
+)
+
+decoder = qp.BpOsdDecoder(model, max_iterations=50, damping=0.1)
+result = decoder.decode(np.zeros(model.detector_count, dtype=np.int8))
+
+print(result.correction)
+print(result.observables)
+print(result.log_likelihood)
+print(result.bp_converged, result.osd_used)
+```
+
+The decoder preprocesses the model once:
+
+1. Error mechanisms with probability 0 are excluded because they cannot occur.
+2. Error mechanisms with probability 1 are fixed into every correction and their detector parity is removed from the requested syndrome.
+3. All remaining error mechanisms become variable nodes in a sparse detector/error Tanner graph.
+4. Each active error starts with the prior log-likelihood ratio `log((1-p)/p)`.
+
+Belief propagation uses binary parity-check sum-product updates in log-likelihood-ratio space. Check messages use the standard hyperbolic-tangent product form; variable messages add the prior and incoming check evidence. Messages are bounded to keep the numerical representation finite. `damping` applies to check-to-variable updates and must be in `[0, 1)`.
+
+After each BP iteration, QuPy converts posterior log-likelihood ratios to a hard error assignment and checks the detector parity exactly. If the assignment reproduces the syndrome, decoding stops.
+
+### OSD-0 fallback
+
+If BP does not satisfy the syndrome within `max_iterations`, QuPy performs deterministic order-0 ordered-statistics repair:
+
+1. Rank active error mechanisms by increasing absolute posterior log-likelihood ratio. Lower magnitude means lower reliability.
+2. Select a linearly independent pivot set from the least reliable detector-error columns.
+3. Keep the BP hard decisions for non-pivot variables.
+4. Solve the pivot variables over GF(2) so the complete assignment reproduces the target syndrome.
+
+This is order-0 post-processing: QuPy does not enumerate higher-order reliability flips around the repaired solution. If the requested syndrome is outside the span of all nonzero-probability error mechanisms, decoding fails instead of returning an inconsistent correction.
+
+Every successful result is verified again against the original full detector model, including probability-1 mechanisms, before it is returned.
+
+## Result contract
+
+`BpOsdDecodeResult` exposes:
+
+- `correction`: one bit per detector error mechanism in model order;
+- `observables`: predicted logical-frame changes;
+- `log_likelihood`: log probability of the returned independent-error assignment;
+- `matched_errors`: number of selected error mechanisms;
+- `iterations`: number of BP iterations completed;
+- `bp_converged`: whether BP itself found a syndrome-consistent assignment;
+- `osd_used`: whether OSD-0 repaired the BP assignment;
+- `method`: `belief-propagation` or `belief-propagation-osd0`.
+
+The returned correction is guaranteed to reproduce the requested syndrome when decoding succeeds. BP+OSD-0 is not a maximum-likelihood guarantee. Use the bounded exact decoder when an exact small-model reference is required.
+
+For fixed model, syndrome, iteration limit, and damping, BP+OSD-0 is deterministic.
+
+## Batch decoding
+
+`decode_batch` accepts a two-dimensional array with shape `(shots, detector_count)` and executes the complete batch natively.
+
+```python
+samples = qp.sample_detector_model(model, shots=4096, seed=7)
+batch = decoder.decode_batch(samples.syndrome)
+
+predicted_logicals = batch.observables
+```
+
+Batch outputs are native-owned read-only NumPy views. The batch API removes per-shot Python dispatch overhead. The current implementation does not promise parallel shot execution.
+
+## Scale boundary
+
+The exact reference decoder grows exponentially with the number of error mechanisms and is capped at 24. BP+OSD-0 uses sparse message passing followed, when required, by a polynomial GF(2) solve. Its cost depends on Tanner-graph degree, BP iteration count, detector count, and the rank used by the OSD repair.
+
+For large production workloads, decoder quality must be benchmarked against the target code family and noise model. Higher-order OSD, minimum-weight matching, union-find, or code-specific decoders can provide different accuracy/latency tradeoffs; QuPy does not select those methods implicitly.
+
+See [Research and implementation references](../REFERENCES.md) for the detector-model, BP+OSD, and ordered-statistics sources used by this implementation.
