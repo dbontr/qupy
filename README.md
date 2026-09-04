@@ -67,7 +67,7 @@ print(state.values)
 ### Specialized exact scale engines
 
 - exact MPS execution with structural bond/routing/work estimates and adaptive MPS-to-dense continuation;
-- exact general tensor-network expectation execution through explicit `native-tn`;
+- exact general tensor-network expectation execution through explicit `native-tn` and evidence-gated automatic CPU/TN selection;
 - deterministic tensor-network structural preflight with contraction count, peak rank, peak intermediate bytes, scalar work, and plan fingerprints;
 - exact MPI-sharded state-vector execution and distributed Pauli/Hamiltonian reductions;
 - MPI term-parallel general tensor-network expectation execution;
@@ -144,7 +144,7 @@ The C++ core is independently buildable and directly tested with CTest. Python i
 | `native-cuda` | CUDA state vectors, Pauli reduction, density/noise | Exact; requires compatible NVIDIA driver |
 | stabilizer | Large Clifford sampling | Exact; planner-selected for eligible workloads |
 | `native-mps` / adaptive MPS | Low-entanglement exact execution | No user-visible bond truncation |
-| `native-tn` | General tensor-network rich-observable expectations | Exact greedy contraction; explicit backend today |
+| `native-tn` | General tensor-network rich-observable expectations | Exact greedy contraction; auto only with promoted in-domain CPU/TN evidence |
 | `native-mpi` | Distributed state vector and rich observables | Exact MPI sharding/reduction |
 | distributed TN | Pauli-term-parallel tensor-network expectation | Exact MPI reduction |
 | trajectories | Noisy wave-function Monte Carlo | Statistical estimator; seedable |
@@ -154,7 +154,7 @@ QuPy does not silently reinterpret an explicit backend. Unsupported result modes
 
 ## Evidence-gated automatic planning
 
-`backend="auto"` is owned by the native planner. QuPy can load validated host-scoped cost artifacts and use them only for policies whose required evidence is present and valid.
+`backend="auto"` is owned by evidence-gated planning. QuPy can load validated host-scoped cost artifacts and use them only for policies whose required evidence is present and valid.
 
 ```python
 plan = qp.plan(program, qp.ResultMode.STATEVECTOR)
@@ -174,7 +174,17 @@ Current promoted planner artifacts cover:
 
 Artifacts are bound to QuPy/workload versions and host fingerprints. CUDA evidence additionally binds the CUDA host/device fingerprint. Stale, malformed, wrong-host, or unvalidated artifacts fail closed. Explicit backends do not consult default planner discovery.
 
-General tensor-network CPU-vs-TN routing now has its own repeated, counterbalanced, leave-one-workload-out calibration and promotion gates, but **`backend="auto"` does not select `native-tn` yet**. That evidence will enter automatic routing only after a native planner schema consumes it without weakening existing v1-v5 guarantees.
+General tensor-network CPU-vs-TN routing uses a separate native policy artifact rather than extending cumulative schemas v1-v5. It is produced from the repeated, counterbalanced, leave-one-workload-out calibration, bound to the exact QuPy core and planner host, and records the measured domain of every CPU/TN runtime-model feature. Automatic TN prediction is interpolation-only: workloads outside the promoted feature domain keep the established plan instead of extrapolating.
+
+The TN policy composes conservatively with existing automatic planning. It may replace an ordinary full-cone dense-CPU rich-observable expectation when validated evidence predicts TN is faster, but it does not displace Pauli propagation or an existing validated CUDA/MPS/rich-observable adaptive decision. The current evidence compares CPU with TN; QuPy does not invent an unmeasured TN-vs-CUDA or TN-vs-MPS ordering.
+
+```python
+model = qp.install_tensor_network_cost_model("tn-policy.qptncost")
+print(model.auto_validated)
+print(qp.tensor_network_planner_cache_path())
+```
+
+See [General tensor-network contraction](docs/tensor_network_contraction.md) for collection, promotion, discovery precedence, interpolation gates, and exact automatic-routing boundaries.
 
 ## Quantum numerical computing
 
@@ -398,8 +408,7 @@ Benchmark and calibration tooling lives under [`benchmarks/`](benchmarks/). The 
 
 The largest remaining engineering work is not another isolated simulator backend. It is integration and scale:
 
-- promote the validated general tensor-network CPU/TN calibration into a composable native planner schema without making CPU-only TN routing depend on unrelated CUDA/density evidence;
-- expand contraction-path optimization only when it improves measured held-out routing quality;
+- broaden tensor-network policy only with direct held-out evidence for TN-vs-CUDA/MPS decisions, and improve contraction paths only when measured routing quality improves;
 - add multi-GPU / multi-node accelerator execution without conflating MPI rank distribution with GPU ownership;
 - deepen first-party QPU provider adapters and lifecycle coverage while keeping credentials outside the core;
 - broaden algorithm/application layers on top of the native execution and differentiation contracts;
