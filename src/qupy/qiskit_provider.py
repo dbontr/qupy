@@ -26,8 +26,30 @@ class _QiskitBackend(Protocol):
     def run(self, run_input: object, *, shots: int) -> _QiskitJob: ...
 
 
-class _QiskitResult(Protocol):
-    def get_counts(self) -> object: ...
+class _QiskitCircuit(Protocol):
+    def h(self, qubit: int) -> object: ...
+
+    def x(self, qubit: int) -> object: ...
+
+    def y(self, qubit: int) -> object: ...
+
+    def z(self, qubit: int) -> object: ...
+
+    def rx(self, angle: float, qubit: int) -> object: ...
+
+    def ry(self, angle: float, qubit: int) -> object: ...
+
+    def rz(self, angle: float, qubit: int) -> object: ...
+
+    def cx(self, first: int, second: int) -> object: ...
+
+    def cz(self, first: int, second: int) -> object: ...
+
+    def swap(self, first: int, second: int) -> object: ...
+
+    def measure(self, qubit: int, clbit: int) -> object: ...
+
+    def barrier(self, *qubits: int) -> object: ...
 
 
 _STATE_MAP = {
@@ -146,13 +168,13 @@ def qiskit_aer_target(num_qubits: int = 24) -> HardwareTarget:
     )
 
 
-def _new_quantum_circuit(num_qubits: int, num_clbits: int) -> object:
+def _new_quantum_circuit(num_qubits: int, num_clbits: int) -> _QiskitCircuit:
     module = _qiskit_module("qiskit")
     factory = cast(Callable[..., object], module.QuantumCircuit)
-    return factory(num_qubits, num_clbits)
+    return cast(_QiskitCircuit, factory(num_qubits, num_clbits))
 
 
-def _append_instruction(target: object, circuit: Circuit) -> object:
+def _append_instructions(target: _QiskitCircuit, circuit: Circuit) -> _QiskitCircuit:
     for instruction in circuit.instructions:
         if instruction.condition is not None:
             raise ValueError("Qiskit provider adapter does not support classical feed-forward")
@@ -190,14 +212,14 @@ def _append_instruction(target: object, circuit: Circuit) -> object:
     return target
 
 
-def _qiskit_circuit(program: _native.ProviderProgram) -> object:
+def _qiskit_circuit(program: _native.ProviderProgram) -> _QiskitCircuit:
     if program.format != "openqasm3":
         raise ValueError("Qiskit provider requires an openqasm3 provider program")
     circuit = Circuit.from_openqasm3(program.text)
     if circuit.num_qubits != program.num_qubits:
         raise ValueError("provider program qubit metadata does not match its OpenQASM circuit")
     target = _new_quantum_circuit(circuit.num_qubits, circuit.num_clbits)
-    return _append_instruction(target, circuit)
+    return _append_instructions(target, circuit)
 
 
 class QiskitProvider:
