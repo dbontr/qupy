@@ -11,6 +11,8 @@
 namespace nb = nanobind;
 using namespace nb::literals;
 
+void bind_tensor_network(nb::module_& module);
+
 namespace {
 
 using Int8Vector = nb::ndarray<
@@ -217,4 +219,6 @@ void bind_qec(nb::module_& module) {
         "max_iterations"_a = 50U,
         "damping"_a = 0.0
     );
+
+    bind_tensor_network(module);
 }
