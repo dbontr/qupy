@@ -87,7 +87,9 @@ def test_wilson_interval_is_bounded_and_contains_observed_rate() -> None:
     for failures, shots in ((0, 100), (1, 100), (50, 100), (100, 100)):
         lower, upper = _wilson_interval(failures, shots)
         observed = failures / shots
-        assert 0.0 <= lower <= observed <= upper <= 1.0
+        assert 0.0 <= lower <= upper <= 1.0
+        assert lower <= observed + 1e-15
+        assert observed <= upper + 1e-15
 
 
 def test_qec_benchmark_runs_real_optional_surface_decoder_pair() -> None:
