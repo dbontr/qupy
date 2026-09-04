@@ -78,7 +78,7 @@ def test_braket_capabilities_round_trip_the_configured_target() -> None:
     assert capabilities.hardware_target.fingerprint == _target().fingerprint
 
 
-def test_braket_submission_uses_provider_openqasm_profile_and_normalizes_results(
+def test_braket_submission_lowers_only_the_standard_gate_include(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     task = _FakeTask(["QUEUED", "RUNNING", "COMPLETED"])
@@ -102,10 +102,15 @@ def test_braket_submission_uses_provider_openqasm_profile_and_normalizes_results
     )
 
     assert submission.program.format == "openqasm3"
-    assert submission.program.text.startswith("OPENQASM 3.0;\n")
+    assert submission.program.text.startswith(
+        'OPENQASM 3.0;\ninclude "stdgates.inc";\n'
+    )
     assert circuit.to_openqasm3().startswith("OPENQASM 3.1;\n")
-    assert captured_sources == [submission.program.text]
-    assert device.calls == [({"source": submission.program.text}, 4)]
+    braket_source = submission.program.text.replace('include "stdgates.inc";\n', "", 1)
+    assert captured_sources == [braket_source]
+    assert device.calls == [({"source": braket_source}, 4)]
+    assert 'include "stdgates.inc";' not in braket_source
+    assert braket_source.splitlines()[0] == "OPENQASM 3.0;"
     assert provider.poll(submission.job_id) is qp.ProviderJobState.QUEUED
     assert provider.poll(submission.job_id) is qp.ProviderJobState.RUNNING
     assert provider.poll(submission.job_id) is qp.ProviderJobState.SUCCEEDED
@@ -120,6 +125,13 @@ def test_braket_submission_uses_provider_openqasm_profile_and_normalizes_results
 
     provider.cancel(submission.job_id)
     assert task.cancelled
+
+
+def test_braket_transport_rejects_noncanonical_provider_prelude() -> None:
+    with pytest.raises(ValueError, match="OpenQASM 3.0"):
+        braket_provider._braket_openqasm_source("OPENQASM 3.1;\n")
+    with pytest.raises(ValueError, match="stdgates"):
+        braket_provider._braket_openqasm_source("OPENQASM 3.0;\nqubit[1] q;\n")
 
 
 def test_braket_provider_maps_cloud_lifecycle_and_fails_closed(
