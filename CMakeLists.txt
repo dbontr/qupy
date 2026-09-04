@@ -47,6 +47,7 @@ add_library(
     src/cpp/stabilizer.cpp
     src/cpp/tensor_network.cpp
     src/cpp/tensor_network_cost.cpp
+    src/cpp/tensor_network_differentiation.cpp
     src/cpp/tensor_network_observable.cpp
     src/cpp/tensor_network_plan.cpp
     src/cpp/trajectory.cpp

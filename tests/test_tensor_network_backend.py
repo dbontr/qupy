@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 
+import numpy as np
 import pytest
 
 import qupy as qp
@@ -101,6 +102,88 @@ def test_native_tn_handles_large_low_width_program_through_normal_api() -> None:
     assert plan.estimated_state_bytes <= 64
 
 
+def test_native_tn_uses_unified_gradient_surface() -> None:
+    program = qp.ry(qp.Program(2), 0.0, 0)
+    program = qp.rx(program, 0.0, 1)
+    program = qp.cx(program, 0, 1)
+    slots = [qp.ParameterSlot(0), qp.ParameterSlot(1)]
+    parameters = np.array([0.37, -0.21], dtype=np.float64)
+    observable = qp.observable(
+        [
+            qp.pauli_term(0.7, [qp.pauli(0, qp.Pauli.Z)]),
+            qp.pauli_term(0.4, [qp.pauli(0, qp.Pauli.X), qp.pauli(1, qp.Pauli.X)]),
+        ]
+    )
+
+    dense = qp.value_and_grad(
+        program,
+        observable,
+        slots,
+        parameters,
+        backend="native-cpu",
+        method=qp.GradientMethod.PARAMETER_SHIFT,
+    )
+    tensor = qp.value_and_grad(program, observable, slots, parameters, backend="native-tn")
+    alias = qp.grad(program, observable, slots, parameters, backend="native-tn")
+
+    assert tensor.backend == "native-tn"
+    assert tensor.method == "parameter-shift"
+    assert tensor.value == pytest.approx(dense.value, abs=2e-12)
+    np.testing.assert_allclose(tensor.gradient, dense.gradient, atol=2e-12, rtol=0.0)
+    assert alias.value == pytest.approx(tensor.value, abs=2e-12)
+    np.testing.assert_allclose(alias.gradient, tensor.gradient, atol=2e-12, rtol=0.0)
+    with pytest.raises(ValueError, match="native CPU state-vector backend"):
+        qp.value_and_grad(
+            program,
+            observable,
+            slots,
+            parameters,
+            backend="native-tn",
+            method=qp.GradientMethod.ADJOINT,
+        )
+
+
+def test_native_tn_unified_jacobian_and_hessian_match_dense() -> None:
+    program = qp.ry(qp.Program(2), 0.0, 0)
+    program = qp.rx(program, 0.0, 1)
+    program = qp.cx(program, 0, 1)
+    slots = [qp.ParameterSlot(0), qp.ParameterSlot(1)]
+    parameters = np.array([0.37, -0.21], dtype=np.float64)
+    first = qp.observable_from_z(qp.Z(0))
+    second = qp.observable(
+        [
+            qp.pauli_term(0.5, [qp.pauli(0, qp.Pauli.X), qp.pauli(1, qp.Pauli.X)]),
+            qp.pauli_term(-0.2, [qp.pauli(1, qp.Pauli.Z)]),
+        ]
+    )
+
+    dense_jacobian = qp.jacobian(
+        program,
+        [first, second],
+        slots,
+        parameters,
+        backend="native-cpu",
+        method=qp.GradientMethod.PARAMETER_SHIFT,
+    )
+    tensor_jacobian = qp.jacobian(program, [first, second], slots, parameters, backend="native-tn")
+    assert tensor_jacobian.backend == "native-tn"
+    assert tensor_jacobian.method == "parameter-shift"
+    np.testing.assert_allclose(tensor_jacobian.values, dense_jacobian.values, atol=2e-12, rtol=0.0)
+    np.testing.assert_allclose(
+        tensor_jacobian.jacobian, dense_jacobian.jacobian, atol=2e-12, rtol=0.0
+    )
+
+    dense_hessian = qp.hessian(program, second, slots, parameters, backend="native-cpu")
+    tensor_hessian = qp.hessian(program, second, slots, parameters, backend="native-tn")
+    assert tensor_hessian.backend == "native-tn"
+    assert tensor_hessian.method == "parameter-shift"
+    assert tensor_hessian.value == pytest.approx(dense_hessian.value, abs=2e-12)
+    np.testing.assert_allclose(
+        tensor_hessian.gradient, dense_hessian.gradient, atol=2e-12, rtol=0.0
+    )
+    np.testing.assert_allclose(tensor_hessian.hessian, dense_hessian.hessian, atol=3e-12, rtol=0.0)
+
+
 def test_auto_routing_does_not_select_uncalibrated_tensor_network() -> None:
     plan = qp.observable_plan(_program(), [_rich_observable()], backend="auto")
     assert plan.backend != "native-tn"
@@ -123,5 +206,8 @@ def test_auto_routing_does_not_select_uncalibrated_tensor_network() -> None:
 def test_native_tn_fails_closed_for_unsupported_result_modes(
     operation: Callable[[qp.Program, qp.Observable], object],
 ) -> None:
-    with pytest.raises(ValueError, match="currently supports observable expectations only"):
+    with pytest.raises(
+        ValueError,
+        match="currently supports observable expectations and expectation differentiation only",
+    ):
         operation(_program(), _rich_observable())
