@@ -139,6 +139,28 @@ The constructor starts in `|+>^n`, applies one MaxCut cost layer for each `gamma
 
 For a single unweighted edge, the p=1 choice `gamma = pi/2`, `beta = pi/8` reaches the maximum cut expectation of 1; this analytic case is part of the conformance suite.
 
+## Electronic-structure chemistry
+
+`jordan_wigner()` maps ordered fermionic ladder terms to QuPy's native real Pauli-sum `Observable` representation. Creation and annihilation helpers keep the operator order explicit:
+
+```python
+hopping = qp.jordan_wigner(
+    2,
+    [
+        qp.fermion_term(1.0, [qp.fermion_creation(0), qp.fermion_annihilation(1)]),
+        qp.fermion_term(1.0, [qp.fermion_creation(1), qp.fermion_annihilation(0)]),
+    ],
+)
+```
+
+The mapper combines Pauli products exactly and removes coefficients below the explicit tolerance. QuPy observables require real coefficients, so a fermionic input that is not Hermitian within that tolerance is rejected instead of discarding an imaginary residual.
+
+`molecular_hamiltonian()` accepts spin-orbital one- and two-body integral arrays and returns the same native `Observable` type. Its convention is `sum h[p,q] a†_p a_q + 0.5 sum g[p,q,r,s] a†_p a†_q a_s a_r + E_nuc`. Integral arrays may be complex, but the final mapped Hamiltonian must satisfy the same Hermiticity boundary. The helper does not perform integral generation, basis construction, active-space selection, or electronic-structure preprocessing.
+
+`hartree_fock_state()` prepares a computational-basis occupation state as a native `Program`. By default it occupies the lowest-index spin orbitals; `occupied_orbitals` can specify another unique occupation pattern with the same electron count.
+
+Chemistry construction remains outside the execution engine. The resulting program and observable use the ordinary planner, exact and approximate execution backends, expectation APIs, and native differentiation without a chemistry-specific simulator path or runtime dependency.
+
 ## Design boundary
 
 The algorithm layer deliberately returns native primitives:
