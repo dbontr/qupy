@@ -29,6 +29,29 @@ _OPERATION_BY_NAME = {
     "measure": CircuitOperationCode.MEASURE,
     "reset": CircuitOperationCode.RESET,
 }
+_NAME_BY_OPERATION = {code: name for name, code in _OPERATION_BY_NAME.items()}
+
+
+class ProviderBackend(Protocol):
+    """Structural provider lifecycle implemented by native and Python adapters."""
+
+    @property
+    def name(self) -> str: ...
+
+    def capabilities_json(self) -> str: ...
+
+    def submit(
+        self,
+        program: _native.ProviderProgram,
+        shots: int,
+        options_json: str = "{}",
+    ) -> str: ...
+
+    def poll(self, job_id: str) -> _native.ProviderJobState: ...
+
+    def result_json(self, job_id: str) -> str: ...
+
+    def cancel(self, job_id: str) -> None: ...
 
 
 class _ProviderProgramFactory(Protocol):
@@ -112,6 +135,13 @@ def _operation(name: object, field: str) -> CircuitOperationCode:
         raise ValueError(f"{field} contains unsupported operation {operation_name!r}") from None
 
 
+def _operation_name(code: CircuitOperationCode, field: str) -> str:
+    try:
+        return _NAME_BY_OPERATION[code]
+    except KeyError:
+        raise ValueError(f"{field} contains unsupported operation {code!r}") from None
+
+
 def _operation_list(value: object, field: str) -> list[CircuitOperationCode]:
     return [_operation(item, field) for item in _sequence(value, field)]
 
@@ -187,7 +217,33 @@ def _hardware_target(value: object) -> HardwareTarget:
     )
 
 
-def provider_capabilities(plugin: _native.ProviderPlugin) -> ProviderCapabilities:
+def _hardware_target_payload(target: HardwareTarget) -> dict[str, object]:
+    durations = {
+        _operation_name(duration.code, "hardware target durations"): duration.nanoseconds
+        for duration in target.durations
+    }
+    return {
+        "schema_version": _HARDWARE_TARGET_SCHEMA,
+        "name": target.name,
+        "num_qubits": target.num_qubits,
+        "one_qubit_operations": [
+            _operation_name(code, "hardware target one-qubit operations")
+            for code in target.one_qubit_operations
+        ],
+        "two_qubit_operations": [
+            _operation_name(code, "hardware target two-qubit operations")
+            for code in target.two_qubit_operations
+        ],
+        "couplings": [[coupling.first, coupling.second] for coupling in target.couplings],
+        "measurement": target.measurement,
+        "mid_circuit_measurement": target.mid_circuit_measurement,
+        "reset": target.reset,
+        "dynamic_control": target.dynamic_control,
+        "durations_ns": durations,
+    }
+
+
+def provider_capabilities(plugin: ProviderBackend) -> ProviderCapabilities:
     try:
         raw = cast(object, json.loads(plugin.capabilities_json()))
     except json.JSONDecodeError as exc:
@@ -217,18 +273,26 @@ def _measures_all(circuit: Circuit) -> bool:
     return len(measured) == circuit.num_qubits
 
 
+def _provider_openqasm3(circuit: Circuit) -> str:
+    text = circuit.to_openqasm3()
+    header = "OPENQASM 3.1;\n"
+    if not text.startswith(header):
+        raise RuntimeError("Circuit OpenQASM serializer returned an unexpected version header")
+    return "OPENQASM 3.0;\n" + text[len(header) :]
+
+
 def provider_program(circuit: Circuit) -> _native.ProviderProgram:
     native = cast(_ProviderProgramFactory, _native)
     return native._make_provider_program(
         "openqasm3",
-        circuit.to_openqasm3(),
+        _provider_openqasm3(circuit),
         circuit.num_qubits,
         _measures_all(circuit),
     )
 
 
 def _submit_with_capabilities(
-    plugin: _native.ProviderPlugin,
+    plugin: ProviderBackend,
     compilation: CompilationResult,
     shots: int,
     options_json: str,
@@ -257,7 +321,7 @@ def _submit_with_capabilities(
 
 
 def submit_compiled_circuit(
-    plugin: _native.ProviderPlugin,
+    plugin: ProviderBackend,
     compilation: CompilationResult,
     shots: int,
     options_json: str = "{}",
@@ -269,7 +333,7 @@ def submit_compiled_circuit(
 
 
 def submit_circuit(
-    plugin: _native.ProviderPlugin,
+    plugin: ProviderBackend,
     circuit: Circuit,
     shots: int,
     *,
@@ -305,6 +369,7 @@ def submit_circuit(
 
 
 __all__ = [
+    "ProviderBackend",
     "ProviderCapabilities",
     "ProviderSubmission",
     "provider_capabilities",
