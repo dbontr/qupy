@@ -38,6 +38,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.scripts]
+qupy-provider-conformance = "qupy.provider_conformance:main"
+
 [project.urls]
 Homepage = "https://github.com/dbontr/qupy"
 Repository = "https://github.com/dbontr/qupy"
