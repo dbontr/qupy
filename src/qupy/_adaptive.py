@@ -20,7 +20,13 @@ from ._native import (
     Variance,
 )
 from ._planner import resolve_planner_cost_model
-from .tensor_network import _expect_observable, _expect_observables, _observable_plan
+from ._tensor_planner import resolve_tensor_network_cost_model
+from .tensor_network import (
+    _auto_observable_plan,
+    _expect_observable,
+    _expect_observables,
+    _observable_plan,
+)
 
 _TENSOR_NETWORK_BACKEND = "native-tn"
 
@@ -31,6 +37,16 @@ def _reject_tensor_network_non_expectation(backend: str, operation: str) -> None
             f"{operation} is not supported by native-tn; "
             "the tensor-network backend currently supports observable expectations only"
         )
+
+
+def _legacy_observable_policy_active(cost_model: PlannerCostModel | None) -> bool:
+    if cost_model is None:
+        return False
+    return (
+        cost_model.cuda_auto_validated
+        or cost_model.mps_auto_validated
+        or cost_model.observable_auto_validated
+    )
 
 
 def plan(
@@ -82,9 +98,17 @@ def observable_plan(
 ) -> ObservableExecutionPlan:
     if backend == _TENSOR_NETWORK_BACKEND:
         return _observable_plan(program, observables)
-    return _native.observable_plan(
-        program, observables, backend, resolve_planner_cost_model(backend, cost_model)
-    )
+    legacy_model = resolve_planner_cost_model(backend, cost_model)
+    base = _native.observable_plan(program, observables, backend, legacy_model)
+    if backend != "auto" or base.backend != "native-cpu":
+        return base
+    if base.method == "pauli-propagation" or _legacy_observable_policy_active(legacy_model):
+        return base
+    tensor_model = resolve_tensor_network_cost_model(backend)
+    if tensor_model is None:
+        return base
+    candidate = _auto_observable_plan(program, observables, tensor_model)
+    return candidate if candidate.backend == _TENSOR_NETWORK_BACKEND else base
 
 
 def expect_observable(
@@ -94,6 +118,10 @@ def expect_observable(
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableResult:
     if backend == _TENSOR_NETWORK_BACKEND:
+        return _expect_observable(program, observable)
+    if backend == "auto" and observable_plan(program, [observable], backend, cost_model).backend == (
+        _TENSOR_NETWORK_BACKEND
+    ):
         return _expect_observable(program, observable)
     function = cast(Any, _native.expect_observable)
     return cast(
@@ -138,6 +166,10 @@ def expect_observables(
     cost_model: PlannerCostModel | None = None,
 ) -> ObservableBatch:
     if backend == _TENSOR_NETWORK_BACKEND:
+        return _expect_observables(program, observables)
+    if backend == "auto" and observable_plan(program, observables, backend, cost_model).backend == (
+        _TENSOR_NETWORK_BACKEND
+    ):
         return _expect_observables(program, observables)
     function = cast(Any, _native.expect_observables)
     return cast(
